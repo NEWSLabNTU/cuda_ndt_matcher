@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0"
-ctrlc = "3.4"
+anyhow.workspace = true
+ctrlc.workspace = true
 
-# ROS 2 dependencies - resolved via ament_index by cargo-ros2
-rclrs = "*"
-std_msgs = "*"
-sensor_msgs = "*"
-geometry_msgs = "*"
-tf2_msgs = "*"
+# ROS 2 dependencies
+rclrs.workspace = true
+std_msgs.workspace = true
+sensor_msgs.workspace = true
+geometry_msgs.workspace = true
+tf2_msgs.workspace = true
