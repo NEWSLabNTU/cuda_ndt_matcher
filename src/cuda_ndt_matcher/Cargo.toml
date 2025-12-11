@@ -6,6 +6,12 @@ edition = "2021"
 [dependencies]
 anyhow.workspace = true
 ctrlc.workspace = true
+arc-swap.workspace = true
+parking_lot.workspace = true
+nalgebra.workspace = true
+
+# fast-gicp CUDA NDT
+fast-gicp.workspace = true
 
 # ROS 2 dependencies
 rclrs.workspace = true
@@ -13,3 +19,5 @@ std_msgs.workspace = true
 sensor_msgs.workspace = true
 geometry_msgs.workspace = true
 tf2_msgs.workspace = true
+std_srvs.workspace = true
+builtin_interfaces.workspace = true

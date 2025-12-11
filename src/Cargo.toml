@@ -8,6 +8,12 @@ members = [
 # Core utilities
 anyhow = "1.0"
 ctrlc = "3.4"
+arc-swap = "1.7"
+parking_lot = "0.12"
+nalgebra = "0.33"
+
+# fast-gicp CUDA NDT
+fast-gicp = { path = "../external/fast_gicp_rust/fast-gicp", features = ["cuda"] }
 
 # ROS 2 dependencies - resolved via ament_index by cargo-ros2
 rclrs = "*"
@@ -15,3 +21,5 @@ std_msgs = "*"
 sensor_msgs = "*"
 geometry_msgs = "*"
 tf2_msgs = "*"
+std_srvs = "*"
+builtin_interfaces = "*"
