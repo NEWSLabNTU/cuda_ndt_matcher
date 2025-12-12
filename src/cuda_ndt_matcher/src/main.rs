@@ -1,5 +1,6 @@
 mod covariance;
 mod initial_pose;
+mod map_module;
 mod ndt_manager;
 mod params;
 mod particle;
@@ -8,7 +9,8 @@ mod tpe;
 
 use anyhow::Result;
 use arc_swap::ArcSwap;
-use geometry_msgs::msg::{PoseStamped, PoseWithCovariance, PoseWithCovarianceStamped};
+use geometry_msgs::msg::{Point, PoseStamped, PoseWithCovariance, PoseWithCovarianceStamped};
+use map_module::MapUpdateModule;
 use ndt_manager::NdtManager;
 use params::NdtParams;
 use parking_lot::Mutex;
@@ -36,6 +38,7 @@ struct NdtScanMatcherNode {
     _points_sub: Subscription<PointCloud2>,
     _initial_pose_sub: Subscription<PoseWithCovarianceStamped>,
     _regularization_pose_sub: Subscription<PoseWithCovarianceStamped>,
+    _map_sub: Subscription<PointCloud2>,
 
     // Publishers
     pose_pub: Publisher<PoseStamped>,
@@ -44,9 +47,11 @@ struct NdtScanMatcherNode {
     // Services
     _trigger_srv: Service<SetBool>,
     _ndt_align_srv: Service<Trigger>,
+    _map_update_srv: Service<Trigger>,
 
     // State
     ndt_manager: Arc<Mutex<NdtManager>>,
+    map_module: Arc<MapUpdateModule>,
     map_points: Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
     latest_pose: Arc<ArcSwap<Option<PoseWithCovarianceStamped>>>,
     latest_sensor_points: Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
@@ -76,6 +81,16 @@ impl NdtScanMatcherNode {
         let latest_sensor_points: Arc<ArcSwap<Option<Vec<[f32; 3]>>>> =
             Arc::new(ArcSwap::from_pointee(None));
         let enabled = Arc::new(AtomicBool::new(true));
+
+        // Initialize map update module
+        let map_module = Arc::new(MapUpdateModule::new(params.dynamic_map.clone()));
+        log_info!(
+            NODE_NAME,
+            "Map module: update_distance={}, map_radius={}, lidar_radius={}",
+            params.dynamic_map.update_distance,
+            params.dynamic_map.map_radius,
+            params.dynamic_map.lidar_radius
+        );
 
         // QoS for sensor data
         let sensor_qos = QoSProfile {
@@ -138,6 +153,20 @@ impl NdtScanMatcherNode {
             })?
         };
 
+        // Map subscription (for receiving point cloud map data)
+        let map_sub = {
+            let map_module = Arc::clone(&map_module);
+            let map_points = Arc::clone(&map_points);
+            let ndt_manager = Arc::clone(&ndt_manager);
+
+            let mut opts = SubscriptionOptions::new("pointcloud_map");
+            opts.qos = QoSProfile::default(); // Reliable for map data
+
+            node.create_subscription(opts, move |msg: PointCloud2| {
+                Self::on_map_received(msg, &map_module, &map_points, &ndt_manager);
+            })?
+        };
+
         // Trigger service
         let trigger_srv = {
             let enabled = Arc::clone(&enabled);
@@ -182,17 +211,35 @@ impl NdtScanMatcherNode {
             )?
         };
 
+        // Map update service (triggers map update based on current position)
+        let map_update_srv = {
+            let map_module = Arc::clone(&map_module);
+            let map_points = Arc::clone(&map_points);
+            let ndt_manager = Arc::clone(&ndt_manager);
+            let latest_pose = Arc::clone(&latest_pose);
+
+            node.create_service::<Trigger, _>(
+                "map_update_srv",
+                move |_req: TriggerRequest, _info: rclrs::ServiceInfo| {
+                    Self::on_map_update(&map_module, &map_points, &ndt_manager, &latest_pose)
+                },
+            )?
+        };
+
         log_info!(NODE_NAME, "NDT scan matcher node initialized");
 
         Ok(Self {
             _points_sub: points_sub,
             _initial_pose_sub: initial_pose_sub,
             _regularization_pose_sub: regularization_pose_sub,
+            _map_sub: map_sub,
             pose_pub,
             pose_cov_pub,
             _trigger_srv: trigger_srv,
             _ndt_align_srv: ndt_align_srv,
+            _map_update_srv: map_update_srv,
             ndt_manager,
+            map_module,
             map_points,
             latest_pose,
             latest_sensor_points,
@@ -417,6 +464,115 @@ impl NdtScanMatcherNode {
                 result.score,
                 result.reliable,
                 result.particles.len()
+            ),
+        }
+    }
+
+    /// Handle map point cloud received
+    fn on_map_received(
+        msg: PointCloud2,
+        map_module: &Arc<MapUpdateModule>,
+        map_points: &Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
+        ndt_manager: &Arc<Mutex<NdtManager>>,
+    ) {
+        // Convert point cloud
+        let points = match pointcloud::from_pointcloud2(&msg) {
+            Ok(pts) => pts,
+            Err(e) => {
+                log_error!(NODE_NAME, "Failed to convert map point cloud: {e}");
+                return;
+            }
+        };
+
+        log_info!(NODE_NAME, "Received map with {} points", points.len());
+
+        // Load into map module
+        map_module.load_full_map(points.clone());
+
+        // Update shared map points
+        map_points.store(Arc::new(Some(points.clone())));
+
+        // Update NDT target
+        let mut manager = ndt_manager.lock();
+        if let Err(e) = manager.set_target(&points) {
+            log_error!(NODE_NAME, "Failed to set NDT target: {e}");
+        } else {
+            log_info!(NODE_NAME, "NDT target updated with map");
+        }
+    }
+
+    /// Handle map update service request
+    fn on_map_update(
+        map_module: &Arc<MapUpdateModule>,
+        map_points: &Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
+        ndt_manager: &Arc<Mutex<NdtManager>>,
+        latest_pose: &Arc<ArcSwap<Option<PoseWithCovarianceStamped>>>,
+    ) -> TriggerResponse {
+        // Get current position
+        let pose = latest_pose.load();
+        let position = match pose.as_ref() {
+            Some(p) => Point {
+                x: p.pose.pose.position.x,
+                y: p.pose.pose.position.y,
+                z: p.pose.pose.position.z,
+            },
+            None => {
+                return TriggerResponse {
+                    success: false,
+                    message: "No position available for map update".to_string(),
+                };
+            }
+        };
+
+        // Check if update is needed
+        let should_update = map_module.should_update(&position);
+        let out_of_range = map_module.out_of_map_range(&position);
+
+        if out_of_range {
+            log_warn!(
+                NODE_NAME,
+                "Position is out of map range - may need new map data"
+            );
+        }
+
+        // Perform map update
+        let result = map_module.update_map(&position);
+
+        if result.updated {
+            log_info!(
+                NODE_NAME,
+                "Map updated: {} tiles, {} points, distance={:.1}m",
+                result.tiles_loaded,
+                result.total_points,
+                result.distance_from_last_update
+            );
+
+            // Update shared map points with filtered map
+            if let Some(filtered_points) = map_module.get_map_points() {
+                map_points.store(Arc::new(Some(filtered_points.clone())));
+
+                // Update NDT target
+                let mut manager = ndt_manager.lock();
+                if let Err(e) = manager.set_target(&filtered_points) {
+                    log_error!(NODE_NAME, "Failed to update NDT target: {e}");
+                    return TriggerResponse {
+                        success: false,
+                        message: format!("Failed to update NDT target: {e}"),
+                    };
+                }
+            }
+        }
+
+        TriggerResponse {
+            success: true,
+            message: format!(
+                "updated={}, tiles={}, points={}, distance={:.1}m, should_update={}, out_of_range={}",
+                result.updated,
+                result.tiles_loaded,
+                result.total_points,
+                result.distance_from_last_update,
+                should_update,
+                out_of_range
             ),
         }
     }

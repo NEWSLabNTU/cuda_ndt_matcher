@@ -109,6 +109,7 @@ pub struct CovarianceParams {
 }
 
 /// Dynamic map loading configuration
+#[derive(Clone)]
 pub struct DynamicMapParams {
     pub update_distance: f64,
     pub map_radius: f64,
