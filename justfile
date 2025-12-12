@@ -27,3 +27,7 @@ test:
 
 # Run all quality checks (format, lint, test)
 quality: lint test
+
+# Download sample map and rosbag data
+download-data:
+    ./scripts/download_sample_data.sh
