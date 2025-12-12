@@ -4,28 +4,32 @@
 cargo_config := "build/ros2_cargo_config.toml"
 manifest := "src/Cargo.toml"
 
-# Build all packages
+# Show available recipes
+default:
+    @just --list
+
+# Build all packages with colcon
 build:
     colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --cargo-args --release
 
-# Clean build artifacts
+# Clean all build artifacts
 clean:
     rm -rf build install log src/target
 
-# Format code
+# Format code with rustfmt
 format:
     cargo +nightly fmt --manifest-path {{manifest}}
 
-# Lint code
+# Check formatting and run clippy
 lint:
     cargo +nightly fmt --check --manifest-path {{manifest}}
     cargo clippy --manifest-path {{manifest}} --config {{cargo_config}} --all-targets
 
-# Run tests
+# Run all tests
 test:
     cargo test --manifest-path {{manifest}} --config {{cargo_config}} --all-targets
 
-# Run all quality checks (format, lint, test)
+# Run all quality checks (lint + test)
 quality: lint test
 
 # Download sample map and rosbag data
