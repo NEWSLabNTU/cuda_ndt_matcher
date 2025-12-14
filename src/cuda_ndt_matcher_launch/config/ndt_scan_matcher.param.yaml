@@ -16,6 +16,10 @@
       max_iterations: 30
       num_threads: 4
 
+      regularization:
+        enable: false
+        scale_factor: 0.01
+
     initial_pose_estimation:
       # Total number of particles (candidate poses) to evaluate
       # Higher values give better coverage but take longer
@@ -38,7 +42,21 @@
       converged_param_transform_probability: 3.0
       converged_param_nearest_voxel_transformation_likelihood: 2.3
 
+      no_ground_points:
+        enable: false
+        z_margin_for_ground_removal: 0.8
+
     covariance:
+      output_pose_covariance:
+        [
+          0.0225, 0.0,   0.0,   0.0,      0.0,      0.0,
+          0.0,   0.0225, 0.0,   0.0,      0.0,      0.0,
+          0.0,   0.0,   0.0225, 0.0,      0.0,      0.0,
+          0.0,   0.0,   0.0,   0.000625, 0.0,      0.0,
+          0.0,   0.0,   0.0,   0.0,      0.000625, 0.0,
+          0.0,   0.0,   0.0,   0.0,      0.0,      0.000625,
+        ]
+
       covariance_estimation:
         # Covariance estimation type:
         # 0 = FIXED (use static covariance matrix)
