@@ -48,32 +48,103 @@ quality: lint test
 download-data:
     ./scripts/download_sample_data.sh
 
-# Run replay simulation with CUDA NDT (map + sensing from Autoware, CUDA localization)
-run-ndt-cuda:
-    #!/usr/bin/env bash
-    set -eo pipefail
-    source {{local_setup}}
-    play_launch launch cuda_ndt_matcher_launch ndt_replay_simulation.launch.xml \
-        use_cuda:=true \
-        map_path:=$(realpath {{sample_map_dir}})
+# Service unit names
+ndt_autoware_unit := "ndt-autoware"
+ndt_cuda_unit := "ndt-cuda"
 
-# Run replay simulation with Autoware NDT (minimal: map + sensing + localization)
-run-ndt-autoware:
+# Start Autoware NDT as a systemd user service
+start-ndt-autoware:
     #!/usr/bin/env bash
     set -eo pipefail
-    source {{local_setup}}
-    play_launch launch cuda_ndt_matcher_launch ndt_replay_simulation.launch.xml \
-        use_cuda:=false \
-        map_path:=$(realpath {{sample_map_dir}})
+    # Stop and clean up any existing service
+    systemctl --user stop {{ndt_autoware_unit}} 2>/dev/null || true
+    systemctl --user reset-failed {{ndt_autoware_unit}} 2>/dev/null || true
+    systemd-run --user --unit={{ndt_autoware_unit}} --same-dir --collect \
+        --setenv=DISPLAY="$DISPLAY" \
+        --setenv=PATH="$PATH" \
+        --setenv=LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+        --setenv=PYTHONPATH="$PYTHONPATH" \
+        --setenv=AMENT_PREFIX_PATH="$AMENT_PREFIX_PATH" \
+        --setenv=CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+        --setenv=COLCON_PREFIX_PATH="$COLCON_PREFIX_PATH" \
+        --setenv=ROS_DISTRO="$ROS_DISTRO" \
+        --setenv=ROS_LOCALHOST_ONLY="$ROS_LOCALHOST_ONLY" \
+        --setenv=ROS_PYTHON_VERSION="$ROS_PYTHON_VERSION" \
+        --setenv=ROS_VERSION="$ROS_VERSION" \
+        --setenv=RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-}" \
+        bash -c "source {{local_setup}} && ros2 launch cuda_ndt_matcher_launch ndt_replay_simulation.launch.xml use_cuda:=false map_path:=$(realpath {{sample_map_dir}})"
+    echo "Started {{ndt_autoware_unit}} service. Use 'just stop-ndt-autoware' to stop."
+
+# Stop Autoware NDT service
+stop-ndt-autoware:
+    systemctl --user stop {{ndt_autoware_unit}} || true
+    @echo "Stopped {{ndt_autoware_unit}} service."
+
+# Restart Autoware NDT service
+restart-ndt-autoware: stop-ndt-autoware start-ndt-autoware
+
+# Show Autoware NDT service status and logs
+status-ndt-autoware:
+    systemctl --user status {{ndt_autoware_unit}} || true
+
+logs-ndt-autoware:
+    journalctl --user -u {{ndt_autoware_unit}} -f
+
+# Start CUDA NDT as a systemd user service
+start-ndt-cuda:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    # Stop and clean up any existing service
+    systemctl --user stop {{ndt_cuda_unit}} 2>/dev/null || true
+    systemctl --user reset-failed {{ndt_cuda_unit}} 2>/dev/null || true
+    systemd-run --user --unit={{ndt_cuda_unit}} --same-dir --collect \
+        --setenv=DISPLAY="$DISPLAY" \
+        --setenv=PATH="$PATH" \
+        --setenv=LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+        --setenv=PYTHONPATH="$PYTHONPATH" \
+        --setenv=AMENT_PREFIX_PATH="$AMENT_PREFIX_PATH" \
+        --setenv=CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+        --setenv=COLCON_PREFIX_PATH="$COLCON_PREFIX_PATH" \
+        --setenv=ROS_DISTRO="$ROS_DISTRO" \
+        --setenv=ROS_LOCALHOST_ONLY="$ROS_LOCALHOST_ONLY" \
+        --setenv=ROS_PYTHON_VERSION="$ROS_PYTHON_VERSION" \
+        --setenv=ROS_VERSION="$ROS_VERSION" \
+        --setenv=RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-}" \
+        bash -c "source {{local_setup}} && ros2 launch cuda_ndt_matcher_launch ndt_replay_simulation.launch.xml use_cuda:=true map_path:=$(realpath {{sample_map_dir}})"
+    echo "Started {{ndt_cuda_unit}} service. Use 'just stop-ndt-cuda' to stop."
+
+# Stop CUDA NDT service
+stop-ndt-cuda:
+    systemctl --user stop {{ndt_cuda_unit}} || true
+    @echo "Stopped {{ndt_cuda_unit}} service."
+
+# Restart CUDA NDT service
+restart-ndt-cuda: stop-ndt-cuda start-ndt-cuda
+
+# Show CUDA NDT service status and logs
+status-ndt-cuda:
+    systemctl --user status {{ndt_cuda_unit}} || true
+
+logs-ndt-cuda:
+    journalctl --user -u {{ndt_cuda_unit}} -f
 
 # Play sample rosbag (run in separate terminal after run-ndt-*)
+# Note: The sample rosbag has inconsistent timestamps:
+#   - /clock topic: Feb 2021
+#   - Message headers: April 2020
+# We exclude /clock from the bag and run a clock republisher that extracts
+# timestamps from sensor messages to publish to /clock.
 play-rosbag:
     #!/usr/bin/env bash
     set -eo pipefail
     source {{autoware_setup}}
-    # Get all topics except /clock (which interferes with --clock option)
+    # Start clock republisher in background
+    python3 scripts/clock_from_sensor.py &
+    CLOCK_PID=$!
+    trap "kill $CLOCK_PID 2>/dev/null || true" EXIT
+    # Play bag without /clock topic
     topics=$(ros2 bag info {{sample_rosbag}} -s sqlite3 | grep -oP '(?<=Topic: )\S+' | grep -v '^/clock$' | tr '\n' ' ')
-    ros2 bag play {{sample_rosbag}} -l -r 1.0 -s sqlite3 --clock --topics $topics
+    ros2 bag play {{sample_rosbag}} -l -r 0.5 -s sqlite3 --topics $topics
 
 # Enable NDT matching via service call
 enable-ndt:
