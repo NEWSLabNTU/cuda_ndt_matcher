@@ -39,7 +39,7 @@
       <arg name="map" value="true"/>
       <arg name="sensing" value="true"/>
       <arg name="localization" value="true"/>
-      <arg name="vehicle" value="false"/>
+      <arg name="vehicle" value="true"/>
       <arg name="system" value="false"/>
       <arg name="perception" value="false"/>
       <arg name="planning" value="false"/>
@@ -60,7 +60,7 @@
       <arg name="map" value="true"/>
       <arg name="sensing" value="true"/>
       <arg name="localization" value="false"/>
-      <arg name="vehicle" value="false"/>
+      <arg name="vehicle" value="true"/>
       <arg name="system" value="false"/>
       <arg name="perception" value="false"/>
       <arg name="planning" value="false"/>
