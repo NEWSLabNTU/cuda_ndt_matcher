@@ -56,23 +56,11 @@ ndt_cuda_unit := "ndt-cuda"
 start-ndt-autoware:
     #!/usr/bin/env bash
     set -eo pipefail
-    # Stop and clean up any existing service
     systemctl --user stop {{ndt_autoware_unit}} 2>/dev/null || true
     systemctl --user reset-failed {{ndt_autoware_unit}} 2>/dev/null || true
     systemd-run --user --unit={{ndt_autoware_unit}} --same-dir --collect \
         --setenv=DISPLAY="$DISPLAY" \
-        --setenv=PATH="$PATH" \
-        --setenv=LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
-        --setenv=PYTHONPATH="$PYTHONPATH" \
-        --setenv=AMENT_PREFIX_PATH="$AMENT_PREFIX_PATH" \
-        --setenv=CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
-        --setenv=COLCON_PREFIX_PATH="$COLCON_PREFIX_PATH" \
-        --setenv=ROS_DISTRO="$ROS_DISTRO" \
-        --setenv=ROS_LOCALHOST_ONLY="$ROS_LOCALHOST_ONLY" \
-        --setenv=ROS_PYTHON_VERSION="$ROS_PYTHON_VERSION" \
-        --setenv=ROS_VERSION="$ROS_VERSION" \
-        --setenv=RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-}" \
-        bash -c "source {{local_setup}} && ros2 launch cuda_ndt_matcher_launch ndt_replay_simulation.launch.xml use_cuda:=false map_path:=$(realpath {{sample_map_dir}})"
+        scripts/run_ndt_simulation.sh "$(realpath {{sample_map_dir}})"
     echo "Started {{ndt_autoware_unit}} service. Use 'just stop-ndt-autoware' to stop."
 
 # Stop Autoware NDT service
@@ -94,23 +82,11 @@ logs-ndt-autoware:
 start-ndt-cuda:
     #!/usr/bin/env bash
     set -eo pipefail
-    # Stop and clean up any existing service
     systemctl --user stop {{ndt_cuda_unit}} 2>/dev/null || true
     systemctl --user reset-failed {{ndt_cuda_unit}} 2>/dev/null || true
     systemd-run --user --unit={{ndt_cuda_unit}} --same-dir --collect \
         --setenv=DISPLAY="$DISPLAY" \
-        --setenv=PATH="$PATH" \
-        --setenv=LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
-        --setenv=PYTHONPATH="$PYTHONPATH" \
-        --setenv=AMENT_PREFIX_PATH="$AMENT_PREFIX_PATH" \
-        --setenv=CMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
-        --setenv=COLCON_PREFIX_PATH="$COLCON_PREFIX_PATH" \
-        --setenv=ROS_DISTRO="$ROS_DISTRO" \
-        --setenv=ROS_LOCALHOST_ONLY="$ROS_LOCALHOST_ONLY" \
-        --setenv=ROS_PYTHON_VERSION="$ROS_PYTHON_VERSION" \
-        --setenv=ROS_VERSION="$ROS_VERSION" \
-        --setenv=RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-}" \
-        bash -c "source {{local_setup}} && ros2 launch cuda_ndt_matcher_launch ndt_replay_simulation.launch.xml use_cuda:=true map_path:=$(realpath {{sample_map_dir}})"
+        scripts/run_ndt_simulation.sh --cuda "$(realpath {{sample_map_dir}})"
     echo "Started {{ndt_cuda_unit}} service. Use 'just stop-ndt-cuda' to stop."
 
 # Stop CUDA NDT service
