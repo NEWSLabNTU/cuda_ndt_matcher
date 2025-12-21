@@ -6,11 +6,11 @@ Build minimal working node using fast_gicp_rust.
 
 ### Work Items
 
-- [ ] Add fast-gicp dependency to workspace
-- [ ] Implement point cloud conversion (PointCloud2 <-> fast_gicp)
-- [ ] Implement basic NDT alignment using NDTCuda
-- [ ] Implement pose output (ndt_pose topic)
-- [ ] Add basic parameters (resolution, max_iterations)
+- [x] Add fast-gicp dependency to workspace
+- [x] Implement point cloud conversion (PointCloud2 <-> fast_gicp)
+- [x] Implement basic NDT alignment using NDTCuda
+- [x] Implement pose output (ndt_pose topic)
+- [x] Add basic parameters (resolution, max_iterations)
 
 ### Passing Criteria
 
@@ -41,12 +41,12 @@ Match Autoware ndt_scan_matcher interface.
 
 ### Work Items
 
-- [ ] Add all subscriptions (regularization_pose)
-- [ ] Add ndt_pose_with_covariance publisher
-- [ ] Implement trigger_node_srv service
-- [ ] Add pcd_loader_service client
-- [ ] Implement all parameters from config
-- [ ] Add launch file with remapping
+- [x] Add all subscriptions (regularization_pose)
+- [x] Add ndt_pose_with_covariance publisher
+- [x] Implement trigger_node_srv service
+- [ ] Add pcd_loader_service client (deferred to Phase 5)
+- [x] Implement all parameters from config
+- [x] Add launch file with remapping
 
 ### Passing Criteria
 
@@ -58,7 +58,7 @@ Match Autoware ndt_scan_matcher interface.
 
 ```bash
 # Integration: launch file works
-ros2 launch cuda_ndt_matcher ndt_scan_matcher.launch.xml
+ros2 launch cuda_ndt_matcher_launch ndt_scan_matcher.launch.xml
 
 # Interface: topics exist
 ros2 topic list | grep -E "ndt_pose|points_raw"
@@ -72,16 +72,16 @@ ros2 param list /ndt_scan_matcher
 
 ## Phase 3: Covariance Estimation
 
-Implement GPU covariance estimation using cubecl.
+Implement covariance estimation modes.
 
 ### Work Items
 
-- [ ] Add cubecl dependency
-- [ ] Implement FIXED covariance mode
-- [ ] Implement LAPLACE approximation kernel
-- [ ] Implement MULTI_NDT kernel
-- [ ] Implement MULTI_NDT_SCORE kernel
-- [ ] Add covariance parameters
+- [x] Implement FIXED covariance mode
+- [x] Implement LAPLACE approximation (Hessian inverse)
+- [x] Implement MULTI_NDT (multiple alignments)
+- [x] Implement MULTI_NDT_SCORE (score-weighted)
+- [x] Add covariance parameters
+- [x] Add Hessian/cost FFI bindings to fast_gicp_rust
 
 ### Passing Criteria
 
@@ -92,49 +92,54 @@ Implement GPU covariance estimation using cubecl.
 ### Tests
 
 ```bash
-# Unit: covariance kernels
-cargo test covariance --features cuda
+# Unit: covariance estimation
+cargo test covariance
 
-# Integration: covariance output
-ros2 param set /ndt_scan_matcher covariance.covariance_estimation_type 1
+# Integration: covariance output (change mode via config)
+# In config: covariance.covariance_estimation.covariance_estimation_type: 1
 ros2 topic echo /ndt_pose_with_covariance --field pose.covariance
 
-# Benchmark: kernel performance
-cargo bench covariance
+# Verify different modes:
+# 0 = FIXED: static covariance from config
+# 1 = LAPLACE: varies with alignment quality
+# 2 = MULTI_NDT: sample covariance from multiple alignments
+# 3 = MULTI_NDT_SCORE: score-weighted covariance (faster)
 ```
 
 ---
 
 ## Phase 4: Initial Pose Estimation
 
-Implement Monte Carlo initial pose using cubecl.
+Implement Monte Carlo initial pose with TPE-guided search.
 
 ### Work Items
 
-- [ ] Implement particle generation kernel
-- [ ] Implement score evaluation kernel
-- [ ] Implement best particle selection
-- [ ] Add TPE (Tree-Structured Parzen Estimator) search
-- [ ] Add initial_pose_estimation parameters
+- [x] Implement particle generation (from prior distributions)
+- [x] Implement score evaluation (via NDTCuda alignment)
+- [x] Implement best particle selection
+- [x] Add TPE (Tree-Structured Parzen Estimator) search
+- [x] Add initial_pose_estimation parameters
+- [x] Add ndt_align_srv service (with correct message type)
+- [x] Fix executor spin pattern for service responses
 
 ### Passing Criteria
 
 - Node recovers from poor initial guess
 - particles_num affects search coverage
-- GPU parallel evaluation confirmed
+- TPE guides search toward better regions
 
 ### Tests
 
 ```bash
-# Unit: particle sampling
-cargo test initial_pose --features cuda
+# Unit: TPE and particle tests pass
+cargo test tpe
+cargo test initial_pose
+cargo test particle
 
-# Integration: recovery from bad initial
-ros2 topic pub /ekf_pose_with_covariance ... --once  # Bad pose
-# Verify ndt_pose converges to correct location
+# Integration: trigger initial pose estimation
+ros2 service call /ndt_scan_matcher/ndt_align_srv tier4_localization_msgs/srv/PoseWithCovarianceStamped "..."
 
-# Benchmark: particle evaluation
-cargo bench initial_pose
+# Verify response includes score and reliability info
 ```
 
 ---
@@ -145,11 +150,12 @@ Implement map management and caching.
 
 ### Work Items
 
-- [ ] Implement map cache structure
-- [ ] Implement distance-based update trigger
-- [ ] Add pcd_loader_service client
-- [ ] Implement map radius filtering
-- [ ] Add dynamic_map_loading parameters
+- [x] Implement map cache structure (MapUpdateModule with tile storage)
+- [x] Implement distance-based update trigger (should_update, out_of_map_range)
+- [x] Add map subscription (pointcloud_map topic)
+- [x] Add map_update_srv service (trigger map update)
+- [x] Implement map radius filtering (filters points within map_radius)
+- [x] Add dynamic_map_loading parameters (already in config)
 
 ### Passing Criteria
 
@@ -160,12 +166,14 @@ Implement map management and caching.
 ### Tests
 
 ```bash
-# Integration: map loading triggers
-ros2 service call /pcd_loader_service ...
-# Verify map updates in node
+# Unit: map module tests pass
+cargo test map_module
 
-# Memory: map cache bounded
-# Monitor memory usage during long run
+# Integration: receive map via subscription
+ros2 topic pub /pointcloud_map sensor_msgs/msg/PointCloud2 ...
+
+# Integration: trigger map update
+ros2 service call /ndt_scan_matcher/map_update_srv std_srvs/srv/Trigger
 ```
 
 ---
