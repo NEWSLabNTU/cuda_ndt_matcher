@@ -75,7 +75,7 @@
     <!-- CUDA NDT localization stack -->
     <include file="$(find-pkg-share cuda_ndt_matcher_launch)/launch/cuda_localization.launch.xml">
       <arg name="ndt_param_file" value="$(var ndt_param_file)"/>
-      <arg name="gnss_enabled" value="false"/>
+      <!-- gnss_enabled defaults to true, enabling automatic_pose_initializer -->
     </include>
   </group>
 </launch>
