@@ -23,3 +23,4 @@ geometry_msgs.workspace = true
 tf2_msgs.workspace = true
 std_srvs.workspace = true
 builtin_interfaces.workspace = true
+tier4_localization_msgs.workspace = true

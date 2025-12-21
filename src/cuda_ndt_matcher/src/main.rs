@@ -16,20 +16,22 @@ use params::NdtParams;
 use parking_lot::Mutex;
 use rclrs::{
     log_error, log_info, log_warn, Context, CreateBasicExecutor, Node, Publisher, QoSHistoryPolicy,
-    QoSProfile, Service, SpinOptions, Subscription, SubscriptionOptions,
+    QoSProfile, RclrsErrorFilter, Service, SpinOptions, Subscription, SubscriptionOptions,
 };
 use sensor_msgs::msg::PointCloud2;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use std_msgs::msg::Header;
 use std_srvs::srv::{SetBool, Trigger};
+use tier4_localization_msgs::srv::PoseWithCovarianceStamped as PoseWithCovSrv;
 
 // Type aliases
 type SetBoolRequest = std_srvs::srv::SetBool_Request;
 type SetBoolResponse = std_srvs::srv::SetBool_Response;
 type TriggerRequest = std_srvs::srv::Trigger_Request;
 type TriggerResponse = std_srvs::srv::Trigger_Response;
+type PoseWithCovSrvRequest = tier4_localization_msgs::srv::PoseWithCovarianceStamped_Request;
+type PoseWithCovSrvResponse = tier4_localization_msgs::srv::PoseWithCovarianceStamped_Response;
 
 const NODE_NAME: &str = "ndt_scan_matcher";
 
@@ -46,7 +48,7 @@ struct NdtScanMatcherNode {
 
     // Services
     _trigger_srv: Service<SetBool>,
-    _ndt_align_srv: Service<Trigger>,
+    _ndt_align_srv: Service<PoseWithCovSrv>,
     _map_update_srv: Service<Trigger>,
 
     // State
@@ -188,23 +190,21 @@ impl NdtScanMatcherNode {
         };
 
         // NDT align service (initial pose estimation)
+        // This service is called by pose_initializer with an initial pose guess
         let ndt_align_srv = {
             let ndt_manager = Arc::clone(&ndt_manager);
             let map_points = Arc::clone(&map_points);
-            let latest_pose = Arc::clone(&latest_pose);
             let latest_sensor_points = Arc::clone(&latest_sensor_points);
-            let pose_cov_pub = pose_cov_pub.clone();
             let params = Arc::clone(&params);
 
-            node.create_service::<Trigger, _>(
+            node.create_service::<PoseWithCovSrv, _>(
                 "ndt_align_srv",
-                move |_req: TriggerRequest, _info: rclrs::ServiceInfo| {
+                move |req: PoseWithCovSrvRequest, _info: rclrs::ServiceInfo| {
                     Self::on_ndt_align(
+                        req,
                         &ndt_manager,
                         &map_points,
-                        &latest_pose,
                         &latest_sensor_points,
-                        &pose_cov_pub,
                         &params,
                     )
                 },
@@ -369,40 +369,31 @@ impl NdtScanMatcherNode {
         }
     }
 
-    /// Handle NDT align service request (initial pose estimation)
+    /// Handle NDT align service request
+    /// This service is called by pose_initializer with an initial pose guess.
+    /// It performs a single NDT alignment and returns the aligned pose.
     fn on_ndt_align(
+        req: PoseWithCovSrvRequest,
         ndt_manager: &Arc<Mutex<NdtManager>>,
         map_points: &Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
-        latest_pose: &Arc<ArcSwap<Option<PoseWithCovarianceStamped>>>,
         latest_sensor_points: &Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
-        pose_cov_pub: &Publisher<PoseWithCovarianceStamped>,
         params: &NdtParams,
-    ) -> TriggerResponse {
-        log_info!(
-            NODE_NAME,
-            "NDT align service called - starting initial pose estimation"
-        );
+    ) -> PoseWithCovSrvResponse {
+        log_info!(NODE_NAME, "NDT align service called");
+
+        // Get initial pose from request
+        let initial_pose = req.pose_with_covariance;
 
         // Get map points
         let map = map_points.load();
         let map = match map.as_ref() {
             Some(m) => m,
             None => {
-                return TriggerResponse {
+                log_error!(NODE_NAME, "NDT align failed: No map loaded");
+                return PoseWithCovSrvResponse {
                     success: false,
-                    message: "No map loaded".to_string(),
-                };
-            }
-        };
-
-        // Get initial pose
-        let initial_pose = latest_pose.load();
-        let initial_pose = match initial_pose.as_ref() {
-            Some(p) => p.clone(),
-            None => {
-                return TriggerResponse {
-                    success: false,
-                    message: "No initial pose available".to_string(),
+                    reliable: false,
+                    pose_with_covariance: initial_pose,
                 };
             }
         };
@@ -412,59 +403,54 @@ impl NdtScanMatcherNode {
         let sensor_points = match sensor_points.as_ref() {
             Some(p) => p,
             None => {
-                return TriggerResponse {
+                log_error!(NODE_NAME, "NDT align failed: No sensor points available");
+                return PoseWithCovSrvResponse {
                     success: false,
-                    message: "No sensor points available".to_string(),
+                    reliable: false,
+                    pose_with_covariance: initial_pose,
                 };
             }
         };
 
-        // Run initial pose estimation
+        // Run single NDT alignment from the provided initial pose
         let mut manager = ndt_manager.lock();
-        let result = match initial_pose::estimate_initial_pose(
-            &initial_pose,
-            &mut manager,
-            sensor_points,
-            map,
-            &params.initial_pose,
-            params
-                .score
-                .converged_param_nearest_voxel_transformation_likelihood,
-        ) {
+        let result = match manager.align(sensor_points, map, &initial_pose.pose.pose) {
             Ok(r) => r,
             Err(e) => {
-                log_error!(NODE_NAME, "Initial pose estimation failed: {e}");
-                return TriggerResponse {
+                log_error!(NODE_NAME, "NDT alignment failed: {e}");
+                return PoseWithCovSrvResponse {
                     success: false,
-                    message: format!("Estimation failed: {e}"),
+                    reliable: false,
+                    pose_with_covariance: initial_pose,
                 };
             }
         };
+
+        // Check convergence
+        let reliable = result.converged
+            && result.score >= params.score.converged_param_nearest_voxel_transformation_likelihood;
 
         log_info!(
             NODE_NAME,
-            "Initial pose estimation complete: score={:.3}, reliable={}, particles={}",
+            "NDT align complete: converged={}, score={:.3}, reliable={}",
+            result.converged,
             result.score,
-            result.reliable,
-            result.particles.len()
+            reliable
         );
 
-        // Publish the result
-        if let Err(e) = pose_cov_pub.publish(&result.pose_with_covariance) {
-            log_error!(NODE_NAME, "Failed to publish estimated pose: {e}");
-        }
+        // Build result with aligned pose
+        let result_pose = PoseWithCovarianceStamped {
+            header: initial_pose.header,
+            pose: PoseWithCovariance {
+                pose: result.pose,
+                covariance: params.covariance.output_pose_covariance,
+            },
+        };
 
-        // Update latest pose with the estimated pose
-        latest_pose.store(Arc::new(Some(result.pose_with_covariance)));
-
-        TriggerResponse {
-            success: true,
-            message: format!(
-                "score={:.3}, reliable={}, particles={}",
-                result.score,
-                result.reliable,
-                result.particles.len()
-            ),
+        PoseWithCovSrvResponse {
+            success: result.converged,
+            reliable,
+            pose_with_covariance: result_pose,
         }
     }
 
