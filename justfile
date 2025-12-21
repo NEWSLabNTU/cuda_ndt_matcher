@@ -26,14 +26,14 @@ clean:
 
 # Format code with rustfmt
 format:
-    cargo +nightly fmt --manifest-path {{manifest}}
+    cargo +nightly fmt --manifest-path {{manifest}} --all
 
 # Check formatting and run clippy
 lint:
     #!/usr/bin/env bash
     source {{local_setup}}
-    cargo +nightly fmt --check --manifest-path {{manifest}}
     cargo clippy --manifest-path {{manifest}} --config {{cargo_config}} --all-targets
+    cargo +nightly fmt --check --manifest-path {{manifest}} --all
 
 # Run all tests
 test:
