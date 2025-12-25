@@ -13,24 +13,49 @@ NDT (Normal Distributions Transform) scan matching is used for position estimati
 
 ## Implementation Status
 
-**Phase 1 + 2 + 3 + 5: COMPLETE**
+### Current State: Pivoting from fast-gicp to CubeCL
 
-| Component | Status |
-|-----------|--------|
-| fast-gicp integration | ✅ |
-| PointCloud2 conversion | ✅ |
-| NDT alignment (NDTCuda) | ✅ |
-| ROS subscriptions (points_raw, ekf_pose, regularization_pose) | ✅ |
-| ROS publishers (ndt_pose, ndt_pose_with_covariance) | ✅ |
-| trigger_node_srv service | ✅ |
-| All parameters from config | ✅ |
-| Launch file with remappings | ✅ |
-| Covariance estimation (FIXED, LAPLACE, MULTI_NDT, MULTI_NDT_SCORE) | ✅ |
-| Hessian/cost evaluation FFI bindings | ✅ |
-| Dynamic map loading service client | ✅ |
-| Replay simulation launch files | ✅ |
+The initial fast-gicp integration is complete but **does not work correctly** for real-time localization. We are pivoting to implement custom CUDA kernels using CubeCL.
 
-**Remaining phases:** Initial Pose Estimation, Validation & Diagnostics, Performance Optimization
+#### fast-gicp Integration (DEPRECATED)
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| fast-gicp integration | ⚠️ | Works but diverges during driving |
+| PointCloud2 conversion | ✅ | Keep |
+| ROS subscriptions/publishers | ✅ | Keep |
+| trigger_node_srv service | ✅ | Keep |
+| Launch files | ✅ | Keep |
+| Covariance estimation | ✅ | Keep (will adapt to new NDT) |
+
+#### CubeCL NDT Implementation (NEW - In Progress)
+
+See `docs/cubecl-ndt-roadmap.md` for detailed implementation plan.
+
+| Phase | Component | Status |
+|-------|-----------|--------|
+| Phase 1 | Voxel Grid Construction | 🔲 Not started |
+| Phase 2 | Derivative Computation | 🔲 Not started |
+| Phase 3 | Newton Optimization | 🔲 Not started |
+| Phase 4 | Scoring & NVTL | 🔲 Not started |
+| Phase 5 | Integration | 🔲 Not started |
+| Phase 6 | Validation | 🔲 Not started |
+
+### Why fast-gicp Doesn't Work
+
+Investigation revealed fundamental algorithm differences between fast-gicp and Autoware's pclomp:
+
+| Aspect | pclomp (Autoware) | fast-gicp | Impact |
+|--------|-------------------|-----------|--------|
+| **Optimizer** | Newton + More-Thuente line search | Levenberg-Marquardt | fast-gicp hits max iterations (30) every time |
+| **Cost Function** | Probability-based (Magnusson 2009) | Mahalanobis + Cauchy kernel | Different optimization landscape |
+| **Rotation** | Euler angles (XYZ) | SO(3) exponential map | Different Jacobian structure |
+| **Convergence** | 1-6 iterations typical | Never converges properly | Pose drifts during driving |
+
+Key code references for the issues:
+- `external/fast_gicp_rust/fast_gicp/include/fast_gicp/gicp/impl/lsq_registration_impl.hpp:122-168` - LM optimizer
+- `external/fast_gicp_rust/fast-gicp-sys/src/wrapper.cpp:600-603` - Iteration count bug (always returns max)
+- `external/fast_gicp_rust/fast_gicp/src/fast_gicp/cuda/ndt_compute_derivatives.cu` - Different cost function
 
 ## Build System
 
@@ -108,6 +133,8 @@ just stop-ndt-autoware  # or stop-ndt-cuda
 - `just status-ndt-{autoware,cuda}` - Show service status
 - `just log-ndt-{autoware,cuda}` - Follow service logs
 
+**Important:** The `just start-*` recipes start background systemd services. Do NOT append `&` to these commands - they return immediately after starting the service. Use `just log-*` to monitor service output.
+
 **Note:** The sample rosbag may require manual pose initialization in RViz using "2D Pose Estimate" tool.
 
 For running with custom rosbags, see `docs/rosbag-replay-guide.md`.
@@ -121,7 +148,8 @@ cuda_ndt_matcher/
 │   ├── architecture.md          # System architecture, ROS interface
 │   ├── integration.md           # fast_gicp_rust + cubecl usage
 │   ├── roadmap.md               # Phased work items with tests
-│   └── rosbag-replay-guide.md   # Guide for custom rosbag replay simulation
+│   ├── rosbag-replay-guide.md   # Guide for custom rosbag replay simulation
+│   └── cubecl-ndt-roadmap.md    # CubeCL NDT implementation plan
 ├── data/                        # Test data (downloaded via just download-data)
 │   ├── sample-map-rosbag/       # PCD map and lanelet2_map.osm
 │   └── sample-rosbag/           # Sample rosbag for replay simulation
@@ -135,6 +163,14 @@ cuda_ndt_matcher/
 ├── Cargo.toml                   # Cargo workspace root
 ├── target/                      # Cargo build output
 ├── src/
+│   ├── ndt_cuda/                # NEW: CubeCL NDT library (planned)
+│   │   ├── src/
+│   │   │   ├── lib.rs
+│   │   │   ├── voxel_grid/      # Voxelization kernels
+│   │   │   ├── derivatives/     # Jacobian/Hessian computation
+│   │   │   ├── optimization/    # Newton solver
+│   │   │   └── scoring/         # Transform probability, NVTL
+│   │   └── Cargo.toml
 │   ├── cuda_ndt_matcher/        # Main ROS package (Rust)
 │   │   ├── src/
 │   │   │   ├── main.rs          # Node entry point, subscriptions, publishers
@@ -207,7 +243,9 @@ The Autoware `ndt_scan_matcher` at `external/autoware_core/localization/autoware
 - `particle.hpp/cpp`: Particle representation for Monte Carlo
 - `hyper_parameters.hpp`: Configuration parameters
 
-## fast_gicp_rust
+## fast_gicp_rust (DEPRECATED)
+
+> **Note:** fast-gicp is being phased out due to fundamental algorithm incompatibilities with Autoware's NDT requirements. See "Why fast-gicp Doesn't Work" section above.
 
 `external/fast_gicp_rust/` provides Rust bindings for CUDA-accelerated point cloud registration.
 
@@ -231,6 +269,44 @@ let ndt = NDTCuda::builder()
 let result = ndt.align_with_guess(&source, &target, Some(&initial_transform))?;
 // result.has_converged, result.fitness_score, result.final_transformation
 ```
+
+## CubeCL NDT (NEW)
+
+We are implementing custom CUDA kernels using [CubeCL](https://github.com/tracel-ai/cubecl), a pure-Rust GPU compute library that compiles to CUDA, ROCm, and WebGPU.
+
+### Why CubeCL?
+
+- **Pure Rust**: No C++/CUDA FFI complexity
+- **Multi-platform**: Same code for CUDA, ROCm, WebGPU
+- **Type-safe**: Rust's guarantees for GPU code
+- **Automatic vectorization**: `Line<T>` handles SIMD
+
+### Planned Structure
+
+```
+src/
+├── cuda_ndt_matcher/     # Existing ROS node
+└── ndt_cuda/             # NEW: CubeCL NDT library
+    ├── voxel_grid/       # Voxelization kernels
+    ├── derivatives/      # Jacobian/Hessian computation
+    ├── optimization/     # Newton solver
+    └── scoring/          # Transform probability, NVTL
+```
+
+### Key Algorithm (Magnusson 2009)
+
+The NDT algorithm we're implementing:
+
+1. **Voxelization**: Build Gaussian voxel grid from map (mean + covariance per voxel)
+2. **Correspondence**: Find voxels containing each transformed source point
+3. **Derivatives**: Compute gradient (6x1) and Hessian (6x6) using:
+   - Score: `p(x) = -d1 * exp(-d2/2 * (x-μ)ᵀΣ⁻¹(x-μ))` (Eq. 6.9)
+   - Gradient: Eq. 6.12
+   - Hessian: Eq. 6.13
+4. **Newton step**: Solve `Δp = -H⁻¹g` (6x6 linear system)
+5. **Iterate**: Until convergence (typically 5-10 iterations)
+
+See `docs/cubecl-ndt-roadmap.md` for full implementation details.
 
 ## Development Notes
 
