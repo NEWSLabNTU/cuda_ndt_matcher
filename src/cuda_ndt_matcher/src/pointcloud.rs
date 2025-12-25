@@ -1,7 +1,8 @@
 //! Point cloud conversion utilities
 
 use anyhow::{bail, Result};
-use sensor_msgs::msg::PointCloud2;
+use sensor_msgs::msg::{PointCloud2, PointField};
+use std_msgs::msg::Header;
 
 /// Field offsets for XYZ point cloud
 struct XyzOffsets {
@@ -85,10 +86,52 @@ fn read_f32(data: &[u8], offset: usize) -> f32 {
     f32::from_le_bytes(bytes)
 }
 
+/// Convert Vec of [x, y, z] points to PointCloud2 message
+pub fn to_pointcloud2(points: &[[f32; 3]], header: &Header) -> PointCloud2 {
+    let point_step = 12u32; // 3 * sizeof(f32)
+    let mut data = Vec::with_capacity(points.len() * point_step as usize);
+
+    for p in points {
+        data.extend_from_slice(&p[0].to_le_bytes());
+        data.extend_from_slice(&p[1].to_le_bytes());
+        data.extend_from_slice(&p[2].to_le_bytes());
+    }
+
+    PointCloud2 {
+        header: header.clone(),
+        height: 1,
+        width: points.len() as u32,
+        fields: vec![
+            PointField {
+                name: "x".into(),
+                offset: 0,
+                datatype: 7, // FLOAT32
+                count: 1,
+            },
+            PointField {
+                name: "y".into(),
+                offset: 4,
+                datatype: 7,
+                count: 1,
+            },
+            PointField {
+                name: "z".into(),
+                offset: 8,
+                datatype: 7,
+                count: 1,
+            },
+        ],
+        is_bigendian: false,
+        point_step,
+        row_step: point_step * points.len() as u32,
+        data,
+        is_dense: true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sensor_msgs::msg::PointField;
 
     fn make_test_pointcloud(points: &[[f32; 3]]) -> PointCloud2 {
         let point_step = 12u32; // 3 * sizeof(f32)

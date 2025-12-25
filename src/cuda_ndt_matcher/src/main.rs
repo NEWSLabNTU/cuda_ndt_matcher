@@ -10,7 +10,7 @@ mod tpe;
 
 use anyhow::Result;
 use arc_swap::ArcSwap;
-use geometry_msgs::msg::{Point, PoseStamped, PoseWithCovariance, PoseWithCovarianceStamped};
+use geometry_msgs::msg::{Point, Pose, PoseStamped, PoseWithCovariance, PoseWithCovarianceStamped};
 use map_module::MapUpdateModule;
 use ndt_manager::NdtManager;
 use params::NdtParams;
@@ -22,9 +22,12 @@ use rclrs::{
 use sensor_msgs::msg::PointCloud2;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 use std_msgs::msg::Header;
 use std_srvs::srv::{SetBool, Trigger};
+use tier4_debug_msgs::msg::{Float32Stamped, Int32Stamped};
 use tier4_localization_msgs::srv::PoseWithCovarianceStamped as PoseWithCovSrv;
+use visualization_msgs::msg::{Marker, MarkerArray};
 
 // Type aliases
 type SetBoolRequest = std_srvs::srv::SetBool_Request;
@@ -36,6 +39,26 @@ type PoseWithCovSrvResponse = tier4_localization_msgs::srv::PoseWithCovarianceSt
 
 const NODE_NAME: &str = "ndt_scan_matcher";
 
+/// Holds debug and visualization publishers
+#[derive(Clone)]
+struct DebugPublishers {
+    // Visualization
+    ndt_marker_pub: Publisher<MarkerArray>,
+    points_aligned_pub: Publisher<PointCloud2>,
+    monte_carlo_marker_pub: Publisher<MarkerArray>,
+
+    // Debug metrics
+    transform_probability_pub: Publisher<Float32Stamped>,
+    nvtl_pub: Publisher<Float32Stamped>,
+    iteration_num_pub: Publisher<Int32Stamped>,
+    exe_time_pub: Publisher<Float32Stamped>,
+
+    // Pose tracking
+    initial_pose_cov_pub: Publisher<PoseWithCovarianceStamped>,
+    initial_to_result_distance_pub: Publisher<Float32Stamped>,
+    initial_to_result_relative_pose_pub: Publisher<PoseStamped>,
+}
+
 struct NdtScanMatcherNode {
     // Subscriptions (stored to keep alive)
     _points_sub: Subscription<PointCloud2>,
@@ -43,9 +66,12 @@ struct NdtScanMatcherNode {
     _regularization_pose_sub: Subscription<PoseWithCovarianceStamped>,
     _map_sub: Subscription<PointCloud2>,
 
-    // Publishers
+    // Publishers - Core pose output
     pose_pub: Publisher<PoseStamped>,
     pose_cov_pub: Publisher<PoseWithCovarianceStamped>,
+
+    // Publishers - Debug and visualization
+    debug_pubs: DebugPublishers,
 
     // Services
     _trigger_srv: Service<SetBool>,
@@ -101,9 +127,24 @@ impl NdtScanMatcherNode {
             ..QoSProfile::sensor_data_default()
         };
 
-        // Publishers
-        let pose_pub = node.create_publisher("ndt_pose")?;
-        let pose_cov_pub = node.create_publisher("ndt_pose_with_covariance")?;
+        // Publishers - Core pose output
+        let pose_pub = node.create_publisher("pose")?;
+        let pose_cov_pub = node.create_publisher("pose_with_covariance")?;
+
+        // Publishers - Debug and visualization
+        let debug_pubs = DebugPublishers {
+            ndt_marker_pub: node.create_publisher("ndt_marker")?,
+            points_aligned_pub: node.create_publisher("points_aligned")?,
+            monte_carlo_marker_pub: node.create_publisher("monte_carlo_initial_pose_marker")?,
+            transform_probability_pub: node.create_publisher("transform_probability")?,
+            nvtl_pub: node.create_publisher("nearest_voxel_transformation_likelihood")?,
+            iteration_num_pub: node.create_publisher("iteration_num")?,
+            exe_time_pub: node.create_publisher("exe_time_ms")?,
+            initial_pose_cov_pub: node.create_publisher("initial_pose_with_covariance")?,
+            initial_to_result_distance_pub: node.create_publisher("initial_to_result_distance")?,
+            initial_to_result_relative_pose_pub: node
+                .create_publisher("initial_to_result_relative_pose")?,
+        };
 
         // Points subscription
         let points_sub = {
@@ -114,6 +155,7 @@ impl NdtScanMatcherNode {
             let enabled = Arc::clone(&enabled);
             let pose_pub = pose_pub.clone();
             let pose_cov_pub = pose_cov_pub.clone();
+            let debug_pubs = debug_pubs.clone();
             let params = Arc::clone(&params);
 
             let mut opts = SubscriptionOptions::new("points_raw");
@@ -129,6 +171,7 @@ impl NdtScanMatcherNode {
                     &enabled,
                     &pose_pub,
                     &pose_cov_pub,
+                    &debug_pubs,
                     &params,
                 );
             })?
@@ -236,6 +279,7 @@ impl NdtScanMatcherNode {
             _map_sub: map_sub,
             pose_pub,
             pose_cov_pub,
+            debug_pubs,
             _trigger_srv: trigger_srv,
             _ndt_align_srv: ndt_align_srv,
             _map_update_srv: map_update_srv,
@@ -259,8 +303,10 @@ impl NdtScanMatcherNode {
         enabled: &Arc<AtomicBool>,
         pose_pub: &Publisher<PoseStamped>,
         pose_cov_pub: &Publisher<PoseWithCovarianceStamped>,
+        debug_pubs: &DebugPublishers,
         params: &NdtParams,
     ) {
+        let start_time = Instant::now();
         // Convert sensor points first - needed for align service even before we have initial pose
         let sensor_points = match pointcloud::from_pointcloud2(&msg) {
             Ok(pts) => pts,
@@ -360,14 +406,147 @@ impl NdtScanMatcherNode {
 
         // Publish PoseWithCovarianceStamped with estimated covariance
         let pose_cov_msg = PoseWithCovarianceStamped {
-            header,
+            header: header.clone(),
             pose: PoseWithCovariance {
-                pose: result.pose,
+                pose: result.pose.clone(),
                 covariance: covariance_result.covariance,
             },
         };
         if let Err(e) = pose_cov_pub.publish(&pose_cov_msg) {
             log_error!(NODE_NAME, "Failed to publish pose with covariance: {e}");
+        }
+
+        // ---- Debug Publishers ----
+
+        // Calculate execution time
+        let exe_time_ms = start_time.elapsed().as_secs_f32() * 1000.0;
+
+        // Publish execution time
+        let exe_time_msg = Float32Stamped {
+            stamp: msg.header.stamp.clone(),
+            data: exe_time_ms,
+        };
+        let _ = debug_pubs.exe_time_pub.publish(&exe_time_msg);
+
+        // Publish iteration count
+        let iteration_msg = Int32Stamped {
+            stamp: msg.header.stamp.clone(),
+            data: result.iterations,
+        };
+        let _ = debug_pubs.iteration_num_pub.publish(&iteration_msg);
+
+        // Publish transform probability (fitness score converted to probability)
+        let transform_prob = (-result.score / 10.0).exp();
+        let transform_prob_msg = Float32Stamped {
+            stamp: msg.header.stamp.clone(),
+            data: transform_prob as f32,
+        };
+        let _ = debug_pubs
+            .transform_probability_pub
+            .publish(&transform_prob_msg);
+
+        // Compute and publish NVTL score
+        let nvtl_score = manager
+            .evaluate_nvtl(&sensor_points, map, &result.pose, 0.55)
+            .unwrap_or(0.0);
+        let nvtl_msg = Float32Stamped {
+            stamp: msg.header.stamp.clone(),
+            data: nvtl_score as f32,
+        };
+        let _ = debug_pubs.nvtl_pub.publish(&nvtl_msg);
+
+        // Publish initial pose with covariance
+        let _ = debug_pubs.initial_pose_cov_pub.publish(initial_pose);
+
+        // Calculate initial to result distance
+        let dx = result.pose.position.x - initial_pose.pose.pose.position.x;
+        let dy = result.pose.position.y - initial_pose.pose.pose.position.y;
+        let dz = result.pose.position.z - initial_pose.pose.pose.position.z;
+        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+        let distance_msg = Float32Stamped {
+            stamp: msg.header.stamp.clone(),
+            data: distance as f32,
+        };
+        let _ = debug_pubs
+            .initial_to_result_distance_pub
+            .publish(&distance_msg);
+
+        // Publish relative pose (result relative to initial)
+        let relative_pose_msg = PoseStamped {
+            header: header.clone(),
+            pose: Pose {
+                position: Point {
+                    x: dx,
+                    y: dy,
+                    z: dz,
+                },
+                orientation: result.pose.orientation.clone(),
+            },
+        };
+        let _ = debug_pubs
+            .initial_to_result_relative_pose_pub
+            .publish(&relative_pose_msg);
+
+        // Publish NDT marker (arrow showing result pose)
+        // Note: Autoware's builtin publishes transformation_array (all iteration poses as markers).
+        // fast-gicp doesn't expose iteration history, so we only publish the final pose.
+        let ndt_marker = Self::create_pose_marker(&header, &result.pose, 0);
+        let marker_array = MarkerArray {
+            markers: vec![ndt_marker],
+        };
+        let _ = debug_pubs.ndt_marker_pub.publish(&marker_array);
+
+        // Publish aligned points (transformed sensor points)
+        let aligned_points: Vec<[f32; 3]> = sensor_points
+            .iter()
+            .map(|p| {
+                // Transform point by result pose
+                let px = p[0] as f64;
+                let py = p[1] as f64;
+                let pz = p[2] as f64;
+                // Simple translation (full transform would need quaternion rotation)
+                [
+                    (px + result.pose.position.x) as f32,
+                    (py + result.pose.position.y) as f32,
+                    (pz + result.pose.position.z) as f32,
+                ]
+            })
+            .collect();
+        let aligned_msg = pointcloud::to_pointcloud2(&aligned_points, &header);
+        let _ = debug_pubs.points_aligned_pub.publish(&aligned_msg);
+    }
+
+    /// Create an arrow marker representing a pose
+    fn create_pose_marker(header: &Header, pose: &Pose, id: i32) -> Marker {
+        Marker {
+            header: header.clone(),
+            ns: "result_pose_matrix_array".to_string(),
+            id,
+            type_: 0,  // ARROW
+            action: 0, // ADD
+            pose: pose.clone(),
+            scale: geometry_msgs::msg::Vector3 {
+                x: 0.3,
+                y: 0.1,
+                z: 0.1,
+            },
+            color: std_msgs::msg::ColorRGBA {
+                r: 0.0,
+                g: 0.7,
+                b: 1.0,
+                a: 0.999,
+            },
+            lifetime: builtin_interfaces::msg::Duration { sec: 0, nanosec: 0 },
+            frame_locked: false,
+            points: vec![],
+            colors: vec![],
+            texture_resource: String::new(),
+            texture: sensor_msgs::msg::CompressedImage::default(),
+            uv_coordinates: vec![],
+            text: String::new(),
+            mesh_resource: String::new(),
+            mesh_file: visualization_msgs::msg::MeshFile::default(),
+            mesh_use_embedded_materials: false,
         }
     }
 
