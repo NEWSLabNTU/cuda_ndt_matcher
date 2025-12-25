@@ -9,6 +9,16 @@ autoware_setup := "external/autoware_repo/install/setup.bash"
 local_setup := "install/setup.bash"
 sample_map_dir := "data/sample-map-rosbag"
 sample_rosbag := "data/sample-rosbag-fixed"
+rosbag_output_dir := "rosbag"
+
+# NDT output/debug topics to record
+ndt_output_topics := "/localization/pose_estimator/pose /localization/pose_estimator/pose_with_covariance /localization/pose_estimator/ndt_marker /localization/pose_estimator/points_aligned /localization/pose_estimator/monte_carlo_initial_pose_marker /localization/pose_estimator/transform_probability /localization/pose_estimator/nearest_voxel_transformation_likelihood /localization/pose_estimator/iteration_num /localization/pose_estimator/exe_time_ms /localization/pose_estimator/initial_pose_with_covariance /localization/pose_estimator/initial_to_result_distance /localization/pose_estimator/initial_to_result_relative_pose"
+
+# NDT input topics (for debugging)
+ndt_input_topics := "/localization/pose_twist_fusion_filter/biased_pose_with_covariance /localization/util/downsample/pointcloud"
+
+# All NDT topics (input + output)
+ndt_topics := ndt_output_topics + " " + ndt_input_topics
 
 # Show available recipes
 default:
@@ -54,21 +64,13 @@ play-rosbag:
     source {{autoware_setup}}
     ros2 bag play -l $(realpath {{sample_rosbag}})
 
-# Start Autoware demo (NDT + rosbag) - runs simulation and rosbag in parallel
+# Start Autoware builtin NDT demo (simulation + rosbag + recording)
 run-builtin:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    parallel --halt now,done=1 --line-buffer ::: \
-        "./scripts/run_ndt_simulation.sh '$(realpath {{sample_map_dir}})'" \
-        "sleep 30 && source {{autoware_setup}} && ros2 bag play -l '$(realpath {{sample_rosbag}})'"
+    ./scripts/run_demo.sh "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
 
-# Start CUDA demo (NDT + rosbag) - runs simulation and rosbag in parallel
+# Start CUDA NDT demo (simulation + rosbag + recording)
 run-cuda:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    parallel --halt now,done=1 --line-buffer ::: \
-        "./scripts/run_ndt_simulation.sh --cuda '$(realpath {{sample_map_dir}})'" \
-        "sleep 30 && source {{autoware_setup}} && ros2 bag play -l '$(realpath {{sample_rosbag}})'"
+    ./scripts/run_demo.sh --cuda "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
 
 # Enable NDT matching via service call
 enable-ndt:
