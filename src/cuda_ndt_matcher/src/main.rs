@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use std_msgs::msg::Header;
 use std_srvs::srv::{SetBool, Trigger};
+use tf2_msgs::msg::TFMessage;
 use tier4_debug_msgs::msg::{Float32Stamped, Int32Stamped};
 use tier4_localization_msgs::srv::PoseWithCovarianceStamped as PoseWithCovSrv;
 use visualization_msgs::msg::{Marker, MarkerArray};
@@ -44,6 +45,9 @@ const NODE_NAME: &str = "ndt_scan_matcher";
 /// Holds debug and visualization publishers
 #[derive(Clone)]
 struct DebugPublishers {
+    // TF broadcaster (publishes to /tf)
+    tf_pub: Publisher<TFMessage>,
+
     // Visualization
     ndt_marker_pub: Publisher<MarkerArray>,
     points_aligned_pub: Publisher<PointCloud2>,
@@ -135,6 +139,8 @@ impl NdtScanMatcherNode {
 
         // Publishers - Debug and visualization
         let debug_pubs = DebugPublishers {
+            // TF broadcaster - publishes to /tf (absolute topic name)
+            tf_pub: node.create_publisher("/tf")?,
             ndt_marker_pub: node.create_publisher("ndt_marker")?,
             points_aligned_pub: node.create_publisher("points_aligned")?,
             monte_carlo_marker_pub: node.create_publisher("monte_carlo_initial_pose_marker")?,
@@ -364,8 +370,8 @@ impl NdtScanMatcherNode {
 
         // Run NDT alignment (with optional debug output)
         let debug_enabled = std::env::var("NDT_DEBUG").is_ok();
-        let timestamp_ns = msg.header.stamp.sec as u64 * 1_000_000_000
-            + msg.header.stamp.nanosec as u64;
+        let timestamp_ns =
+            msg.header.stamp.sec as u64 * 1_000_000_000 + msg.header.stamp.nanosec as u64;
 
         let mut manager = ndt_manager.lock();
         let result = if debug_enabled {
@@ -442,6 +448,16 @@ impl NdtScanMatcherNode {
         if let Err(e) = pose_cov_pub.publish(&pose_cov_msg) {
             log_error!(NODE_NAME, "Failed to publish pose with covariance: {e}");
         }
+
+        // Publish TF transform (map -> ndt_base_link)
+        // This matches Autoware's publish_tf() behavior
+        Self::publish_tf(
+            &debug_pubs.tf_pub,
+            &msg.header.stamp,
+            &result.pose,
+            &params.frame.map_frame,
+            &params.frame.ndt_base_frame,
+        );
 
         // ---- Debug Publishers ----
 
@@ -574,6 +590,54 @@ impl NdtScanMatcherNode {
             mesh_resource: String::new(),
             mesh_file: visualization_msgs::msg::MeshFile::default(),
             mesh_use_embedded_materials: false,
+        }
+    }
+
+    /// Publish TF transform from map frame to ndt_base_frame.
+    ///
+    /// This matches Autoware's `publish_tf()` behavior in ndt_scan_matcher_core.cpp:
+    /// - Parent frame: map_frame (typically "map")
+    /// - Child frame: ndt_base_frame (typically "ndt_base_link")
+    /// - Transform: The NDT result pose
+    ///
+    /// The TF is published to the `/tf` topic as a TFMessage containing a single
+    /// TransformStamped message.
+    fn publish_tf(
+        tf_pub: &Publisher<TFMessage>,
+        stamp: &builtin_interfaces::msg::Time,
+        pose: &Pose,
+        map_frame: &str,
+        ndt_base_frame: &str,
+    ) {
+        // Convert Pose to Transform
+        // Pose uses position/orientation, Transform uses translation/rotation
+        let transform = geometry_msgs::msg::Transform {
+            translation: geometry_msgs::msg::Vector3 {
+                x: pose.position.x,
+                y: pose.position.y,
+                z: pose.position.z,
+            },
+            rotation: pose.orientation.clone(),
+        };
+
+        // Create TransformStamped message
+        let transform_stamped = geometry_msgs::msg::TransformStamped {
+            header: Header {
+                stamp: stamp.clone(),
+                frame_id: map_frame.to_string(),
+            },
+            child_frame_id: ndt_base_frame.to_string(),
+            transform,
+        };
+
+        // Create TFMessage with the single transform
+        let tf_msg = TFMessage {
+            transforms: vec![transform_stamped],
+        };
+
+        // Publish to /tf
+        if let Err(e) = tf_pub.publish(&tf_msg) {
+            log_error!(NODE_NAME, "Failed to publish TF: {e}");
         }
     }
 
