@@ -36,6 +36,17 @@ echo "  Map: $MAP_DIR"
 echo "  Rosbag: $ROSBAG"
 echo "  Recording to: $BAG_NAME"
 
+# Export NDT debug environment variables
+if [[ -n "$USE_CUDA" ]]; then
+    export NDT_DEBUG=1
+    export NDT_DEBUG_FILE="${NDT_DEBUG_FILE:-/tmp/ndt_cuda_debug.jsonl}"
+    echo "CUDA NDT debug enabled: $NDT_DEBUG_FILE"
+else
+    export NDT_AUTOWARE_DEBUG=1
+    export NDT_AUTOWARE_DEBUG_FILE="${NDT_AUTOWARE_DEBUG_FILE:-/tmp/ndt_autoware_debug.jsonl}"
+    echo "Autoware NDT debug enabled: $NDT_AUTOWARE_DEBUG_FILE"
+fi
+
 # Run simulation, bag play, and recording in parallel
 # --halt now,done=1: When any job finishes, kill all others immediately
 # This ensures cleanup when ros2 bag play completes (since -l flag removed)

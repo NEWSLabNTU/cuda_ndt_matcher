@@ -47,7 +47,14 @@ source "$PROJECT_DIR/install/setup.bash"
 if [[ "$USE_CUDA" == "true" && -z "${NDT_DEBUG:-}" ]]; then
     export NDT_DEBUG=1
     export NDT_DEBUG_FILE="${NDT_DEBUG_FILE:-/tmp/ndt_cuda_debug.jsonl}"
-    echo "NDT debug enabled: $NDT_DEBUG_FILE"
+    echo "CUDA NDT debug enabled: $NDT_DEBUG_FILE"
+fi
+
+# Export NDT_AUTOWARE_DEBUG if builtin mode and not already set
+if [[ "$USE_CUDA" == "false" && -z "${NDT_AUTOWARE_DEBUG:-}" ]]; then
+    export NDT_AUTOWARE_DEBUG=1
+    export NDT_AUTOWARE_DEBUG_FILE="${NDT_AUTOWARE_DEBUG_FILE:-/tmp/ndt_autoware_debug.jsonl}"
+    echo "Autoware NDT debug enabled: $NDT_AUTOWARE_DEBUG_FILE"
 fi
 
 exec \
