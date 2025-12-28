@@ -10,13 +10,18 @@
 //! 1. GPU: Compute voxel IDs for all points (parallel)
 //! 2. CPU: Accumulate point statistics per voxel (HashMap-based)
 //! 3. CPU: Compute covariance and regularization (parallel via rayon)
+//! 4. CPU: Build KD-tree from voxel centroids for radius search
 //!
-//! Future versions will move more computation to GPU using CubeCL kernels.
+//! The KD-tree enables efficient radius search matching Autoware's behavior,
+//! where each source point can contribute to score from multiple nearby voxels.
 
 pub mod cpu;
+pub mod gpu;
 pub mod kernels;
+pub mod search;
 pub mod types;
 
+pub use search::VoxelSearch;
 pub use types::{Voxel, VoxelCoord, VoxelGridConfig};
 
 use std::collections::HashMap;
@@ -31,12 +36,19 @@ use crate::voxel_grid::cpu::build_voxel_grid_cpu;
 /// - Voxel means (centroids)
 /// - Inverse covariance matrices
 /// - Spatial hash for O(1) voxel lookup
+/// - KD-tree for efficient radius search (like Autoware's radiusSearch)
 #[derive(Debug)]
 pub struct VoxelGrid {
     /// Configuration used to build this grid.
     pub config: VoxelGridConfig,
-    /// Voxels indexed by their coordinates.
-    voxels: HashMap<VoxelCoord, Voxel>,
+    /// Voxels stored in a vector for indexed access.
+    voxels: Vec<Voxel>,
+    /// Voxel coordinates (parallel to voxels vector).
+    coords: Vec<VoxelCoord>,
+    /// Map from coordinate to index in voxels vector.
+    coord_to_index: HashMap<VoxelCoord, usize>,
+    /// KD-tree for radius search over voxel centroids.
+    search: Option<VoxelSearch>,
     /// Precomputed bounds for GPU operations.
     min_bound: Option<VoxelCoord>,
     max_bound: Option<VoxelCoord>,
@@ -48,7 +60,10 @@ impl VoxelGrid {
     pub fn new(config: VoxelGridConfig) -> Self {
         Self {
             config,
-            voxels: HashMap::new(),
+            voxels: Vec::new(),
+            coords: Vec::new(),
+            coord_to_index: HashMap::new(),
+            search: None,
             min_bound: None,
             max_bound: None,
             grid_dims: None,
@@ -79,9 +94,21 @@ impl VoxelGrid {
 
     /// Build a voxel grid with custom configuration.
     pub fn from_points_with_config(points: &[[f32; 3]], config: VoxelGridConfig) -> Result<Self> {
-        let voxels = build_voxel_grid_cpu(points, &config);
+        let voxel_map = build_voxel_grid_cpu(points, &config);
 
-        let coords: Vec<_> = voxels.keys().copied().collect();
+        // Convert HashMap to Vec + index map
+        let mut voxels = Vec::with_capacity(voxel_map.len());
+        let mut coords = Vec::with_capacity(voxel_map.len());
+        let mut coord_to_index = HashMap::with_capacity(voxel_map.len());
+
+        for (coord, voxel) in voxel_map {
+            let idx = voxels.len();
+            coords.push(coord);
+            voxels.push(voxel);
+            coord_to_index.insert(coord, idx);
+        }
+
+        // Compute bounds
         let (min_bound, max_bound, grid_dims) = if coords.is_empty() {
             (None, None, None)
         } else {
@@ -89,9 +116,15 @@ impl VoxelGrid {
             (Some(min), Some(max), Some(dims))
         };
 
+        // Build KD-tree for radius search
+        let search = VoxelSearch::from_voxels(&voxels);
+
         Ok(Self {
             config,
             voxels,
+            coords,
+            coord_to_index,
+            search,
             min_bound,
             max_bound,
             grid_dims,
@@ -110,7 +143,7 @@ impl VoxelGrid {
 
     /// Get a voxel by its coordinates.
     pub fn get(&self, coord: &VoxelCoord) -> Option<&Voxel> {
-        self.voxels.get(coord)
+        self.coord_to_index.get(coord).map(|&idx| &self.voxels[idx])
     }
 
     /// Get a voxel by integer coordinate array [x, y, z].
@@ -120,67 +153,55 @@ impl VoxelGrid {
             y: coord[1],
             z: coord[2],
         };
-        self.voxels.get(&voxel_coord)
+        self.get(&voxel_coord)
     }
 
-    /// Get a voxel by point position.
+    /// Get a voxel by point position (geometric containment).
+    ///
+    /// Returns the single voxel that geometrically contains this point.
+    /// For multi-voxel queries, use `radius_search` instead.
     pub fn get_by_point(&self, point: &[f32; 3]) -> Option<&Voxel> {
         let coord = VoxelCoord::from_point(point, self.config.resolution);
         self.get(&coord)
     }
 
+    /// Get a voxel by its index.
+    pub fn get_by_index(&self, idx: usize) -> Option<&Voxel> {
+        self.voxels.get(idx)
+    }
+
     /// Find all voxels within a given radius of a point.
     ///
-    /// This matches Autoware's behavior where each source point may contribute
-    /// to score from multiple voxels, providing smoother gradients especially
-    /// near voxel boundaries.
+    /// This matches Autoware's `radiusSearch` behavior where each source point
+    /// may contribute to score from multiple voxels, providing smoother gradients
+    /// especially near voxel boundaries.
+    ///
+    /// Uses KD-tree for efficient search over voxel centroids (means).
     ///
     /// # Arguments
     /// * `point` - Query point [x, y, z]
     /// * `radius` - Search radius (typically equal to voxel resolution)
     ///
     /// # Returns
-    /// Vector of references to voxels within the radius
+    /// Vector of references to voxels within the radius, sorted by distance.
     pub fn radius_search(&self, point: &[f32; 3], radius: f32) -> Vec<&Voxel> {
-        let resolution = self.config.resolution;
-
-        // Compute the range of voxel coordinates to search
-        // A voxel at coord (i,j,k) covers [i*res, (i+1)*res) in each dimension
-        // We need to find all voxels whose centers are within `radius` of the point
-        let search_cells = (radius / resolution).ceil() as i32 + 1;
-
-        // Get the central voxel coordinate
-        let center_coord = VoxelCoord::from_point(point, resolution);
-
-        let mut result = Vec::new();
-
-        // Search in a cube of voxels around the point
-        for di in -search_cells..=search_cells {
-            for dj in -search_cells..=search_cells {
-                for dk in -search_cells..=search_cells {
-                    let coord = VoxelCoord {
-                        x: center_coord.x + di,
-                        y: center_coord.y + dj,
-                        z: center_coord.z + dk,
-                    };
-
-                    if let Some(voxel) = self.voxels.get(&coord) {
-                        // Check distance from point to voxel mean (centroid of points)
-                        // This ensures we only include voxels that are actually close
-                        let dx = point[0] - voxel.mean.x;
-                        let dy = point[1] - voxel.mean.y;
-                        let dz = point[2] - voxel.mean.z;
-                        let dist_sq = dx * dx + dy * dy + dz * dz;
-
-                        if dist_sq <= radius * radius {
-                            result.push(voxel);
-                        }
-                    }
-                }
+        match &self.search {
+            Some(search) => {
+                let indices = search.within(point, radius);
+                indices.iter().map(|&idx| &self.voxels[idx]).collect()
             }
+            None => Vec::new(),
         }
+    }
 
-        result
+    /// Find all voxel indices within a given radius of a point.
+    ///
+    /// Returns indices that can be used with `get_by_index`.
+    pub fn radius_search_indices(&self, point: &[f32; 3], radius: f32) -> Vec<usize> {
+        match &self.search {
+            Some(search) => search.within(point, radius),
+            None => Vec::new(),
+        }
     }
 
     /// Get the configuration.
@@ -188,9 +209,14 @@ impl VoxelGrid {
         &self.config
     }
 
-    /// Iterate over all voxels.
+    /// Iterate over all voxels with their coordinates.
     pub fn iter(&self) -> impl Iterator<Item = (&VoxelCoord, &Voxel)> {
-        self.voxels.iter()
+        self.coords.iter().zip(self.voxels.iter())
+    }
+
+    /// Iterate over all voxels.
+    pub fn voxels(&self) -> &[Voxel] {
+        &self.voxels
     }
 
     /// Get the grid bounds.
@@ -216,7 +242,7 @@ impl VoxelGrid {
     /// Useful for GPU upload.
     pub fn means_flat(&self) -> Vec<f32> {
         let mut result = Vec::with_capacity(self.voxels.len() * 3);
-        for voxel in self.voxels.values() {
+        for voxel in &self.voxels {
             result.push(voxel.mean.x);
             result.push(voxel.mean.y);
             result.push(voxel.mean.z);
@@ -229,7 +255,7 @@ impl VoxelGrid {
     /// Row-major 3x3 matrices. Useful for GPU upload.
     pub fn inv_covariances_flat(&self) -> Vec<f32> {
         let mut result = Vec::with_capacity(self.voxels.len() * 9);
-        for voxel in self.voxels.values() {
+        for voxel in &self.voxels {
             // Row-major order
             for row in 0..3 {
                 for col in 0..3 {
@@ -242,8 +268,8 @@ impl VoxelGrid {
 
     /// Get all voxel coordinates as a flat array.
     pub fn coords_flat(&self) -> Vec<i32> {
-        let mut result = Vec::with_capacity(self.voxels.len() * 3);
-        for coord in self.voxels.keys() {
+        let mut result = Vec::with_capacity(self.coords.len() * 3);
+        for coord in &self.coords {
             result.push(coord.x);
             result.push(coord.y);
             result.push(coord.z);

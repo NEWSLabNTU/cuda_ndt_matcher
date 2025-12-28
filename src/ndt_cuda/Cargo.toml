@@ -19,6 +19,9 @@ thiserror = { workspace = true }
 # Parallel CPU (for reference implementation)
 rayon = "1.10"
 
+# KD-tree for voxel centroid radius search
+kiddo = "4"
+
 [dev-dependencies]
 # Testing
 rand = { workspace = true }

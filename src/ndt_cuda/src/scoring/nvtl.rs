@@ -204,9 +204,10 @@ fn compute_point_voxel_score(
     -gauss.d1 * (-gauss.d2 * mahal_sq / 2.0).exp()
 }
 
-/// Compute NVTL using a simpler single-voxel lookup (no neighbor search).
+/// Compute NVTL using radius search (like Autoware's radiusSearch).
 ///
-/// This is faster but less robust than full NVTL.
+/// For each point, finds all voxels within the search radius and takes the
+/// maximum score. The final NVTL is the average of these max scores.
 pub fn compute_nvtl_simple(
     source_points: &[[f32; 3]],
     target_grid: &VoxelGrid,
@@ -217,8 +218,11 @@ pub fn compute_nvtl_simple(
         return 0.0;
     }
 
-    let mut total_score = 0.0;
+    let mut total_max_score = 0.0;
     let mut count = 0;
+
+    // Use voxel resolution as search radius (matches Autoware's radiusSearch behavior)
+    let search_radius = target_grid.resolution();
 
     for source_point in source_points {
         let pt = nalgebra::Point3::new(
@@ -233,20 +237,29 @@ pub fn compute_nvtl_simple(
             transformed.z as f32,
         ];
 
-        if let Some(voxel) = target_grid.get_by_point(&transformed_f32) {
-            let score = compute_point_voxel_score(
-                &transformed,
-                &voxel.mean.cast::<f64>(),
-                &voxel.inv_covariance.cast::<f64>(),
-                gauss,
-            );
-            total_score += score;
+        // Find all voxels within radius and take the max score
+        let nearby_voxels = target_grid.radius_search(&transformed_f32, search_radius);
+
+        if !nearby_voxels.is_empty() {
+            let max_score = nearby_voxels
+                .iter()
+                .map(|voxel| {
+                    compute_point_voxel_score(
+                        &transformed,
+                        &voxel.mean.cast::<f64>(),
+                        &voxel.inv_covariance.cast::<f64>(),
+                        gauss,
+                    )
+                })
+                .fold(f64::NEG_INFINITY, f64::max);
+
+            total_max_score += max_score;
             count += 1;
         }
     }
 
     if count > 0 {
-        total_score / count as f64
+        total_max_score / count as f64
     } else {
         0.0
     }

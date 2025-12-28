@@ -69,6 +69,9 @@ pub fn compute_transform_probability(
     let mut num_correspondences = 0;
     let mut num_no_correspondence = 0;
 
+    // Use voxel resolution as search radius (matches Autoware's radiusSearch behavior)
+    let search_radius = target_grid.resolution();
+
     for source_point in source_points {
         // Transform point
         let pt = nalgebra::Point3::new(
@@ -83,10 +86,14 @@ pub fn compute_transform_probability(
             transformed.z as f32,
         ];
 
-        // Find corresponding voxel
-        match target_grid.get_by_point(&transformed_f32) {
-            Some(voxel) => {
-                // Compute score for this correspondence
+        // Find corresponding voxels using radius search (like Autoware)
+        let nearby_voxels = target_grid.radius_search(&transformed_f32, search_radius);
+
+        if nearby_voxels.is_empty() {
+            num_no_correspondence += 1;
+        } else {
+            // Accumulate scores from ALL nearby voxels (key difference from single-voxel lookup)
+            for voxel in nearby_voxels {
                 let score = compute_point_score(
                     &transformed,
                     &voxel.mean.cast::<f64>(),
@@ -95,9 +102,6 @@ pub fn compute_transform_probability(
                 );
                 total_score += score;
                 num_correspondences += 1;
-            }
-            None => {
-                num_no_correspondence += 1;
             }
         }
     }
@@ -119,6 +123,9 @@ pub fn compute_transform_probability(
 
 /// Compute per-point scores for visualization and debugging.
 ///
+/// Each point's score is the sum of NDT scores from all nearby voxels
+/// (using radius search like Autoware's radiusSearch).
+///
 /// # Arguments
 /// * `source_points` - Source point cloud (will be transformed)
 /// * `target_grid` - Target voxel grid (map)
@@ -133,6 +140,9 @@ pub fn compute_per_point_scores(
     pose: &Isometry3<f64>,
     gauss: &GaussianParams,
 ) -> Vec<f64> {
+    // Use voxel resolution as search radius (matches Autoware's radiusSearch behavior)
+    let search_radius = target_grid.resolution();
+
     source_points
         .iter()
         .map(|source_point| {
@@ -149,9 +159,11 @@ pub fn compute_per_point_scores(
                 transformed.z as f32,
             ];
 
-            // Find corresponding voxel and compute score
-            target_grid
-                .get_by_point(&transformed_f32)
+            // Find corresponding voxels and sum their scores
+            let nearby_voxels = target_grid.radius_search(&transformed_f32, search_radius);
+
+            nearby_voxels
+                .iter()
                 .map(|voxel| {
                     compute_point_score(
                         &transformed,
@@ -160,7 +172,7 @@ pub fn compute_per_point_scores(
                         gauss,
                     )
                 })
-                .unwrap_or(0.0)
+                .sum()
         })
         .collect()
 }

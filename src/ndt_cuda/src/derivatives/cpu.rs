@@ -301,42 +301,50 @@ pub fn compute_derivatives_cpu(
         // Transform point using current pose
         let transformed = transform_point(&point_f64, pose);
 
-        // Find corresponding voxel
+        // Find corresponding voxels using radius search (like Autoware's radiusSearch)
+        // This returns all voxels whose centroids are within the search radius
         let transformed_f32 = [
             transformed[0] as f32,
             transformed[1] as f32,
             transformed[2] as f32,
         ];
-        let voxel = match target_grid.get_by_point(&transformed_f32) {
-            Some(v) => v,
-            None => continue, // No correspondence
-        };
 
-        // Compute x - μ (transformed point minus voxel mean)
-        let x_trans = Vector3::new(
-            transformed[0] - voxel.mean.x as f64,
-            transformed[1] - voxel.mean.y as f64,
-            transformed[2] - voxel.mean.z as f64,
-        );
+        // Use voxel resolution as search radius (matches Autoware behavior)
+        let search_radius = target_grid.resolution();
+        let nearby_voxels = target_grid.radius_search(&transformed_f32, search_radius);
 
-        // Convert inverse covariance to f64
-        let inv_cov = voxel.inv_covariance.cast::<f64>();
+        if nearby_voxels.is_empty() {
+            continue; // No correspondences for this point
+        }
 
-        // Compute point derivatives
+        // Compute point derivatives once per source point (shared across all voxels)
         let point_deriv = compute_point_derivatives(&point_f64, &angular, compute_hessian);
 
-        // Compute score/gradient/hessian for this correspondence
-        let deriv = compute_derivative_single(
-            &x_trans,
-            &inv_cov,
-            &point_deriv.point_gradient,
-            &point_deriv.point_hessian,
-            gauss,
-            compute_hessian,
-        );
+        // Accumulate contributions from ALL nearby voxels (key difference from single-voxel lookup)
+        for voxel in nearby_voxels {
+            // Compute x - μ (transformed point minus voxel mean)
+            let x_trans = Vector3::new(
+                transformed[0] - voxel.mean.x as f64,
+                transformed[1] - voxel.mean.y as f64,
+                transformed[2] - voxel.mean.z as f64,
+            );
 
-        // Accumulate
-        result.add(&deriv);
+            // Convert inverse covariance to f64
+            let inv_cov = voxel.inv_covariance.cast::<f64>();
+
+            // Compute score/gradient/hessian for this correspondence
+            let deriv = compute_derivative_single(
+                &x_trans,
+                &inv_cov,
+                &point_deriv.point_gradient,
+                &point_deriv.point_hessian,
+                gauss,
+                compute_hessian,
+            );
+
+            // Accumulate
+            result.add(&deriv);
+        }
     }
 
     result
