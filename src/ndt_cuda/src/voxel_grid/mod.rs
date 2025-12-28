@@ -129,6 +129,60 @@ impl VoxelGrid {
         self.get(&coord)
     }
 
+    /// Find all voxels within a given radius of a point.
+    ///
+    /// This matches Autoware's behavior where each source point may contribute
+    /// to score from multiple voxels, providing smoother gradients especially
+    /// near voxel boundaries.
+    ///
+    /// # Arguments
+    /// * `point` - Query point [x, y, z]
+    /// * `radius` - Search radius (typically equal to voxel resolution)
+    ///
+    /// # Returns
+    /// Vector of references to voxels within the radius
+    pub fn radius_search(&self, point: &[f32; 3], radius: f32) -> Vec<&Voxel> {
+        let resolution = self.config.resolution;
+
+        // Compute the range of voxel coordinates to search
+        // A voxel at coord (i,j,k) covers [i*res, (i+1)*res) in each dimension
+        // We need to find all voxels whose centers are within `radius` of the point
+        let search_cells = (radius / resolution).ceil() as i32 + 1;
+
+        // Get the central voxel coordinate
+        let center_coord = VoxelCoord::from_point(point, resolution);
+
+        let mut result = Vec::new();
+
+        // Search in a cube of voxels around the point
+        for di in -search_cells..=search_cells {
+            for dj in -search_cells..=search_cells {
+                for dk in -search_cells..=search_cells {
+                    let coord = VoxelCoord {
+                        x: center_coord.x + di,
+                        y: center_coord.y + dj,
+                        z: center_coord.z + dk,
+                    };
+
+                    if let Some(voxel) = self.voxels.get(&coord) {
+                        // Check distance from point to voxel mean (centroid of points)
+                        // This ensures we only include voxels that are actually close
+                        let dx = point[0] - voxel.mean.x;
+                        let dy = point[1] - voxel.mean.y;
+                        let dz = point[2] - voxel.mean.z;
+                        let dist_sq = dx * dx + dy * dy + dz * dz;
+
+                        if dist_sq <= radius * radius {
+                            result.push(voxel);
+                        }
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
     /// Get the configuration.
     pub fn config(&self) -> &VoxelGridConfig {
         &self.config
