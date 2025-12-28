@@ -43,6 +43,13 @@ fi
 # Source the local workspace setup
 source "$PROJECT_DIR/install/setup.bash"
 
+# Export NDT_DEBUG if CUDA mode and not already set
+if [[ "$USE_CUDA" == "true" && -z "${NDT_DEBUG:-}" ]]; then
+    export NDT_DEBUG=1
+    export NDT_DEBUG_FILE="${NDT_DEBUG_FILE:-/tmp/ndt_cuda_debug.jsonl}"
+    echo "NDT debug enabled: $NDT_DEBUG_FILE"
+fi
+
 exec \
     play_launch launch \
     --web-ui \
