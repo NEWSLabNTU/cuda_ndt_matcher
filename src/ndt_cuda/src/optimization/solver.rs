@@ -181,17 +181,26 @@ impl NdtOptimizer {
                 };
             }
 
+            // Check if Newton step is an ascent direction for the score
+            // d_phi_0 = -(gradient · step_dir) for minimizing -score (i.e., maximizing score)
+            // If gradient · step_dir <= 0, the step is NOT ascending, so reverse it
+            // (Autoware's computeStepLengthMT, lines 901-912)
+            let mut step_dir = delta / delta_norm; // Normalized direction
+            let grad_dot_step = derivatives.gradient.dot(&step_dir);
+            if grad_dot_step <= 0.0 {
+                // Not an ascent direction - reverse it
+                step_dir = -step_dir;
+            }
+
             // Apply step (with optional line search to find optimal step length)
             let step_length = if self.config.ndt.use_line_search {
-                self.line_search(source_points, target_grid, &pose, &delta, &derivatives)
+                self.line_search(source_points, target_grid, &pose, &step_dir, &derivatives)
             } else {
                 // Autoware behavior: step_length = min(newton_step_norm, step_size)
                 delta_norm.min(self.config.ndt.step_size)
             };
 
-            // Normalize direction and scale by step length
-            let delta_normalized = delta / delta_norm;
-            pose = apply_pose_delta(&pose, &delta_normalized, step_length);
+            pose = apply_pose_delta(&pose, &step_dir, step_length);
         }
 
         // Reached max iterations
