@@ -175,6 +175,50 @@ impl NdtManager {
         let isometry = pose_to_isometry(pose);
         self.matcher.evaluate_nvtl(source_points, &isometry)
     }
+
+    /// Evaluate NVTL at multiple poses in parallel (GPU-accelerated via Rayon).
+    ///
+    /// This is optimized for multi-NDT covariance estimation where we need
+    /// to evaluate NVTL at many offset poses quickly.
+    pub fn evaluate_nvtl_batch(
+        &self,
+        source_points: &[[f32; 3]],
+        poses: &[Pose],
+    ) -> Result<Vec<f64>> {
+        let isometries: Vec<Isometry3<f64>> = poses.iter().map(pose_to_isometry).collect();
+        self.matcher.evaluate_nvtl_batch(source_points, &isometries)
+    }
+
+    /// Align from multiple initial poses in parallel and return all results.
+    ///
+    /// This is useful for multi-NDT covariance estimation where we need
+    /// to run alignment from multiple offset poses.
+    pub fn align_batch(
+        &self,
+        source_points: &[[f32; 3]],
+        initial_poses: &[Pose],
+    ) -> Result<Vec<AlignResult>> {
+        let isometries: Vec<Isometry3<f64>> = initial_poses.iter().map(pose_to_isometry).collect();
+        let results = self.matcher.align_batch(source_points, &isometries)?;
+
+        Ok(results
+            .into_iter()
+            .map(|r| {
+                let pose = isometry_to_pose(&r.pose);
+                let hessian = matrix6_to_array(&r.hessian);
+                AlignResult {
+                    pose,
+                    converged: r.converged,
+                    score: r.score,
+                    iterations: r.iterations as i32,
+                    hessian,
+                    nvtl: r.nvtl,
+                    transform_probability: r.transform_probability,
+                    num_correspondences: r.num_correspondences,
+                }
+            })
+            .collect())
+    }
 }
 
 fn matrix6_to_array(m: &Matrix6<f64>) -> [[f64; 6]; 6] {

@@ -473,8 +473,15 @@ impl NdtScanMatcherNode {
         }
 
         // Estimate covariance based on configured mode
-        let covariance_result =
-            covariance::estimate_covariance(&params.covariance, &result.hessian, &result.pose);
+        // For MULTI_NDT modes, we use parallel batch evaluation (Rayon)
+        let covariance_result = covariance::estimate_covariance_full(
+            &params.covariance,
+            &result.hessian,
+            &result.pose,
+            Some(&*ndt_manager.lock()),
+            Some(&sensor_points),
+            Some(map),
+        );
 
         // Create output header
         let header = Header {

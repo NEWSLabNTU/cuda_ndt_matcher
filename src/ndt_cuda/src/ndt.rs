@@ -23,6 +23,7 @@
 
 use anyhow::{bail, Result};
 use nalgebra::{Isometry3, Matrix6};
+use rayon::prelude::*;
 
 use crate::derivatives::GaussianParams;
 use crate::optimization::{NdtOptimizer, OptimizationConfig};
@@ -408,6 +409,97 @@ impl NdtScanMatcher {
         let scores =
             crate::scoring::compute_per_point_scores(source_points, grid, pose, &self.gauss_params);
         Ok(scores)
+    }
+
+    /// Evaluate NVTL at multiple poses in parallel (GPU-accelerated via Rayon).
+    ///
+    /// This is optimized for multi-NDT covariance estimation where we need
+    /// to evaluate NVTL at many offset poses quickly.
+    ///
+    /// # Arguments
+    /// * `source_points` - Source point cloud (sensor scan)
+    /// * `poses` - List of poses to evaluate
+    ///
+    /// # Returns
+    /// Vector of NVTL scores, one per pose.
+    pub fn evaluate_nvtl_batch(
+        &self,
+        source_points: &[[f32; 3]],
+        poses: &[Isometry3<f64>],
+    ) -> Result<Vec<f64>> {
+        let grid = self
+            .target_grid
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No target set. Call set_target() first."))?;
+
+        if source_points.is_empty() {
+            return Ok(vec![0.0; poses.len()]);
+        }
+
+        let config = NvtlConfig::default();
+        let gauss = &self.gauss_params;
+
+        // Parallel NVTL evaluation across all poses
+        let scores: Vec<f64> = poses
+            .par_iter()
+            .map(|pose| {
+                let result = compute_nvtl(source_points, grid, pose, gauss, &config);
+                result.nvtl
+            })
+            .collect();
+
+        Ok(scores)
+    }
+
+    /// Align from multiple initial poses in parallel and return all results.
+    ///
+    /// This is useful for multi-NDT covariance estimation where we need
+    /// to run alignment from multiple offset poses.
+    ///
+    /// # Arguments
+    /// * `source_points` - Source point cloud (sensor scan)
+    /// * `initial_poses` - List of initial poses to try
+    ///
+    /// # Returns
+    /// Vector of alignment results, one per pose.
+    pub fn align_batch(
+        &self,
+        source_points: &[[f32; 3]],
+        initial_poses: &[Isometry3<f64>],
+    ) -> Result<Vec<AlignResult>> {
+        let grid = self
+            .target_grid
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No target set. Call set_target() first."))?;
+
+        if source_points.is_empty() {
+            bail!("Source point cloud is empty");
+        }
+
+        // Create optimizer with current config
+        let opt_config = self.build_optimizer_config();
+
+        // Parallel alignment across all initial poses
+        let results: Vec<AlignResult> = initial_poses
+            .par_iter()
+            .map(|initial_guess| {
+                let optimizer = NdtOptimizer::new(opt_config.clone());
+                let result = optimizer.align(source_points, grid, *initial_guess);
+
+                AlignResult {
+                    pose: result.pose,
+                    converged: result.status.is_converged(),
+                    score: result.score,
+                    transform_probability: result.transform_probability,
+                    nvtl: result.nvtl,
+                    iterations: result.iterations,
+                    hessian: result.hessian,
+                    num_correspondences: result.num_correspondences,
+                }
+            })
+            .collect();
+
+        Ok(results)
     }
 
     /// Build optimizer configuration from current settings.
