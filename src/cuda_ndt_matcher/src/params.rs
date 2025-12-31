@@ -119,6 +119,15 @@ pub struct DynamicMapParams {
     pub lidar_radius: f64,
 }
 
+/// GNSS regularization configuration
+#[derive(Clone)]
+pub struct RegularizationParams {
+    /// Enable regularization (penalizes deviation from GNSS pose)
+    pub enabled: bool,
+    /// Scale factor for regularization term (higher = more weight to GNSS)
+    pub scale_factor: f64,
+}
+
 /// All NDT parameters
 pub struct NdtParams {
     pub frame: FrameParams,
@@ -129,6 +138,7 @@ pub struct NdtParams {
     pub score: ScoreParams,
     pub covariance: CovarianceParams,
     pub dynamic_map: DynamicMapParams,
+    pub regularization: RegularizationParams,
 }
 
 impl NdtParams {
@@ -310,6 +320,18 @@ impl NdtParams {
                 lidar_radius: node
                     .declare_parameter("dynamic_map_loading.lidar_radius")
                     .default(100.0)
+                    .mandatory()?
+                    .get(),
+            },
+            regularization: RegularizationParams {
+                enabled: node
+                    .declare_parameter("regularization.enable_gnss_regularization")
+                    .default(false)
+                    .mandatory()?
+                    .get(),
+                scale_factor: node
+                    .declare_parameter("regularization.gnss_regularization_scale_factor")
+                    .default(0.01)
                     .mandatory()?
                     .get(),
             },

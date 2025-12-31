@@ -46,7 +46,17 @@ impl NdtManager {
             .transformation_epsilon(params.ndt.trans_epsilon)
             .step_size(params.ndt.step_size) // From config (default 0.1)
             .outlier_ratio(0.55) // Autoware default
+            .regularization_enabled(params.regularization.enabled)
+            .regularization_scale_factor(params.regularization.scale_factor)
             .build()?;
+
+        if params.regularization.enabled {
+            log_debug!(
+                LOGGER_NAME,
+                "GNSS regularization enabled with scale factor {}",
+                params.regularization.scale_factor
+            );
+        }
 
         Ok(Self { matcher })
     }
@@ -218,6 +228,33 @@ impl NdtManager {
                 }
             })
             .collect())
+    }
+
+    /// Set the regularization reference pose (from GNSS).
+    ///
+    /// When regularization is enabled, this pose is used to penalize deviation
+    /// in the vehicle's longitudinal direction, helping prevent drift in open areas.
+    pub fn set_regularization_pose(&mut self, pose: &Pose) {
+        let isometry = pose_to_isometry(pose);
+        self.matcher.set_regularization_pose(isometry);
+        log_debug!(
+            LOGGER_NAME,
+            "Regularization pose set: ({:.2}, {:.2}, {:.2})",
+            pose.position.x,
+            pose.position.y,
+            pose.position.z
+        );
+    }
+
+    /// Clear the regularization reference pose.
+    pub fn clear_regularization_pose(&mut self) {
+        self.matcher.clear_regularization_pose();
+        log_debug!(LOGGER_NAME, "Regularization pose cleared");
+    }
+
+    /// Check if regularization is enabled.
+    pub fn is_regularization_enabled(&self) -> bool {
+        self.matcher.is_regularization_enabled()
     }
 }
 

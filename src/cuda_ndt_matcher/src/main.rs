@@ -210,13 +210,23 @@ impl NdtScanMatcherNode {
             })?
         };
 
-        // Regularization pose subscription
+        // Regularization pose subscription (GNSS pose for regularization)
         let regularization_pose_sub = {
+            let ndt_manager = Arc::clone(&ndt_manager);
+            let params = Arc::clone(&params);
+
             let mut opts = SubscriptionOptions::new("regularization_pose_with_covariance");
             opts.qos = sensor_qos;
 
-            node.create_subscription(opts, move |_msg: PoseWithCovarianceStamped| {
-                // TODO: Implement regularization in later phase
+            node.create_subscription(opts, move |msg: PoseWithCovarianceStamped| {
+                // Only process if regularization is enabled
+                if !params.regularization.enabled {
+                    return;
+                }
+
+                // Set the regularization reference pose in the NDT matcher
+                let mut manager = ndt_manager.lock();
+                manager.set_regularization_pose(&msg.pose.pose);
             })?
         };
 

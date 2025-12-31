@@ -12,6 +12,7 @@ use nalgebra::{Isometry3, Matrix6, Vector6};
 use super::line_search::{directional_derivative, LineSearchConfig};
 use super::more_thuente::{more_thuente_search, MoreThuenteConfig};
 use super::newton::{condition_number, newton_step_regularized};
+use super::regularization::{RegularizationConfig, RegularizationTerm};
 use super::types::{
     apply_pose_delta, isometry_to_pose_vector, pose_vector_to_isometry, ConvergenceStatus,
     NdtConfig, NdtResult,
@@ -32,6 +33,9 @@ pub struct OptimizationConfig {
     /// More-Thuente line search configuration.
     pub more_thuente: MoreThuenteConfig,
 
+    /// GNSS regularization configuration.
+    pub regularization: RegularizationConfig,
+
     /// Tolerance for Newton step SVD.
     pub svd_tolerance: f64,
 
@@ -48,6 +52,7 @@ impl Default for OptimizationConfig {
             ndt: NdtConfig::default(),
             line_search: LineSearchConfig::default(),
             more_thuente: MoreThuenteConfig::default(),
+            regularization: RegularizationConfig::default(),
             svd_tolerance: 1e-10,
             min_correspondences: 10,
             condition_warning_threshold: 1e10,
@@ -62,13 +67,21 @@ pub struct NdtOptimizer {
 
     /// Gaussian parameters for NDT score function.
     gauss: GaussianParams,
+
+    /// GNSS regularization term.
+    regularization: RegularizationTerm,
 }
 
 impl NdtOptimizer {
     /// Create a new NDT optimizer with the given configuration.
     pub fn new(config: OptimizationConfig) -> Self {
         let gauss = GaussianParams::new(config.ndt.resolution, config.ndt.outlier_ratio);
-        Self { config, gauss }
+        let regularization = RegularizationTerm::new(config.regularization.clone());
+        Self {
+            config,
+            gauss,
+            regularization,
+        }
     }
 
     /// Create a new NDT optimizer with default configuration.
@@ -86,6 +99,26 @@ impl NdtOptimizer {
     /// Get the current configuration.
     pub fn config(&self) -> &OptimizationConfig {
         &self.config
+    }
+
+    /// Get a mutable reference to the regularization term.
+    pub fn regularization_mut(&mut self) -> &mut RegularizationTerm {
+        &mut self.regularization
+    }
+
+    /// Get a reference to the regularization term.
+    pub fn regularization(&self) -> &RegularizationTerm {
+        &self.regularization
+    }
+
+    /// Set the regularization pose (from GNSS).
+    pub fn set_regularization_pose(&mut self, pose: Isometry3<f64>) {
+        self.regularization.set_reference_pose(pose);
+    }
+
+    /// Clear the regularization pose.
+    pub fn clear_regularization_pose(&mut self) {
+        self.regularization.clear_reference_pose();
     }
 
     /// Align source points to target voxel grid.
@@ -133,18 +166,28 @@ impl NdtOptimizer {
             }
 
             last_correspondences = derivatives.num_correspondences;
-            last_hessian = derivatives.hessian;
+
+            // Apply GNSS regularization if enabled
+            let (reg_score, reg_gradient, reg_hessian) = self
+                .regularization
+                .compute_derivatives(&pose, derivatives.num_correspondences);
+
+            let total_score = derivatives.score + reg_score;
+            let total_gradient = derivatives.gradient + reg_gradient;
+            let total_hessian = derivatives.hessian + reg_hessian;
+
+            last_hessian = total_hessian;
 
             // Track best score
-            if derivatives.score > best_score {
-                best_score = derivatives.score;
+            if total_score > best_score {
+                best_score = total_score;
                 best_pose = pose;
             }
 
             // Compute Newton step
             let delta = match newton_step_regularized(
-                &derivatives.gradient,
-                &derivatives.hessian,
+                &total_gradient,
+                &total_hessian,
                 self.config.ndt.regularization,
                 self.config.svd_tolerance,
             ) {
@@ -177,11 +220,11 @@ impl NdtOptimizer {
                 return NdtResult {
                     pose: final_pose,
                     status: ConvergenceStatus::Converged,
-                    score: derivatives.score,
-                    transform_probability: self.compute_transform_probability(derivatives.score),
+                    score: total_score,
+                    transform_probability: self.compute_transform_probability(total_score),
                     nvtl,
                     iterations: iteration + 1,
-                    hessian: derivatives.hessian,
+                    hessian: total_hessian,
                     num_correspondences: derivatives.num_correspondences,
                 };
             }
@@ -191,15 +234,23 @@ impl NdtOptimizer {
             // If gradient · step_dir <= 0, the step is NOT ascending, so reverse it
             // (Autoware's computeStepLengthMT, lines 901-912)
             let mut step_dir = delta / delta_norm; // Normalized direction
-            let grad_dot_step = derivatives.gradient.dot(&step_dir);
+            let grad_dot_step = total_gradient.dot(&step_dir);
             if grad_dot_step <= 0.0 {
                 // Not an ascent direction - reverse it
                 step_dir = -step_dir;
             }
 
             // Apply step (with optional line search to find optimal step length)
+            // Note: Line search uses total derivatives including regularization
             let step_length = if self.config.ndt.use_line_search {
-                self.line_search(source_points, target_grid, &pose, &step_dir, &derivatives)
+                self.line_search_with_regularization(
+                    source_points,
+                    target_grid,
+                    &pose,
+                    &step_dir,
+                    total_score,
+                    &total_gradient,
+                )
             } else {
                 // Autoware behavior: step_length = min(newton_step_norm, step_size)
                 delta_norm.min(self.config.ndt.step_size)
@@ -281,6 +332,63 @@ impl NdtOptimizer {
             result.step_length
         } else {
             // Fallback to max step if line search didn't converge
+            self.config.more_thuente.step_max
+        }
+    }
+
+    /// Perform More-Thuente line search with regularization.
+    ///
+    /// This version includes GNSS regularization in the score and derivative computation.
+    fn line_search_with_regularization(
+        &self,
+        source_points: &[[f32; 3]],
+        target_grid: &VoxelGrid,
+        pose: &[f64; 6],
+        delta: &Vector6<f64>,
+        current_score: f64,
+        current_gradient: &Vector6<f64>,
+    ) -> f64 {
+        let initial_derivative = directional_derivative(current_gradient, delta);
+
+        // If derivative is not positive, the step direction is not an ascent direction
+        if initial_derivative <= 0.0 {
+            return self.config.ndt.step_size;
+        }
+
+        let gauss = &self.gauss;
+        let pose_copy = *pose;
+        let delta_copy = *delta;
+        let regularization = &self.regularization;
+
+        // Score and derivative function for line search (includes regularization)
+        let score_and_derivative = |alpha: f64| {
+            let test_pose = apply_pose_delta(&pose_copy, &delta_copy, alpha);
+            let ndt_result =
+                compute_derivatives_cpu(source_points, target_grid, &test_pose, gauss, false);
+
+            // Add regularization contribution
+            let (reg_score, reg_gradient, _) =
+                regularization.compute_derivatives(&test_pose, ndt_result.num_correspondences);
+
+            let total_score = ndt_result.score + reg_score;
+            let total_gradient = ndt_result.gradient + reg_gradient;
+
+            let deriv = directional_derivative(&total_gradient, &delta_copy);
+            (total_score, deriv)
+        };
+
+        // Use More-Thuente line search
+        let result = more_thuente_search(
+            score_and_derivative,
+            current_score,
+            initial_derivative,
+            self.config.ndt.step_size,
+            &self.config.more_thuente,
+        );
+
+        if result.converged {
+            result.step_length
+        } else {
             self.config.more_thuente.step_max
         }
     }

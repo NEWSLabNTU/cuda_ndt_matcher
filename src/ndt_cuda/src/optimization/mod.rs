@@ -12,6 +12,7 @@ pub mod debug;
 pub mod line_search;
 pub mod more_thuente;
 pub mod newton;
+pub mod regularization;
 pub mod solver;
 pub mod types;
 
@@ -19,5 +20,6 @@ pub use debug::{AlignmentDebug, IterationDebug};
 pub use line_search::{LineSearchConfig, LineSearchResult};
 pub use more_thuente::{more_thuente_search, MoreThuenteConfig, MoreThuenteResult};
 pub use newton::{newton_step, newton_step_regularized};
+pub use regularization::{RegularizationConfig, RegularizationTerm};
 pub use solver::{NdtOptimizer, OptimizationConfig};
 pub use types::{ConvergenceStatus, NdtConfig, NdtResult};

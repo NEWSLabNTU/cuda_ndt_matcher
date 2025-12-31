@@ -70,6 +70,12 @@ pub struct NdtScanMatcherConfig {
     /// Whether to use GPU acceleration (requires CUDA).
     /// Falls back to CPU if GPU is not available.
     pub use_gpu: bool,
+
+    /// Whether to enable GNSS regularization.
+    pub regularization_enabled: bool,
+
+    /// Scale factor for GNSS regularization (default: 0.01).
+    pub regularization_scale_factor: f64,
 }
 
 impl Default for NdtScanMatcherConfig {
@@ -83,7 +89,9 @@ impl Default for NdtScanMatcherConfig {
             regularization: 0.001,
             use_line_search: false,
             min_points_per_voxel: 6,
-            use_gpu: false, // CPU by default for compatibility
+            use_gpu: false,                    // CPU by default for compatibility
+            regularization_enabled: false,     // GNSS regularization disabled by default
+            regularization_scale_factor: 0.01, // Autoware default
         }
     }
 }
@@ -159,6 +167,23 @@ impl NdtScanMatcherBuilder {
         self
     }
 
+    /// Enable or disable GNSS regularization.
+    ///
+    /// When enabled, a regularization term is added to the NDT cost function
+    /// that penalizes deviation from a GNSS pose.
+    pub fn regularization_enabled(mut self, enabled: bool) -> Self {
+        self.config.regularization_enabled = enabled;
+        self
+    }
+
+    /// Set the GNSS regularization scale factor.
+    ///
+    /// Higher values give more weight to GNSS poses (default: 0.01).
+    pub fn regularization_scale_factor(mut self, scale: f64) -> Self {
+        self.config.regularization_scale_factor = scale;
+        self
+    }
+
     /// Build the NDT scan matcher.
     pub fn build(self) -> Result<NdtScanMatcher> {
         NdtScanMatcher::with_config(self.config)
@@ -214,6 +239,9 @@ pub struct NdtScanMatcher {
     /// Gaussian parameters for NDT score.
     gauss_params: GaussianParams,
 
+    /// NDT optimizer (persists regularization state across calls).
+    optimizer: NdtOptimizer,
+
     /// GPU runtime for accelerated scoring (None if GPU not available/enabled).
     gpu_runtime: Option<GpuRuntime>,
 
@@ -233,6 +261,10 @@ impl NdtScanMatcher {
     pub fn with_config(config: NdtScanMatcherConfig) -> Result<Self> {
         let gauss_params = GaussianParams::new(config.resolution as f64, config.outlier_ratio);
 
+        // Build optimizer configuration including regularization settings
+        let opt_config = Self::build_optimizer_config_from(&config);
+        let optimizer = NdtOptimizer::new(opt_config);
+
         // Initialize GPU runtime if enabled and available
         let gpu_runtime = if config.use_gpu && is_cuda_available() {
             match GpuRuntime::new() {
@@ -241,7 +273,9 @@ impl NdtScanMatcher {
                     Some(runtime)
                 }
                 Err(e) => {
-                    eprintln!("[ndt_cuda] Failed to initialize GPU runtime: {e}. Falling back to CPU.");
+                    eprintln!(
+                        "[ndt_cuda] Failed to initialize GPU runtime: {e}. Falling back to CPU."
+                    );
                     None
                 }
             }
@@ -253,6 +287,7 @@ impl NdtScanMatcher {
             config,
             target_grid: None,
             gauss_params,
+            optimizer,
             gpu_runtime,
             gpu_voxel_data: None,
         })
@@ -316,6 +351,10 @@ impl NdtScanMatcher {
     ///
     /// # Returns
     /// Alignment result with final pose, scores, and diagnostics.
+    ///
+    /// # Note
+    /// If regularization is enabled, call `set_regularization_pose()` before
+    /// this method to update the GNSS reference pose.
     pub fn align(
         &self,
         source_points: &[[f32; 3]],
@@ -330,12 +369,8 @@ impl NdtScanMatcher {
             bail!("Source point cloud is empty");
         }
 
-        // Create optimizer with current config
-        let opt_config = self.build_optimizer_config();
-        let optimizer = NdtOptimizer::new(opt_config);
-
-        // Run alignment
-        let result = optimizer.align(source_points, grid, initial_guess);
+        // Use the stored optimizer which has regularization state
+        let result = self.optimizer.align(source_points, grid, initial_guess);
 
         Ok(AlignResult {
             pose: result.pose,
@@ -587,22 +622,53 @@ impl NdtScanMatcher {
         }
     }
 
-    /// Build optimizer configuration from current settings.
-    fn build_optimizer_config(&self) -> OptimizationConfig {
-        use crate::optimization::NdtConfig;
+    /// Set the GNSS regularization pose.
+    ///
+    /// When regularization is enabled, this pose is used as a reference
+    /// to penalize deviation in the vehicle's longitudinal direction.
+    ///
+    /// Call this before each align() to update the GNSS reference.
+    pub fn set_regularization_pose(&mut self, pose: Isometry3<f64>) {
+        self.optimizer.set_regularization_pose(pose);
+    }
+
+    /// Clear the GNSS regularization pose.
+    ///
+    /// Call this when GNSS is unavailable or unreliable.
+    pub fn clear_regularization_pose(&mut self) {
+        self.optimizer.clear_regularization_pose();
+    }
+
+    /// Check if regularization is enabled.
+    pub fn is_regularization_enabled(&self) -> bool {
+        self.config.regularization_enabled
+    }
+
+    /// Build optimizer configuration from settings (static version for construction).
+    fn build_optimizer_config_from(config: &NdtScanMatcherConfig) -> OptimizationConfig {
+        use crate::optimization::{NdtConfig, RegularizationConfig};
 
         OptimizationConfig {
             ndt: NdtConfig {
-                resolution: self.config.resolution as f64,
-                max_iterations: self.config.max_iterations,
-                trans_epsilon: self.config.trans_epsilon,
-                step_size: self.config.step_size,
-                outlier_ratio: self.config.outlier_ratio,
-                regularization: self.config.regularization,
-                use_line_search: self.config.use_line_search,
+                resolution: config.resolution as f64,
+                max_iterations: config.max_iterations,
+                trans_epsilon: config.trans_epsilon,
+                step_size: config.step_size,
+                outlier_ratio: config.outlier_ratio,
+                regularization: config.regularization,
+                use_line_search: config.use_line_search,
+            },
+            regularization: RegularizationConfig {
+                enabled: config.regularization_enabled,
+                scale_factor: config.regularization_scale_factor,
             },
             ..Default::default()
         }
+    }
+
+    /// Build optimizer configuration from current settings.
+    fn build_optimizer_config(&self) -> OptimizationConfig {
+        Self::build_optimizer_config_from(&self.config)
     }
 }
 
