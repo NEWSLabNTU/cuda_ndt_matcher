@@ -106,9 +106,15 @@ impl MapUpdateModule {
     /// Check if map update is needed based on current position
     ///
     /// Returns true if:
+    /// - No tiles are loaded (initial map load)
     /// - No previous update position exists (first update)
     /// - Distance from last update exceeds update_distance threshold
     pub fn should_update(&self, current_position: &Point) -> bool {
+        // Always update if no tiles are loaded (need initial map)
+        if self.tiles.read().is_empty() {
+            return true;
+        }
+
         let last_pos = self.last_update_position.read();
 
         match last_pos.as_ref() {
@@ -371,6 +377,25 @@ fn euclidean_distance_2d(a: &Point, b: &Point) -> f64 {
 // DynamicMapLoader - Service client for differential map loading
 // ============================================================================
 
+/// Status of the last map loader request.
+#[derive(Debug, Clone, Default)]
+pub struct MapLoaderStatus {
+    /// Whether the pcd_loader service is available
+    pub service_available: bool,
+    /// Whether the last request was successful
+    pub last_request_success: bool,
+    /// Number of tiles added in last update
+    pub tiles_added: usize,
+    /// Number of tiles removed in last update
+    pub tiles_removed: usize,
+    /// Points added in last update
+    pub points_added: usize,
+    /// Time of last update (epoch seconds)
+    pub last_update_time: f64,
+    /// Error message if last request failed
+    pub error_message: Option<String>,
+}
+
 /// Dynamic map loader using GetDifferentialPointCloudMap service.
 ///
 /// This implements Autoware's differential map loading pattern:
@@ -386,6 +411,8 @@ pub struct DynamicMapLoader {
     map_module: Arc<MapUpdateModule>,
     /// Flag indicating a request is in flight
     request_pending: Arc<AtomicBool>,
+    /// Status of the loader
+    status: Arc<RwLock<MapLoaderStatus>>,
 }
 
 impl DynamicMapLoader {
@@ -410,17 +437,25 @@ impl DynamicMapLoader {
             client,
             map_module,
             request_pending: Arc::new(AtomicBool::new(false)),
+            status: Arc::new(RwLock::new(MapLoaderStatus::default())),
         })
     }
 
     /// Check if the map service is available.
     pub fn service_is_ready(&self) -> bool {
-        self.client.service_is_ready().unwrap_or(false)
+        let is_ready = self.client.service_is_ready().unwrap_or(false);
+        self.status.write().service_available = is_ready;
+        is_ready
     }
 
     /// Check if a request is currently pending.
     pub fn is_request_pending(&self) -> bool {
         self.request_pending.load(Ordering::SeqCst)
+    }
+
+    /// Get the current loader status.
+    pub fn get_status(&self) -> MapLoaderStatus {
+        self.status.read().clone()
     }
 
     /// Request differential map update around a position.
@@ -443,6 +478,9 @@ impl DynamicMapLoader {
     ) -> Result<bool, rclrs::RclrsError> {
         // Check if service is available
         if !self.service_is_ready() {
+            let mut status = self.status.write();
+            status.service_available = false;
+            status.error_message = Some("pcd_loader_service not available".to_string());
             log_warn!(
                 LOGGER_NAME,
                 "pcd_loader_service not available, skipping map update request"
@@ -478,10 +516,11 @@ impl DynamicMapLoader {
         // Clone what we need for the callback
         let map_module = Arc::clone(&self.map_module);
         let request_pending = Arc::clone(&self.request_pending);
+        let status = Arc::clone(&self.status);
 
         // Send request with callback
         let _promise = self.client.call_then(request, move |response| {
-            Self::handle_response(response, &map_module);
+            Self::handle_response(response, &map_module, &status);
             request_pending.store(false, Ordering::SeqCst);
         })?;
 
@@ -492,6 +531,7 @@ impl DynamicMapLoader {
     fn handle_response(
         response: autoware_map_msgs::srv::GetDifferentialPointCloudMap_Response,
         map_module: &MapUpdateModule,
+        status: &RwLock<MapLoaderStatus>,
     ) {
         let start_time = Instant::now();
 
@@ -525,6 +565,20 @@ impl DynamicMapLoader {
         }
 
         let elapsed_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+
+        // Update status
+        {
+            let mut s = status.write();
+            s.last_request_success = true;
+            s.tiles_added = tiles_added;
+            s.tiles_removed = tiles_removed;
+            s.points_added = points_added;
+            s.last_update_time = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+            s.error_message = None;
+        }
 
         if tiles_added > 0 || tiles_removed > 0 {
             log_info!(
@@ -602,6 +656,14 @@ mod tests {
         let pos1 = make_point(0.0, 0.0, 0.0);
         let pos2 = make_point(10.0, 0.0, 0.0); // 10m away, below 20m threshold
 
+        // Add a tile so we're testing distance threshold, not empty-tiles case
+        let tile = MapTile {
+            id: "tile_1".to_string(),
+            center: make_point(0.0, 0.0, 0.0),
+            points: vec![[0.0, 0.0, 0.0]],
+        };
+        module.add_tile(tile);
+
         module.update_map(&pos1);
         assert!(!module.should_update(&pos2));
     }
@@ -612,14 +674,44 @@ mod tests {
         let pos1 = make_point(0.0, 0.0, 0.0);
         let pos2 = make_point(25.0, 0.0, 0.0); // 25m away, above 20m threshold
 
+        // Add a tile so we're testing distance threshold, not empty-tiles case
+        let tile = MapTile {
+            id: "tile_1".to_string(),
+            center: make_point(0.0, 0.0, 0.0),
+            points: vec![[0.0, 0.0, 0.0]],
+        };
+        module.add_tile(tile);
+
         module.update_map(&pos1);
         assert!(module.should_update(&pos2));
+    }
+
+    #[test]
+    fn test_should_update_empty_tiles() {
+        let module = MapUpdateModule::new(make_params());
+        let pos1 = make_point(0.0, 0.0, 0.0);
+        let pos2 = make_point(5.0, 0.0, 0.0); // Within threshold
+
+        // With no tiles, should_update always returns true (need initial map load)
+        module.update_map(&pos1);
+        assert!(
+            module.should_update(&pos2),
+            "should update when no tiles loaded"
+        );
     }
 
     #[test]
     fn test_out_of_map_range() {
         let module = MapUpdateModule::new(make_params());
         let pos1 = make_point(0.0, 0.0, 0.0);
+
+        // Add a tile so we have a map
+        let tile = MapTile {
+            id: "tile_1".to_string(),
+            center: make_point(0.0, 0.0, 0.0),
+            points: vec![[0.0, 0.0, 0.0]],
+        };
+        module.add_tile(tile);
 
         module.update_map(&pos1);
 

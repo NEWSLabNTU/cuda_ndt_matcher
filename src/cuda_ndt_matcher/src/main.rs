@@ -11,7 +11,7 @@ mod tpe;
 
 use anyhow::Result;
 use arc_swap::ArcSwap;
-use diagnostics::{DiagnosticsInterface, ScanMatchingDiagnostics};
+use diagnostics::{DiagnosticLevel, DiagnosticsInterface, ScanMatchingDiagnostics};
 use geometry_msgs::msg::{Point, Pose, PoseStamped, PoseWithCovariance, PoseWithCovarianceStamped};
 use map_module::{DynamicMapLoader, MapUpdateModule};
 use ndt_manager::NdtManager;
@@ -681,7 +681,33 @@ impl NdtScanMatcherNode {
         {
             let mut diag = diagnostics.lock();
             scan_diag.apply_to(diag.scan_matching_mut());
-            diag.publish_scan_matching(msg.header.stamp);
+
+            // Add map update diagnostics
+            let map_status = map_loader.get_status();
+            let map_diag = diag.map_update_mut();
+            map_diag.clear();
+            map_diag.add_key_value(
+                "is_succeed_call_pcd_loader",
+                map_status.last_request_success,
+            );
+            map_diag.add_key_value("pcd_loader_service_available", map_status.service_available);
+            map_diag.add_key_value("tiles_loaded", map_module.tile_count());
+            map_diag.add_key_value("tiles_added", map_status.tiles_added);
+            map_diag.add_key_value("tiles_removed", map_status.tiles_removed);
+            map_diag.add_key_value("points_added", map_status.points_added);
+            if let Some(err) = &map_status.error_message {
+                map_diag.add_key_value("error_message", err);
+                map_diag.set_level_and_message(DiagnosticLevel::Warn, err);
+            } else if !map_status.service_available && map_module.tile_count() == 0 {
+                map_diag.set_level_and_message(
+                    DiagnosticLevel::Warn,
+                    "pcd_loader_service not available, no map loaded",
+                );
+            } else {
+                map_diag.set_level_and_message(DiagnosticLevel::Ok, "OK");
+            }
+
+            diag.publish(msg.header.stamp);
         }
     }
 
