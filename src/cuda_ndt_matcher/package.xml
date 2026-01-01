@@ -16,6 +16,7 @@
   <depend>visualization_msgs</depend>
   <depend>tier4_debug_msgs</depend>
   <depend>autoware_map_msgs</depend>
+  <depend>diagnostic_msgs</depend>
 
   <export>
     <build_type>ament_cargo</build_type>

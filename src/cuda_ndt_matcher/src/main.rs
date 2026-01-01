@@ -1,4 +1,5 @@
 mod covariance;
+mod diagnostics;
 mod initial_pose;
 mod map_module;
 mod ndt_manager;
@@ -10,6 +11,7 @@ mod tpe;
 
 use anyhow::Result;
 use arc_swap::ArcSwap;
+use diagnostics::{DiagnosticsInterface, ScanMatchingDiagnostics};
 use geometry_msgs::msg::{Point, Pose, PoseStamped, PoseWithCovariance, PoseWithCovarianceStamped};
 use map_module::{DynamicMapLoader, MapUpdateModule};
 use ndt_manager::NdtManager;
@@ -80,6 +82,9 @@ struct NdtScanMatcherNode {
 
     // Publishers - Debug and visualization
     debug_pubs: DebugPublishers,
+
+    // Diagnostics
+    diagnostics: Arc<Mutex<DiagnosticsInterface>>,
 
     // Services
     _trigger_srv: Service<SetBool>,
@@ -166,6 +171,9 @@ impl NdtScanMatcherNode {
                 .create_publisher("initial_to_result_relative_pose")?,
         };
 
+        // Create diagnostics interface
+        let diagnostics = Arc::new(Mutex::new(DiagnosticsInterface::new(node)?));
+
         // Points subscription
         let points_sub = {
             let ndt_manager = Arc::clone(&ndt_manager);
@@ -178,6 +186,7 @@ impl NdtScanMatcherNode {
             let pose_pub = pose_pub.clone();
             let pose_cov_pub = pose_cov_pub.clone();
             let debug_pubs = debug_pubs.clone();
+            let diagnostics = Arc::clone(&diagnostics);
             let params = Arc::clone(&params);
 
             let mut opts = SubscriptionOptions::new("points_raw");
@@ -196,6 +205,7 @@ impl NdtScanMatcherNode {
                     &pose_pub,
                     &pose_cov_pub,
                     &debug_pubs,
+                    &diagnostics,
                     &params,
                 );
             })?
@@ -314,6 +324,7 @@ impl NdtScanMatcherNode {
             pose_pub,
             pose_cov_pub,
             debug_pubs,
+            diagnostics,
             _trigger_srv: trigger_srv,
             _ndt_align_srv: ndt_align_srv,
             _map_update_srv: map_update_srv,
@@ -341,6 +352,7 @@ impl NdtScanMatcherNode {
         pose_pub: &Publisher<PoseStamped>,
         pose_cov_pub: &Publisher<PoseWithCovarianceStamped>,
         debug_pubs: &DebugPublishers,
+        diagnostics: &Arc<Mutex<DiagnosticsInterface>>,
         params: &NdtParams,
     ) {
         let start_time = Instant::now();
@@ -638,6 +650,33 @@ impl NdtScanMatcherNode {
             .collect();
         let aligned_msg = pointcloud::to_pointcloud2(&aligned_points, &header);
         let _ = debug_pubs.points_aligned_pub.publish(&aligned_msg);
+
+        // ---- Diagnostics ----
+        // Collect and publish scan matching diagnostics
+        let topic_time_stamp = msg.header.stamp.sec as f64 + msg.header.stamp.nanosec as f64 * 1e-9;
+        let scan_diag = ScanMatchingDiagnostics {
+            topic_time_stamp,
+            sensor_points_size: sensor_points.len(),
+            sensor_points_delay_time_sec: 0.0, // Would need current time to compute
+            is_succeed_transform_sensor_points: true,
+            sensor_points_max_distance: max_dist as f64,
+            is_activated: true, // We're here, so we're activated
+            is_succeed_interpolate_initial_pose: true,
+            is_set_map_points: true,
+            iteration_num: result.iterations,
+            oscillation_count: result.oscillation_count,
+            transform_probability: transform_prob,
+            nearest_voxel_transformation_likelihood: nvtl_score,
+            distance_initial_to_result: distance,
+            execution_time_ms: exe_time_ms as f64,
+            skipping_publish_num: 0,
+        };
+
+        {
+            let mut diag = diagnostics.lock();
+            scan_diag.apply_to(diag.scan_matching_mut());
+            diag.publish_scan_matching(msg.header.stamp);
+        }
     }
 
     /// Create an arrow marker representing a pose

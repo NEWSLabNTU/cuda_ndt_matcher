@@ -226,6 +226,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "autoware_map_msgs"
+version = "1.3.0"
+dependencies = [
+ "geographic_msgs",
+ "rosidl_runtime_rs",
+ "sensor_msgs",
+ "std_msgs",
+]
+
+[[package]]
 name = "az"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -941,8 +951,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "autoware_map_msgs",
  "builtin_interfaces",
  "ctrlc",
+ "diagnostic_msgs",
  "geometry_msgs",
  "nalgebra",
  "ndt_cuda",
@@ -1042,6 +1054,14 @@ name = "deunicode"
 version = "1.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
+
+[[package]]
+name = "diagnostic_msgs"
+version = "4.9.0"
+dependencies = [
+ "rosidl_runtime_rs",
+ "std_msgs",
+]
 
 [[package]]
 name = "diff"
@@ -1499,6 +1519,16 @@ checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
+]
+
+[[package]]
+name = "geographic_msgs"
+version = "1.0.6"
+dependencies = [
+ "geometry_msgs",
+ "rosidl_runtime_rs",
+ "std_msgs",
+ "unique_identifier_msgs",
 ]
 
 [[package]]
