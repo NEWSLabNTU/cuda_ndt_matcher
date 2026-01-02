@@ -10,6 +10,7 @@ local_setup := "install/setup.bash"
 sample_map_dir := "data/sample-map-rosbag"
 sample_rosbag := "data/sample-rosbag-fixed"
 rosbag_output_dir := "rosbag"
+ground_truth_dir := "tests/fixtures/ground_truth"
 
 # NDT output/debug topics to record
 ndt_output_topics := "/localization/pose_estimator/pose /localization/pose_estimator/pose_with_covariance /localization/pose_estimator/ndt_marker /localization/pose_estimator/points_aligned /localization/pose_estimator/monte_carlo_initial_pose_marker /localization/pose_estimator/transform_probability /localization/pose_estimator/nearest_voxel_transformation_likelihood /localization/pose_estimator/iteration_num /localization/pose_estimator/exe_time_ms /localization/pose_estimator/initial_pose_with_covariance /localization/pose_estimator/initial_to_result_distance /localization/pose_estimator/initial_to_result_relative_pose"
@@ -45,12 +46,63 @@ lint:
     cargo +nightly fmt --check --manifest-path {{manifest}} --all
     cargo clippy --manifest-path {{manifest}} --config {{cargo_config}} --all-targets
 
-# Run all tests
-test:
+# Run Rust unit tests only
+test-rust:
     #!/usr/bin/env bash
     source {{local_setup}}
     # Note: --test-threads=1 required to avoid CUDA/PCL thread-safety issues in fast-gicp tests
     cargo test --manifest-path {{manifest}} --config {{cargo_config}} --all-targets -- --test-threads=1
+
+# Run all tests (Rust unit tests + Python integration tests)
+test: test-rust test-integration
+
+# Run Python integration tests (prepares data if needed)
+test-integration: ensure-test-data
+    #!/usr/bin/env bash
+    set -eo pipefail
+    cd "$(dirname {{manifest}})"
+
+    # Check if pytest is available
+    if ! command -v pytest &> /dev/null; then
+        echo "pytest not found. Install with: pip install -r tests/requirements.txt"
+        exit 1
+    fi
+
+    # Run integration tests
+    pytest tests/test_cuda_ndt.py -v
+
+# Ensure test data is available (idempotent)
+ensure-test-data: ensure-sample-data ensure-ground-truth
+
+# Download sample data if not present (idempotent)
+ensure-sample-data:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    if [[ -d "{{sample_map_dir}}" && -d "{{sample_rosbag}}" ]]; then
+        echo "Sample data already exists, skipping download"
+    else
+        echo "Downloading sample data..."
+        ./scripts/download_sample_data.sh
+    fi
+
+# Collect ground truth if not present (idempotent)
+ensure-ground-truth: ensure-sample-data
+    #!/usr/bin/env bash
+    set -eo pipefail
+    if [[ -d "{{ground_truth_dir}}/rosbag" ]]; then
+        echo "Ground truth already exists, skipping collection"
+    else
+        echo "Collecting ground truth data..."
+        ./scripts/collect_ground_truth.sh
+    fi
+
+# Force re-collection of ground truth
+refresh-ground-truth: ensure-sample-data
+    #!/usr/bin/env bash
+    set -eo pipefail
+    echo "Refreshing ground truth data..."
+    rm -rf "{{ground_truth_dir}}/rosbag" "{{ground_truth_dir}}/debug.jsonl" "{{ground_truth_dir}}/metadata.json"
+    ./scripts/collect_ground_truth.sh
 
 # Run all quality checks (lint + test)
 quality: lint test

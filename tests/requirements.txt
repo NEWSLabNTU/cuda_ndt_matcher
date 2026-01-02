@@ -1,0 +1,5 @@
+# Test dependencies for CUDA NDT integration tests
+pytest>=7.0
+pytest-timeout>=2.0
+numpy>=1.20
+rosbags>=0.9  # For reading rosbag2 format
