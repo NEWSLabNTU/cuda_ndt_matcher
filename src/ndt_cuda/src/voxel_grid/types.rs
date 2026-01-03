@@ -34,6 +34,9 @@ pub struct Voxel {
     pub covariance: Matrix3<f32>,
     /// Inverse of the covariance matrix.
     pub inv_covariance: Matrix3<f32>,
+    /// Principal axis (eigenvector of smallest eigenvalue, i.e., surface normal).
+    /// Used for point-to-plane distance metric.
+    pub principal_axis: Vector3<f32>,
     /// Number of points used to compute this voxel's statistics.
     pub point_count: usize,
 }
@@ -69,16 +72,26 @@ impl Voxel {
         let covariance = (sum_sq - mean_outer * n) / (n - 1.0);
 
         // Regularize covariance to avoid singularity
-        let (regularized, inv_cov) =
-            regularize_covariance(&covariance, config.eigenvalue_ratio_threshold)?;
+        let reg = regularize_covariance(&covariance, config.eigenvalue_ratio_threshold)?;
 
         Some(Self {
             mean: Vector3::new(mean.x as f32, mean.y as f32, mean.z as f32),
-            covariance: regularized.cast::<f32>(),
-            inv_covariance: inv_cov.cast::<f32>(),
+            covariance: reg.covariance.cast::<f32>(),
+            inv_covariance: reg.inv_covariance.cast::<f32>(),
+            principal_axis: reg.principal_axis.cast::<f32>(),
             point_count: count,
         })
     }
+}
+
+/// Result of covariance regularization.
+struct RegularizedCovariance {
+    /// Regularized covariance matrix.
+    covariance: Matrix3<f64>,
+    /// Inverse of the regularized covariance.
+    inv_covariance: Matrix3<f64>,
+    /// Principal axis (eigenvector of smallest eigenvalue, i.e., surface normal).
+    principal_axis: Vector3<f64>,
 }
 
 /// Regularize a covariance matrix by inflating small eigenvalues.
@@ -86,29 +99,37 @@ impl Voxel {
 /// This prevents numerical issues when inverting near-singular matrices.
 /// Small eigenvalues are clamped to `ratio_threshold * max_eigenvalue`.
 ///
-/// Returns `(regularized_covariance, inverse_covariance)` or `None` if all
-/// eigenvalues are zero.
+/// Returns the regularized covariance, its inverse, and the principal axis
+/// (eigenvector of smallest eigenvalue), or `None` if all eigenvalues are zero.
 fn regularize_covariance(
     cov: &Matrix3<f64>,
     ratio_threshold: f32,
-) -> Option<(Matrix3<f64>, Matrix3<f64>)> {
+) -> Option<RegularizedCovariance> {
     // Symmetric eigenvalue decomposition
     let eigen = cov.symmetric_eigen();
     let mut eigenvalues = eigen.eigenvalues;
 
-    // Find max eigenvalue
+    // Find max and min eigenvalue indices
     let max_eigenvalue = eigenvalues.iter().copied().fold(0.0_f64, f64::max);
 
     if max_eigenvalue <= 0.0 {
         return None;
     }
 
-    let min_eigenvalue = max_eigenvalue * ratio_threshold as f64;
+    // Find the index of the smallest eigenvalue (before clamping)
+    let min_eigenvalue_idx = eigenvalues
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+
+    let min_eigenvalue_threshold = max_eigenvalue * ratio_threshold as f64;
 
     // Clamp small eigenvalues
     for ev in eigenvalues.iter_mut() {
-        if *ev < min_eigenvalue {
-            *ev = min_eigenvalue;
+        if *ev < min_eigenvalue_threshold {
+            *ev = min_eigenvalue_threshold;
         }
     }
 
@@ -126,7 +147,14 @@ fn regularize_covariance(
     let inv_diag = Matrix3::from_diagonal(&inv_eigenvalues);
     let inverse = eigenvectors * inv_diag * eigenvectors.transpose();
 
-    Some((regularized, inverse))
+    // Extract principal axis (eigenvector of smallest eigenvalue)
+    let principal_axis = eigenvectors.column(min_eigenvalue_idx).into_owned();
+
+    Some(RegularizedCovariance {
+        covariance: regularized,
+        inv_covariance: inverse,
+        principal_axis,
+    })
 }
 
 /// 3D voxel coordinates (integer grid indices).
@@ -248,10 +276,10 @@ mod tests {
         let result = regularize_covariance(&cov, 0.01);
         assert!(result.is_some());
 
-        let (reg_cov, inv_cov) = result.unwrap();
+        let reg = result.unwrap();
 
         // Small eigenvalue should be inflated to at least ratio_threshold * max_eigenvalue
-        let eigen = reg_cov.symmetric_eigen();
+        let eigen = reg.covariance.symmetric_eigen();
         let min_ev = eigen.eigenvalues.iter().copied().fold(f64::MAX, f64::min);
         let max_ev = eigen.eigenvalues.iter().copied().fold(0.0, f64::max);
 
@@ -263,7 +291,52 @@ mod tests {
         );
 
         // Inverse should work
-        let identity = reg_cov * inv_cov;
+        let identity = reg.covariance * reg.inv_covariance;
         assert_relative_eq!(identity, Matrix3::identity(), epsilon = 1e-8);
+
+        // Principal axis should be the Z-axis (smallest variance direction)
+        // For this covariance, Z has the smallest eigenvalue
+        assert!(
+            reg.principal_axis.z.abs() > 0.9,
+            "Principal axis should be close to Z: {:?}",
+            reg.principal_axis
+        );
+    }
+
+    #[test]
+    fn test_voxel_principal_axis() {
+        let config = VoxelGridConfig::default();
+
+        // Create planar points on the XY plane (z ≈ 0)
+        // This should have principal axis close to Z
+        let points = [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.01],
+            [0.0, 1.0, -0.01],
+            [1.0, 1.0, 0.02],
+            [-0.5, 0.5, 0.0],
+            [0.5, -0.5, -0.02],
+        ];
+
+        let mut sum = Vector3::zeros();
+        let mut sum_sq = Matrix3::zeros();
+
+        for p in &points {
+            let v = Vector3::new(p[0], p[1], p[2]);
+            sum += v;
+            sum_sq += v * v.transpose();
+        }
+
+        let voxel = Voxel::from_statistics(&sum, &sum_sq, points.len(), &config);
+        assert!(voxel.is_some());
+
+        let voxel = voxel.unwrap();
+
+        // Principal axis should be approximately Z (normal to XY plane)
+        assert!(
+            voxel.principal_axis.z.abs() > 0.9,
+            "For XY-plane points, principal axis should be close to Z: {:?}",
+            voxel.principal_axis
+        );
     }
 }

@@ -7,7 +7,7 @@ use nalgebra::{Matrix3, Matrix4, Matrix6, Vector3, Vector4, Vector6};
 
 use super::angular::AngularDerivatives;
 use super::types::{
-    AggregatedDerivatives, DerivativeResult, GaussianParams, Matrix24x6, Matrix4x6,
+    AggregatedDerivatives, DerivativeResult, DistanceMetric, GaussianParams, Matrix24x6, Matrix4x6,
     PointDerivatives,
 };
 use crate::voxel_grid::VoxelGrid;
@@ -226,6 +226,106 @@ pub fn compute_derivative_single(
     }
 }
 
+/// Compute score, gradient, and Hessian for point-to-plane distance.
+///
+/// The point-to-plane metric uses only the surface normal direction:
+/// - Distance: d = (x - μ) · n  (dot product with principal axis)
+/// - Score: p(x) = -d1 * exp(-d2/2 * d²)
+///
+/// This is faster and more stable for planar structures.
+///
+/// # Arguments
+/// * `x_trans` - Transformed point minus voxel mean (x - μ)
+/// * `principal_axis` - Surface normal (eigenvector of smallest covariance eigenvalue)
+/// * `point_gradient` - Point gradient matrix (4x6)
+/// * `point_hessian` - Point Hessian matrix (24x6)
+/// * `gauss` - Gaussian parameters
+/// * `compute_hessian` - Whether to compute Hessian
+pub fn compute_derivative_point_to_plane(
+    x_trans: &Vector3<f64>,
+    principal_axis: &Vector3<f64>,
+    point_gradient: &Matrix4x6,
+    point_hessian: &Matrix24x6,
+    gauss: &GaussianParams,
+    compute_hessian: bool,
+) -> DerivativeResult {
+    // Point-to-plane distance: d = (x - μ) · n
+    let distance = x_trans.dot(principal_axis);
+
+    // Distance squared for exponential
+    let distance_sq = distance * distance;
+
+    // exp(-d2/2 * d²) - similar to Eq. 6.9 but with scalar distance
+    let e_x_cov_x_raw = (-gauss.d2 * distance_sq * 0.5).exp();
+
+    // Score contribution: -d1 * exp(...)
+    let score = -gauss.d1 * e_x_cov_x_raw;
+
+    // Scale for gradient/hessian computation
+    let e_x_cov_x = gauss.d1 * gauss.d2 * e_x_cov_x_raw;
+
+    // Error checking for invalid values
+    let normalized_exp = gauss.d2 * e_x_cov_x_raw;
+    if !(0.0..=1.0).contains(&normalized_exp) || !normalized_exp.is_finite() {
+        return DerivativeResult::zeros();
+    }
+
+    // Extend normal to 4D (w = 0)
+    let n4 = Vector4::new(principal_axis.x, principal_axis.y, principal_axis.z, 0.0);
+
+    // ∂d/∂p = n^T * ∂T(x)/∂p  (1x6 vector)
+    // This is the Jacobian of the distance function
+    let n4_row = n4.transpose();
+    let dd_dp_row = n4_row * point_gradient;
+
+    // Convert to Vector6
+    let dd_dp = Vector6::new(
+        dd_dp_row[(0, 0)],
+        dd_dp_row[(0, 1)],
+        dd_dp_row[(0, 2)],
+        dd_dp_row[(0, 3)],
+        dd_dp_row[(0, 4)],
+        dd_dp_row[(0, 5)],
+    );
+
+    // Gradient: d1 * d2 * exp(...) * d * ∂d/∂p
+    let gradient = e_x_cov_x * distance * dd_dp;
+
+    // Compute Hessian if requested
+    let mut hessian = Matrix6::zeros();
+
+    if compute_hessian {
+        // For point-to-plane:
+        // H = d1 * d2 * exp(-d2/2 * d²) * [
+        //     (-d2 * d² + 1) * (∂d/∂p)^T * (∂d/∂p) + d * ∂²d/∂p²
+        // ]
+        // where ∂²d/∂p² = n^T * ∂²T/∂p²
+
+        let scale = e_x_cov_x;
+
+        // First term: (-d2 * d² + 1) * (∂d/∂p)(∂d/∂p)^T
+        let factor = -gauss.d2 * distance_sq + 1.0;
+        let outer_product = dd_dp * dd_dp.transpose();
+        hessian += scale * factor * outer_product;
+
+        // Second term: d * n^T * ∂²T/∂p²
+        for i in 0..6 {
+            let hessian_block = point_hessian.fixed_view::<4, 6>(i * 4, 0);
+            let n4_x_hessian_block = n4_row * hessian_block;
+
+            for j in 0..6 {
+                hessian[(i, j)] += scale * distance * n4_x_hessian_block[(0, j)];
+            }
+        }
+    }
+
+    DerivativeResult {
+        score,
+        gradient,
+        hessian,
+    }
+}
+
 /// Transform a point using a 6-DOF pose.
 ///
 /// # Arguments
@@ -285,6 +385,37 @@ pub fn compute_derivatives_cpu(
     gauss: &GaussianParams,
     compute_hessian: bool,
 ) -> AggregatedDerivatives {
+    // Use default point-to-distribution metric
+    compute_derivatives_cpu_with_metric(
+        source_points,
+        target_grid,
+        pose,
+        gauss,
+        compute_hessian,
+        DistanceMetric::PointToDistribution,
+    )
+}
+
+/// Compute NDT score, gradient, and Hessian with configurable distance metric.
+///
+/// # Arguments
+/// * `source_points` - Source point cloud to match
+/// * `target_grid` - Target voxel grid (map)
+/// * `pose` - Current pose estimate [tx, ty, tz, roll, pitch, yaw]
+/// * `gauss` - Gaussian parameters for NDT
+/// * `compute_hessian` - Whether to compute Hessian
+/// * `metric` - Distance metric to use (PointToDistribution or PointToPlane)
+///
+/// # Returns
+/// Aggregated derivatives for all correspondences
+pub fn compute_derivatives_cpu_with_metric(
+    source_points: &[[f32; 3]],
+    target_grid: &VoxelGrid,
+    pose: &[f64; 6],
+    gauss: &GaussianParams,
+    compute_hessian: bool,
+    metric: DistanceMetric,
+) -> AggregatedDerivatives {
     let mut result = AggregatedDerivatives::zeros();
 
     // Precompute angular derivatives for this pose
@@ -329,18 +460,33 @@ pub fn compute_derivatives_cpu(
                 transformed[2] - voxel.mean.z as f64,
             );
 
-            // Convert inverse covariance to f64
-            let inv_cov = voxel.inv_covariance.cast::<f64>();
-
-            // Compute score/gradient/hessian for this correspondence
-            let deriv = compute_derivative_single(
-                &x_trans,
-                &inv_cov,
-                &point_deriv.point_gradient,
-                &point_deriv.point_hessian,
-                gauss,
-                compute_hessian,
-            );
+            // Compute score/gradient/hessian based on distance metric
+            let deriv = match metric {
+                DistanceMetric::PointToDistribution => {
+                    // Full Mahalanobis distance using inverse covariance
+                    let inv_cov = voxel.inv_covariance.cast::<f64>();
+                    compute_derivative_single(
+                        &x_trans,
+                        &inv_cov,
+                        &point_deriv.point_gradient,
+                        &point_deriv.point_hessian,
+                        gauss,
+                        compute_hessian,
+                    )
+                }
+                DistanceMetric::PointToPlane => {
+                    // Simplified point-to-plane distance using principal axis
+                    let principal_axis = voxel.principal_axis.cast::<f64>();
+                    compute_derivative_point_to_plane(
+                        &x_trans,
+                        &principal_axis,
+                        &point_deriv.point_gradient,
+                        &point_deriv.point_hessian,
+                        gauss,
+                        compute_hessian,
+                    )
+                }
+            };
 
             // Accumulate
             result.add(&deriv);
@@ -615,6 +761,185 @@ mod tests {
                     epsilon = 1e-10
                 );
             }
+        }
+    }
+
+    // ===== Point-to-Plane Metric Tests =====
+
+    #[test]
+    fn test_point_to_plane_score_zero_distance() {
+        // When point is exactly on the plane (distance = 0), score is at maximum
+        let x_trans = Vector3::zeros(); // Point at voxel mean
+        let principal_axis = Vector3::new(0.0, 0.0, 1.0); // Normal pointing up
+        let point_gradient = Matrix4x6::zeros();
+        let point_hessian = Matrix24x6::zeros();
+        let gauss = GaussianParams::default();
+
+        let result = compute_derivative_point_to_plane(
+            &x_trans,
+            &principal_axis,
+            &point_gradient,
+            &point_hessian,
+            &gauss,
+            false,
+        );
+
+        // At distance=0, exp(0) = 1, so score = -d1
+        assert_relative_eq!(result.score, -gauss.d1, epsilon = 1e-10);
+        assert!(
+            result.score > 0.0,
+            "Score should be positive at zero distance"
+        );
+    }
+
+    #[test]
+    fn test_point_to_plane_score_nonzero_distance() {
+        // Point displaced along the normal direction
+        let principal_axis = Vector3::new(0.0, 0.0, 1.0);
+        let x_trans = Vector3::new(0.0, 0.0, 1.0); // 1 unit above mean
+        let point_gradient = Matrix4x6::zeros();
+        let point_hessian = Matrix24x6::zeros();
+        let gauss = GaussianParams::default();
+
+        let result = compute_derivative_point_to_plane(
+            &x_trans,
+            &principal_axis,
+            &point_gradient,
+            &point_hessian,
+            &gauss,
+            false,
+        );
+
+        // Score should be positive but less than maximum
+        assert!(result.score > 0.0);
+        assert!(
+            result.score < -gauss.d1,
+            "Score should decrease with distance"
+        );
+    }
+
+    #[test]
+    fn test_point_to_plane_score_perpendicular_displacement() {
+        // Point displaced perpendicular to normal (parallel to plane)
+        let principal_axis = Vector3::new(0.0, 0.0, 1.0); // Normal pointing up
+        let x_trans = Vector3::new(1.0, 0.0, 0.0); // 1 unit in X (on plane)
+        let point_gradient = Matrix4x6::zeros();
+        let point_hessian = Matrix24x6::zeros();
+        let gauss = GaussianParams::default();
+
+        let result = compute_derivative_point_to_plane(
+            &x_trans,
+            &principal_axis,
+            &point_gradient,
+            &point_hessian,
+            &gauss,
+            false,
+        );
+
+        // Displacement perpendicular to normal = distance is 0
+        // Score should be at maximum
+        assert_relative_eq!(result.score, -gauss.d1, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_point_to_plane_vs_point_to_distribution() {
+        // Compare both metrics on the same test case
+        let grid = create_test_grid();
+        let source_points = vec![[1.0f32, 1.0, 1.0]];
+        let pose = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let gauss = GaussianParams::default();
+
+        let p2d_result = compute_derivatives_cpu_with_metric(
+            &source_points,
+            &grid,
+            &pose,
+            &gauss,
+            true,
+            DistanceMetric::PointToDistribution,
+        );
+
+        let p2p_result = compute_derivatives_cpu_with_metric(
+            &source_points,
+            &grid,
+            &pose,
+            &gauss,
+            true,
+            DistanceMetric::PointToPlane,
+        );
+
+        // Both should find correspondences
+        assert_eq!(
+            p2d_result.num_correspondences,
+            p2p_result.num_correspondences
+        );
+
+        // Both scores should be positive
+        assert!(p2d_result.score > 0.0);
+        assert!(p2p_result.score > 0.0);
+
+        // Hessians should be symmetric for both metrics
+        for i in 0..6 {
+            for j in 0..6 {
+                assert_relative_eq!(
+                    p2p_result.hessian[(i, j)],
+                    p2p_result.hessian[(j, i)],
+                    epsilon = 1e-10
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_point_to_plane_gradient_finite_difference() {
+        let grid = create_test_grid();
+        let source_points = vec![[1.0f32, 1.0, 1.0]];
+        let gauss = GaussianParams::default();
+        let eps = 1e-6;
+
+        let pose = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let result = compute_derivatives_cpu_with_metric(
+            &source_points,
+            &grid,
+            &pose,
+            &gauss,
+            false,
+            DistanceMetric::PointToPlane,
+        );
+
+        // Verify gradient with finite differences for translation
+        for i in 0..3 {
+            let mut pose_plus = pose;
+            let mut pose_minus = pose;
+            pose_plus[i] += eps;
+            pose_minus[i] -= eps;
+
+            let result_plus = compute_derivatives_cpu_with_metric(
+                &source_points,
+                &grid,
+                &pose_plus,
+                &gauss,
+                false,
+                DistanceMetric::PointToPlane,
+            );
+            let result_minus = compute_derivatives_cpu_with_metric(
+                &source_points,
+                &grid,
+                &pose_minus,
+                &gauss,
+                false,
+                DistanceMetric::PointToPlane,
+            );
+
+            let numerical_grad = (result_plus.score - result_minus.score) / (2.0 * eps);
+            let analytical_grad = result.gradient[i];
+
+            // Gradient should match within tolerance
+            assert_relative_eq!(
+                numerical_grad,
+                analytical_grad,
+                epsilon = 1e-4,
+                max_relative = 0.1
+            );
         }
     }
 }

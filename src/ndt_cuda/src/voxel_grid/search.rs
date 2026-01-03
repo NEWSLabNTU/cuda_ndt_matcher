@@ -138,6 +138,7 @@ mod tests {
             mean: Vector3::new(mean[0], mean[1], mean[2]),
             covariance: Matrix3::identity(),
             inv_covariance: Matrix3::identity(),
+            principal_axis: Vector3::new(0.0, 0.0, 1.0), // Default to Z-axis
             point_count: 10,
         }
     }

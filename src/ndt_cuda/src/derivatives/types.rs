@@ -4,6 +4,26 @@
 
 use nalgebra::{Matrix6, Vector6};
 
+/// Distance metric for NDT cost function.
+///
+/// Different metrics trade off accuracy vs. computational cost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DistanceMetric {
+    /// Full Mahalanobis distance (default): (x-μ)ᵀ Σ⁻¹ (x-μ)
+    ///
+    /// Uses the full 3x3 inverse covariance matrix.
+    /// Most accurate for general point distributions.
+    #[default]
+    PointToDistribution,
+
+    /// Simplified point-to-plane distance: ((x-μ) · n)²
+    ///
+    /// Projects the residual onto the surface normal (principal axis of minimum variance).
+    /// Faster and more stable for planar structures (walls, ground).
+    /// Uses only the eigenvector corresponding to the smallest eigenvalue.
+    PointToPlane,
+}
+
 /// Gaussian fitting parameters for NDT score function.
 ///
 /// The NDT score function (Eq. 6.9) is:

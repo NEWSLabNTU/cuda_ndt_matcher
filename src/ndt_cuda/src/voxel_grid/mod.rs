@@ -267,6 +267,20 @@ impl VoxelGrid {
         }
         result
     }
+
+    /// Get all principal axes as a flat array [V * 3].
+    ///
+    /// Principal axis is the eigenvector of the smallest eigenvalue (surface normal).
+    /// Useful for GPU upload for point-to-plane distance metric.
+    pub fn principal_axes_flat(&self) -> Vec<f32> {
+        let mut result = Vec::with_capacity(self.voxels.len() * 3);
+        for voxel in &self.voxels {
+            result.push(voxel.principal_axis.x);
+            result.push(voxel.principal_axis.y);
+            result.push(voxel.principal_axis.z);
+        }
+        result
+    }
 }
 
 #[cfg(test)]

@@ -42,7 +42,8 @@ pub mod test_utils;
 pub mod voxel_grid;
 
 pub use derivatives::{
-    AggregatedDerivatives, AngularDerivatives, DerivativeResult, GaussianParams, PointDerivatives,
+    AggregatedDerivatives, AngularDerivatives, DerivativeResult, DistanceMetric, GaussianParams,
+    PointDerivatives,
 };
 pub use optimization::{
     AlignmentDebug, ConvergenceStatus, IterationDebug, LineSearchConfig, LineSearchResult,

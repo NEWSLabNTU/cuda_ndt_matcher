@@ -1,5 +1,6 @@
 //! Type definitions for NDT optimization.
 
+use crate::derivatives::DistanceMetric;
 use nalgebra::{Isometry3, Matrix6, UnitQuaternion, Vector3, Vector6};
 
 /// Configuration for NDT scan matching.
@@ -32,6 +33,9 @@ pub struct NdtConfig {
 
     /// Regularization factor for Hessian when near-singular.
     pub regularization: f64,
+
+    /// Distance metric for NDT cost function.
+    pub distance_metric: DistanceMetric,
 }
 
 impl Default for NdtConfig {
@@ -44,6 +48,7 @@ impl Default for NdtConfig {
             outlier_ratio: 0.55,
             use_line_search: true, // Enable More-Thuente line search (matches Autoware)
             regularization: 1e-6,
+            distance_metric: DistanceMetric::PointToDistribution,
         }
     }
 }

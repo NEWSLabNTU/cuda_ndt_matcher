@@ -20,10 +20,12 @@ use cubecl::cuda::{CudaDevice, CudaRuntime};
 use cubecl::prelude::*;
 
 use crate::derivatives::gpu::{
-    compute_ndt_gradient_kernel, compute_ndt_nvtl_kernel, compute_ndt_score_kernel,
+    compute_ndt_gradient_kernel, compute_ndt_gradient_point_to_plane_kernel,
+    compute_ndt_nvtl_kernel, compute_ndt_score_kernel, compute_ndt_score_point_to_plane_kernel,
     compute_point_jacobians_cpu, pose_to_transform_matrix, radius_search_kernel, GpuVoxelData,
     MAX_NEIGHBORS,
 };
+use crate::derivatives::DistanceMetric;
 use crate::voxel_grid::kernels::transform_points_kernel;
 
 /// Type alias for CUDA compute client
@@ -509,6 +511,245 @@ impl GpuRuntime {
         })
     }
 
+    /// Compute NDT derivatives with selectable distance metric.
+    ///
+    /// # Arguments
+    /// * `source_points` - Source point cloud
+    /// * `voxel_data` - Target voxel grid data
+    /// * `pose` - Current pose [tx, ty, tz, roll, pitch, yaw]
+    /// * `gauss_d1`, `gauss_d2` - Gaussian parameters
+    /// * `search_radius` - Radius for voxel search
+    /// * `metric` - Distance metric (PointToDistribution or PointToPlane)
+    pub fn compute_derivatives_with_metric(
+        &self,
+        source_points: &[[f32; 3]],
+        voxel_data: &GpuVoxelData,
+        pose: &[f64; 6],
+        gauss_d1: f32,
+        gauss_d2: f32,
+        search_radius: f32,
+        metric: DistanceMetric,
+    ) -> Result<GpuDerivativeResult> {
+        if source_points.is_empty() {
+            return Ok(GpuDerivativeResult {
+                score: 0.0,
+                gradient: [0.0; 6],
+                num_correspondences: 0,
+            });
+        }
+
+        let num_points = source_points.len();
+        let num_voxels = voxel_data.num_voxels;
+
+        // Convert pose to transform matrix
+        let transform = pose_to_transform_matrix(pose);
+
+        // Compute point Jacobians on CPU (small overhead, complex computation)
+        let jacobians = compute_point_jacobians_cpu(source_points, pose);
+
+        // Flatten source points
+        let source_flat: Vec<f32> = source_points
+            .iter()
+            .flat_map(|p| p.iter().copied())
+            .collect();
+
+        // Upload data to GPU
+        let source_gpu = self.client.create(f32::as_bytes(&source_flat));
+        let transform_gpu = self.client.create(f32::as_bytes(&transform));
+        let jacobians_gpu = self.client.create(f32::as_bytes(&jacobians));
+        let voxel_means_gpu = self.client.create(f32::as_bytes(&voxel_data.means));
+        let voxel_inv_covs_gpu = self
+            .client
+            .create(f32::as_bytes(&voxel_data.inv_covariances));
+        let voxel_principal_axes_gpu = self
+            .client
+            .create(f32::as_bytes(&voxel_data.principal_axes));
+        let voxel_valid_gpu = self.client.create(u32::as_bytes(&voxel_data.valid));
+
+        // Allocate transformed points buffer
+        let transformed_gpu = self
+            .client
+            .empty(num_points * 3 * std::mem::size_of::<f32>());
+
+        // Step 1: Transform points
+        let cube_count = num_points.div_ceil(256) as u32;
+        unsafe {
+            transform_points_kernel::launch_unchecked::<f32, CudaRuntime>(
+                &self.client,
+                CubeCount::Static(cube_count, 1, 1),
+                CubeDim::new(256, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&source_gpu, num_points * 3, 1),
+                ArrayArg::from_raw_parts::<f32>(&transform_gpu, 16, 1),
+                ScalarArg::new(num_points as u32),
+                ArrayArg::from_raw_parts::<f32>(&transformed_gpu, num_points * 3, 1),
+            );
+        }
+
+        // Step 2: Radius search
+        let neighbor_indices_gpu = self
+            .client
+            .empty(num_points * MAX_NEIGHBORS as usize * std::mem::size_of::<i32>());
+        let neighbor_counts_gpu = self.client.empty(num_points * std::mem::size_of::<u32>());
+
+        let radius_sq = search_radius * search_radius;
+        unsafe {
+            radius_search_kernel::launch_unchecked::<f32, CudaRuntime>(
+                &self.client,
+                CubeCount::Static(cube_count, 1, 1),
+                CubeDim::new(256, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&transformed_gpu, num_points * 3, 1),
+                ArrayArg::from_raw_parts::<f32>(&voxel_means_gpu, num_voxels * 3, 1),
+                ArrayArg::from_raw_parts::<u32>(&voxel_valid_gpu, num_voxels, 1),
+                ScalarArg::new(radius_sq),
+                ScalarArg::new(num_points as u32),
+                ScalarArg::new(num_voxels as u32),
+                ArrayArg::from_raw_parts::<i32>(
+                    &neighbor_indices_gpu,
+                    num_points * MAX_NEIGHBORS as usize,
+                    1,
+                ),
+                ArrayArg::from_raw_parts::<u32>(&neighbor_counts_gpu, num_points, 1),
+            );
+        }
+
+        // Step 3: Compute scores and gradients using the selected metric
+        let scores_gpu = self.client.empty(num_points * std::mem::size_of::<f32>());
+        let correspondences_gpu = self.client.empty(num_points * std::mem::size_of::<u32>());
+        let gradients_gpu = self
+            .client
+            .empty(num_points * 6 * std::mem::size_of::<f32>());
+
+        match metric {
+            DistanceMetric::PointToDistribution => {
+                // Use full Mahalanobis distance (original kernels)
+                unsafe {
+                    compute_ndt_score_kernel::launch_unchecked::<f32, CudaRuntime>(
+                        &self.client,
+                        CubeCount::Static(cube_count, 1, 1),
+                        CubeDim::new(256, 1, 1),
+                        ArrayArg::from_raw_parts::<f32>(&source_gpu, num_points * 3, 1),
+                        ArrayArg::from_raw_parts::<f32>(&transform_gpu, 16, 1),
+                        ArrayArg::from_raw_parts::<f32>(&voxel_means_gpu, num_voxels * 3, 1),
+                        ArrayArg::from_raw_parts::<f32>(&voxel_inv_covs_gpu, num_voxels * 9, 1),
+                        ArrayArg::from_raw_parts::<i32>(
+                            &neighbor_indices_gpu,
+                            num_points * MAX_NEIGHBORS as usize,
+                            1,
+                        ),
+                        ArrayArg::from_raw_parts::<u32>(&neighbor_counts_gpu, num_points, 1),
+                        ScalarArg::new(gauss_d1),
+                        ScalarArg::new(gauss_d2),
+                        ScalarArg::new(num_points as u32),
+                        ArrayArg::from_raw_parts::<f32>(&scores_gpu, num_points, 1),
+                        ArrayArg::from_raw_parts::<u32>(&correspondences_gpu, num_points, 1),
+                    );
+
+                    compute_ndt_gradient_kernel::launch_unchecked::<f32, CudaRuntime>(
+                        &self.client,
+                        CubeCount::Static(cube_count, 1, 1),
+                        CubeDim::new(256, 1, 1),
+                        ArrayArg::from_raw_parts::<f32>(&source_gpu, num_points * 3, 1),
+                        ArrayArg::from_raw_parts::<f32>(&transform_gpu, 16, 1),
+                        ArrayArg::from_raw_parts::<f32>(&jacobians_gpu, num_points * 18, 1),
+                        ArrayArg::from_raw_parts::<f32>(&voxel_means_gpu, num_voxels * 3, 1),
+                        ArrayArg::from_raw_parts::<f32>(&voxel_inv_covs_gpu, num_voxels * 9, 1),
+                        ArrayArg::from_raw_parts::<i32>(
+                            &neighbor_indices_gpu,
+                            num_points * MAX_NEIGHBORS as usize,
+                            1,
+                        ),
+                        ArrayArg::from_raw_parts::<u32>(&neighbor_counts_gpu, num_points, 1),
+                        ScalarArg::new(gauss_d1),
+                        ScalarArg::new(gauss_d2),
+                        ScalarArg::new(num_points as u32),
+                        ArrayArg::from_raw_parts::<f32>(&gradients_gpu, num_points * 6, 1),
+                    );
+                }
+            }
+            DistanceMetric::PointToPlane => {
+                // Use simplified point-to-plane distance
+                unsafe {
+                    compute_ndt_score_point_to_plane_kernel::launch_unchecked::<f32, CudaRuntime>(
+                        &self.client,
+                        CubeCount::Static(cube_count, 1, 1),
+                        CubeDim::new(256, 1, 1),
+                        ArrayArg::from_raw_parts::<f32>(&source_gpu, num_points * 3, 1),
+                        ArrayArg::from_raw_parts::<f32>(&transform_gpu, 16, 1),
+                        ArrayArg::from_raw_parts::<f32>(&voxel_means_gpu, num_voxels * 3, 1),
+                        ArrayArg::from_raw_parts::<f32>(
+                            &voxel_principal_axes_gpu,
+                            num_voxels * 3,
+                            1,
+                        ),
+                        ArrayArg::from_raw_parts::<i32>(
+                            &neighbor_indices_gpu,
+                            num_points * MAX_NEIGHBORS as usize,
+                            1,
+                        ),
+                        ArrayArg::from_raw_parts::<u32>(&neighbor_counts_gpu, num_points, 1),
+                        ScalarArg::new(gauss_d1),
+                        ScalarArg::new(gauss_d2),
+                        ScalarArg::new(num_points as u32),
+                        ArrayArg::from_raw_parts::<f32>(&scores_gpu, num_points, 1),
+                        ArrayArg::from_raw_parts::<u32>(&correspondences_gpu, num_points, 1),
+                    );
+
+                    compute_ndt_gradient_point_to_plane_kernel::launch_unchecked::<f32, CudaRuntime>(
+                        &self.client,
+                        CubeCount::Static(cube_count, 1, 1),
+                        CubeDim::new(256, 1, 1),
+                        ArrayArg::from_raw_parts::<f32>(&source_gpu, num_points * 3, 1),
+                        ArrayArg::from_raw_parts::<f32>(&transform_gpu, 16, 1),
+                        ArrayArg::from_raw_parts::<f32>(&jacobians_gpu, num_points * 18, 1),
+                        ArrayArg::from_raw_parts::<f32>(&voxel_means_gpu, num_voxels * 3, 1),
+                        ArrayArg::from_raw_parts::<f32>(
+                            &voxel_principal_axes_gpu,
+                            num_voxels * 3,
+                            1,
+                        ),
+                        ArrayArg::from_raw_parts::<i32>(
+                            &neighbor_indices_gpu,
+                            num_points * MAX_NEIGHBORS as usize,
+                            1,
+                        ),
+                        ArrayArg::from_raw_parts::<u32>(&neighbor_counts_gpu, num_points, 1),
+                        ScalarArg::new(gauss_d1),
+                        ScalarArg::new(gauss_d2),
+                        ScalarArg::new(num_points as u32),
+                        ArrayArg::from_raw_parts::<f32>(&gradients_gpu, num_points * 6, 1),
+                    );
+                }
+            }
+        }
+
+        // Read results back
+        let scores_bytes = self.client.read_one(scores_gpu);
+        let scores = f32::from_bytes(&scores_bytes);
+
+        let correspondences_bytes = self.client.read_one(correspondences_gpu);
+        let correspondences = u32::from_bytes(&correspondences_bytes);
+
+        let gradients_bytes = self.client.read_one(gradients_gpu);
+        let gradients = f32::from_bytes(&gradients_bytes);
+
+        // Reduce on CPU (small reduction, not worth GPU overhead)
+        let total_score: f64 = scores.iter().map(|&s| s as f64).sum();
+        let total_correspondences: usize = correspondences.iter().map(|&c| c as usize).sum();
+
+        let mut total_gradient = [0.0f64; 6];
+        for i in 0..num_points {
+            for j in 0..6 {
+                total_gradient[j] += gradients[i * 6 + j] as f64;
+            }
+        }
+
+        Ok(GpuDerivativeResult {
+            score: total_score,
+            gradient: total_gradient,
+            num_correspondences: total_correspondences,
+        })
+    }
+
     /// Transform points using the GPU.
     pub fn transform_points(
         &self,
@@ -693,7 +934,8 @@ mod tests {
                 0.0, 1.0, 0.0, //
                 0.0, 0.0, 1.0, //
             ],
-            valid: vec![1], // One valid voxel
+            principal_axes: vec![0.0, 0.0, 1.0], // Z-axis as principal axis
+            valid: vec![1],                      // One valid voxel
             num_voxels: 1,
         };
 
@@ -742,6 +984,10 @@ mod tests {
             inv_covariances: vec![
                 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, // Voxel 0
                 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, // Voxel 1
+            ],
+            principal_axes: vec![
+                0.0, 0.0, 1.0, // Voxel 0: Z-axis
+                0.0, 0.0, 1.0, // Voxel 1: Z-axis
             ],
             valid: vec![1, 1],
             num_voxels: 2,

@@ -23,9 +23,11 @@ pub mod gpu;
 pub mod types;
 
 pub use angular::AngularDerivatives;
-pub use cpu::compute_derivatives_cpu;
+pub use cpu::{compute_derivatives_cpu, compute_derivatives_cpu_with_metric};
 pub use gpu::{
     compute_point_jacobians_cpu, pose_to_transform_matrix, GpuDerivativeResult, GpuDerivatives,
     GpuVoxelData, MAX_NEIGHBORS,
 };
-pub use types::{AggregatedDerivatives, DerivativeResult, GaussianParams, PointDerivatives};
+pub use types::{
+    AggregatedDerivatives, DerivativeResult, DistanceMetric, GaussianParams, PointDerivatives,
+};

@@ -358,6 +358,109 @@ pub fn compute_ndt_nvtl_kernel<F: Float>(
     has_neighbor[point_idx] = found_neighbor;
 }
 
+/// Compute NDT score using point-to-plane distance metric.
+///
+/// For each source point, computes score contributions from all neighboring voxels
+/// using the simplified point-to-plane distance instead of full Mahalanobis distance.
+///
+/// # Algorithm (per point)
+/// 1. Transform point using current pose
+/// 2. Look up neighbor voxels from pre-computed indices
+/// 3. For each neighbor voxel:
+///    a. Compute x_trans = transformed_point - voxel_mean
+///    b. Compute point-to-plane distance: d = dot(x_trans, principal_axis)
+///    c. Compute score contribution: -d1 * exp(-d2/2 * d²)
+/// 4. Accumulate to per-point output
+///
+/// This is a simplified but faster alternative to full Mahalanobis distance,
+/// especially effective for planar surfaces.
+#[cube(launch_unchecked)]
+pub fn compute_ndt_score_point_to_plane_kernel<F: Float>(
+    // Source points [N * 3]
+    source_points: &Array<F>,
+    // Transformation matrix [16]
+    transform: &Array<F>,
+    // Voxel means [V * 3]
+    voxel_means: &Array<F>,
+    // Voxel principal axes [V * 3] (surface normals)
+    voxel_principal_axes: &Array<F>,
+    // Neighbor indices from radius search [N * MAX_NEIGHBORS]
+    neighbor_indices: &Array<i32>,
+    // Neighbor counts [N]
+    neighbor_counts: &Array<u32>,
+    // Gaussian d1 parameter
+    gauss_d1: F,
+    // Gaussian d2 parameter
+    gauss_d2: F,
+    // Number of source points
+    num_points: u32,
+    // Output: per-point scores [N]
+    scores: &mut Array<F>,
+    // Output: per-point correspondence counts [N]
+    correspondences: &mut Array<u32>,
+) {
+    let point_idx = ABSOLUTE_POS;
+
+    if point_idx >= num_points {
+        terminate!();
+    }
+
+    // Load and transform source point
+    let sbase = point_idx * 3;
+    let sx = source_points[sbase];
+    let sy = source_points[sbase + 1];
+    let sz = source_points[sbase + 2];
+
+    let (tx, ty, tz) = transform_point_inline(sx, sy, sz, transform);
+
+    // Accumulate score across all neighbors
+    let mut total_score = F::new(0.0);
+    let mut total_correspondences = 0u32;
+
+    let num_neighbors = neighbor_counts[point_idx];
+    let neighbor_base = point_idx * MAX_NEIGHBORS;
+
+    for i in 0..MAX_NEIGHBORS {
+        // Only process if within neighbor count
+        if i < num_neighbors {
+            let voxel_idx = neighbor_indices[neighbor_base + i];
+            if voxel_idx >= 0 {
+                let v = voxel_idx as u32;
+
+                // Load voxel mean
+                let vbase = v * 3;
+                let mx = voxel_means[vbase];
+                let my = voxel_means[vbase + 1];
+                let mz = voxel_means[vbase + 2];
+
+                // Compute x_trans = transformed - mean
+                let x0 = tx - mx;
+                let x1 = ty - my;
+                let x2 = tz - mz;
+
+                // Load principal axis (surface normal)
+                let nx = voxel_principal_axes[vbase];
+                let ny = voxel_principal_axes[vbase + 1];
+                let nz = voxel_principal_axes[vbase + 2];
+
+                // Point-to-plane distance: d = dot(x_trans, n)
+                let d = x0 * nx + x1 * ny + x2 * nz;
+
+                // Score: -d1 * exp(-d2/2 * d²)
+                let d_sq = d * d;
+                let exponent = gauss_d2 * d_sq * F::new(-0.5);
+                let score = gauss_d1 * F::new(-1.0) * F::exp(exponent);
+
+                total_score += score;
+                total_correspondences += 1u32;
+            }
+        }
+    }
+
+    scores[point_idx] = total_score;
+    correspondences[point_idx] = total_correspondences;
+}
+
 /// Compute gradient contributions per point.
 ///
 /// This kernel computes the gradient vector (6 elements) for each point
@@ -515,6 +618,153 @@ pub fn compute_ndt_gradient_kernel<F: Float>(
     gradients[gbase + 5] = grad5;
 }
 
+/// Compute gradient contributions using point-to-plane distance metric.
+///
+/// This kernel computes the gradient vector (6 elements) for each point
+/// using the simplified point-to-plane distance instead of full Mahalanobis.
+///
+/// The gradient is: d1*d2*exp(-d2/2 * d²) * d * n^T * ∂T/∂p
+///
+/// Where:
+/// - d = dot(x_trans, n) is the point-to-plane distance
+/// - n is the principal axis (surface normal)
+/// - ∂T/∂p is the 3x6 Jacobian of the transformation w.r.t. pose
+#[cube(launch_unchecked)]
+pub fn compute_ndt_gradient_point_to_plane_kernel<F: Float>(
+    // Source points [N * 3]
+    source_points: &Array<F>,
+    // Transformation matrix [16]
+    transform: &Array<F>,
+    // Point Jacobians [N * 18] - ∂T(p)/∂pose for each point
+    // 3x6 matrix flattened row-major
+    point_jacobians: &Array<F>,
+    // Voxel means [V * 3]
+    voxel_means: &Array<F>,
+    // Voxel principal axes [V * 3] (surface normals)
+    voxel_principal_axes: &Array<F>,
+    // Neighbor indices [N * MAX_NEIGHBORS]
+    neighbor_indices: &Array<i32>,
+    // Neighbor counts [N]
+    neighbor_counts: &Array<u32>,
+    // Gaussian d1 parameter
+    gauss_d1: F,
+    // Gaussian d2 parameter
+    gauss_d2: F,
+    // Number of points
+    num_points: u32,
+    // Output: per-point gradients [N * 6]
+    gradients: &mut Array<F>,
+) {
+    let point_idx = ABSOLUTE_POS;
+
+    if point_idx >= num_points {
+        terminate!();
+    }
+
+    // Load and transform source point
+    let sbase = point_idx * 3;
+    let sx = source_points[sbase];
+    let sy = source_points[sbase + 1];
+    let sz = source_points[sbase + 2];
+
+    let (tx, ty, tz) = transform_point_inline(sx, sy, sz, transform);
+
+    // Load point Jacobian (3x6 row-major)
+    let jbase = point_idx * 18;
+
+    // Initialize gradient accumulators (unrolled for CubeCL)
+    let mut grad0 = F::new(0.0);
+    let mut grad1 = F::new(0.0);
+    let mut grad2 = F::new(0.0);
+    let mut grad3 = F::new(0.0);
+    let mut grad4 = F::new(0.0);
+    let mut grad5 = F::new(0.0);
+
+    let num_neighbors = neighbor_counts[point_idx];
+    let neighbor_base = point_idx * MAX_NEIGHBORS;
+
+    for i in 0..MAX_NEIGHBORS {
+        if i < num_neighbors {
+            let voxel_idx = neighbor_indices[neighbor_base + i];
+            if voxel_idx >= 0 {
+                let v = voxel_idx as u32;
+
+                // Load voxel mean and compute x_trans
+                let vbase = v * 3;
+                let x0 = tx - voxel_means[vbase];
+                let x1 = ty - voxel_means[vbase + 1];
+                let x2 = tz - voxel_means[vbase + 2];
+
+                // Load principal axis
+                let nx = voxel_principal_axes[vbase];
+                let ny = voxel_principal_axes[vbase + 1];
+                let nz = voxel_principal_axes[vbase + 2];
+
+                // Point-to-plane distance: d = dot(x_trans, n)
+                let d = x0 * nx + x1 * ny + x2 * nz;
+                let d_sq = d * d;
+
+                // e_d = d1 * d2 * exp(-d2/2 * d²) - coefficient for gradient
+                let exponent = gauss_d2 * d_sq * F::new(-0.5);
+                let e_d = gauss_d1 * gauss_d2 * F::exp(exponent);
+
+                // Check for valid value
+                let is_valid = e_d <= F::new(1.0) && e_d >= F::new(0.0);
+                if is_valid {
+                    // Gradient: e_d * d * n^T * J
+                    // Where n^T * J is dot product of normal with each column of Jacobian
+                    let coeff = e_d * d;
+
+                    // Column 0: n^T * J[:,0]
+                    let j0_0 = point_jacobians[jbase]; // J[0,0]
+                    let j1_0 = point_jacobians[jbase + 6]; // J[1,0]
+                    let j2_0 = point_jacobians[jbase + 12]; // J[2,0]
+                    grad0 += coeff * (nx * j0_0 + ny * j1_0 + nz * j2_0);
+
+                    // Column 1
+                    let j0_1 = point_jacobians[jbase + 1];
+                    let j1_1 = point_jacobians[jbase + 7];
+                    let j2_1 = point_jacobians[jbase + 13];
+                    grad1 += coeff * (nx * j0_1 + ny * j1_1 + nz * j2_1);
+
+                    // Column 2
+                    let j0_2 = point_jacobians[jbase + 2];
+                    let j1_2 = point_jacobians[jbase + 8];
+                    let j2_2 = point_jacobians[jbase + 14];
+                    grad2 += coeff * (nx * j0_2 + ny * j1_2 + nz * j2_2);
+
+                    // Column 3
+                    let j0_3 = point_jacobians[jbase + 3];
+                    let j1_3 = point_jacobians[jbase + 9];
+                    let j2_3 = point_jacobians[jbase + 15];
+                    grad3 += coeff * (nx * j0_3 + ny * j1_3 + nz * j2_3);
+
+                    // Column 4
+                    let j0_4 = point_jacobians[jbase + 4];
+                    let j1_4 = point_jacobians[jbase + 10];
+                    let j2_4 = point_jacobians[jbase + 16];
+                    grad4 += coeff * (nx * j0_4 + ny * j1_4 + nz * j2_4);
+
+                    // Column 5
+                    let j0_5 = point_jacobians[jbase + 5];
+                    let j1_5 = point_jacobians[jbase + 11];
+                    let j2_5 = point_jacobians[jbase + 17];
+                    grad5 += coeff * (nx * j0_5 + ny * j1_5 + nz * j2_5);
+                }
+            }
+        }
+    }
+
+    // Write output
+    let gbase = point_idx * 6;
+    gradients[gbase] = grad0;
+    gradients[gbase + 1] = grad1;
+    gradients[gbase + 2] = grad2;
+    gradients[gbase + 3] = grad3;
+    gradients[gbase + 4] = grad4;
+    gradients[gbase + 5] = grad5;
+}
+
 /// CPU fallback for point Jacobian computation.
 ///
 /// Computes ∂T(p)/∂pose for each source point, where T is the transformation
@@ -629,6 +879,8 @@ pub struct GpuVoxelData {
     pub means: Vec<f32>,
     /// Flattened inverse covariances [V * 9]
     pub inv_covariances: Vec<f32>,
+    /// Flattened principal axes [V * 3] (surface normals for point-to-plane)
+    pub principal_axes: Vec<f32>,
     /// Validity flags [V]
     pub valid: Vec<u32>,
     /// Number of voxels
@@ -640,12 +892,14 @@ impl GpuVoxelData {
     pub fn from_voxel_grid(grid: &crate::voxel_grid::VoxelGrid) -> Self {
         let means = grid.means_flat();
         let inv_covariances = grid.inv_covariances_flat();
+        let principal_axes = grid.principal_axes_flat();
         let valid: Vec<u32> = grid.voxels().iter().map(|_| 1u32).collect();
         let num_voxels = grid.len();
 
         Self {
             means,
             inv_covariances,
+            principal_axes,
             valid,
             num_voxels,
         }

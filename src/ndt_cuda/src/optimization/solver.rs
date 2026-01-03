@@ -17,7 +17,7 @@ use super::types::{
     apply_pose_delta, isometry_to_pose_vector, pose_vector_to_isometry, ConvergenceStatus,
     NdtConfig, NdtResult,
 };
-use crate::derivatives::{compute_derivatives_cpu, GaussianParams};
+use crate::derivatives::{compute_derivatives_cpu_with_metric, GaussianParams};
 use crate::scoring::{compute_nvtl, NvtlConfig};
 use crate::voxel_grid::VoxelGrid;
 
@@ -153,12 +153,13 @@ impl NdtOptimizer {
         // Main optimization loop
         for iteration in 0..self.config.ndt.max_iterations {
             // Compute derivatives at current pose
-            let derivatives = compute_derivatives_cpu(
+            let derivatives = compute_derivatives_cpu_with_metric(
                 source_points,
                 target_grid,
                 &pose,
                 &self.gauss,
                 true, // compute_hessian
+                self.config.ndt.distance_metric,
             );
 
             // Check for sufficient correspondences
@@ -336,10 +337,17 @@ impl NdtOptimizer {
 
         // Score and derivative function for line search
         // More-Thuente needs both value and directional derivative at each trial point
+        let distance_metric = self.config.ndt.distance_metric;
         let score_and_derivative = |alpha: f64| {
             let test_pose = apply_pose_delta(&pose_copy, &delta_copy, alpha);
-            let result =
-                compute_derivatives_cpu(source_points, target_grid, &test_pose, gauss, false);
+            let result = compute_derivatives_cpu_with_metric(
+                source_points,
+                target_grid,
+                &test_pose,
+                gauss,
+                false,
+                distance_metric,
+            );
             let deriv = directional_derivative(&result.gradient, &delta_copy);
             (result.score, deriv)
         };
@@ -384,12 +392,19 @@ impl NdtOptimizer {
         let pose_copy = *pose;
         let delta_copy = *delta;
         let regularization = &self.regularization;
+        let distance_metric = self.config.ndt.distance_metric;
 
         // Score and derivative function for line search (includes regularization)
         let score_and_derivative = |alpha: f64| {
             let test_pose = apply_pose_delta(&pose_copy, &delta_copy, alpha);
-            let ndt_result =
-                compute_derivatives_cpu(source_points, target_grid, &test_pose, gauss, false);
+            let ndt_result = compute_derivatives_cpu_with_metric(
+                source_points,
+                target_grid,
+                &test_pose,
+                gauss,
+                false,
+                distance_metric,
+            );
 
             // Add regularization contribution
             let (reg_score, reg_gradient, _) =
@@ -469,12 +484,13 @@ impl NdtOptimizer {
             iter_debug.set_pose(&pose);
 
             // Compute derivatives at current pose
-            let derivatives = compute_derivatives_cpu(
+            let derivatives = compute_derivatives_cpu_with_metric(
                 source_points,
                 target_grid,
                 &pose,
                 &self.gauss,
                 true, // compute_hessian
+                self.config.ndt.distance_metric,
             );
 
             iter_debug.score = derivatives.score;
@@ -652,11 +668,18 @@ impl NdtOptimizer {
         let gauss = &self.gauss;
         let pose_copy = *pose;
         let delta_copy = *delta;
+        let distance_metric = self.config.ndt.distance_metric;
 
         let score_and_derivative = |alpha: f64| {
             let test_pose = apply_pose_delta(&pose_copy, &delta_copy, alpha);
-            let result =
-                compute_derivatives_cpu(source_points, target_grid, &test_pose, gauss, false);
+            let result = compute_derivatives_cpu_with_metric(
+                source_points,
+                target_grid,
+                &test_pose,
+                gauss,
+                false,
+                distance_metric,
+            );
             let deriv = directional_derivative(&result.gradient, &delta_copy);
             (result.score, deriv)
         };

@@ -26,7 +26,7 @@ use nalgebra::{Isometry3, Matrix6};
 use rayon::prelude::*;
 
 use crate::derivatives::gpu::GpuVoxelData;
-use crate::derivatives::GaussianParams;
+use crate::derivatives::{DistanceMetric, GaussianParams};
 use crate::optimization::{NdtOptimizer, OptimizationConfig};
 use crate::runtime::{is_cuda_available, GpuRuntime};
 use crate::scoring::{compute_nvtl, compute_transform_probability, NvtlConfig};
@@ -76,6 +76,11 @@ pub struct NdtScanMatcherConfig {
 
     /// Scale factor for GNSS regularization (default: 0.01).
     pub regularization_scale_factor: f64,
+
+    /// Distance metric for NDT cost function.
+    /// - PointToDistribution: Full Mahalanobis distance (default)
+    /// - PointToPlane: Simplified point-to-plane distance (faster for planar structures)
+    pub distance_metric: DistanceMetric,
 }
 
 impl Default for NdtScanMatcherConfig {
@@ -92,6 +97,7 @@ impl Default for NdtScanMatcherConfig {
             use_gpu: false,                    // CPU by default for compatibility
             regularization_enabled: false,     // GNSS regularization disabled by default
             regularization_scale_factor: 0.01, // Autoware default
+            distance_metric: DistanceMetric::PointToDistribution, // Full Mahalanobis by default
         }
     }
 }
@@ -181,6 +187,15 @@ impl NdtScanMatcherBuilder {
     /// Higher values give more weight to GNSS poses (default: 0.01).
     pub fn regularization_scale_factor(mut self, scale: f64) -> Self {
         self.config.regularization_scale_factor = scale;
+        self
+    }
+
+    /// Set the distance metric for NDT cost function.
+    ///
+    /// - `PointToDistribution`: Full Mahalanobis distance (default, most accurate)
+    /// - `PointToPlane`: Point-to-plane distance (faster, better for planar structures)
+    pub fn distance_metric(mut self, metric: DistanceMetric) -> Self {
+        self.config.distance_metric = metric;
         self
     }
 
@@ -735,6 +750,7 @@ impl NdtScanMatcher {
                 outlier_ratio: config.outlier_ratio,
                 regularization: config.regularization,
                 use_line_search: config.use_line_search,
+                distance_metric: config.distance_metric,
             },
             regularization: RegularizationConfig {
                 enabled: config.regularization_enabled,
