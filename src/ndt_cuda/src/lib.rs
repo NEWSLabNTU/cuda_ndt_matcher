@@ -55,6 +55,10 @@ pub use scoring::{
 };
 pub use voxel_grid::{Voxel, VoxelGrid, VoxelGridConfig};
 
+// GPU-accelerated voxel grid construction
+#[cfg(feature = "cuda")]
+pub use voxel_grid::GpuVoxelGridBuilder;
+
 // High-level API (recommended for most users)
 pub use ndt::{AlignResult, NdtScanMatcher, NdtScanMatcherBuilder, NdtScanMatcherConfig};
 

@@ -17,12 +17,17 @@
 
 pub mod cpu;
 pub mod gpu;
+pub mod gpu_builder;
 pub mod kernels;
 pub mod search;
 pub mod types;
 
 pub use search::VoxelSearch;
 pub use types::{Voxel, VoxelCoord, VoxelGridConfig};
+
+// GPU builder (requires CUDA)
+#[cfg(feature = "cuda")]
+pub use gpu_builder::GpuVoxelGridBuilder;
 
 use std::collections::HashMap;
 
@@ -131,6 +136,30 @@ impl VoxelGrid {
         })
     }
 
+    /// Build a voxel grid using GPU acceleration.
+    ///
+    /// Uses GPU for voxel ID computation (parallel) and CPU for statistics.
+    /// Falls back to CPU if GPU is not available.
+    ///
+    /// # Arguments
+    /// * `points` - Input point cloud
+    /// * `config` - Voxel grid configuration
+    ///
+    /// # Example
+    /// ```ignore
+    /// let grid = VoxelGrid::from_points_gpu(&points, config)?;
+    /// ```
+    #[cfg(feature = "cuda")]
+    pub fn from_points_gpu(points: &[[f32; 3]], config: VoxelGridConfig) -> Result<Self> {
+        match gpu_builder::GpuVoxelGridBuilder::new() {
+            Ok(builder) => builder.build(points, &config),
+            Err(_) => {
+                // Fall back to CPU if GPU not available
+                Self::from_points_with_config(points, config)
+            }
+        }
+    }
+
     /// Get the number of voxels in the grid.
     pub fn len(&self) -> usize {
         self.voxels.len()
@@ -226,6 +255,31 @@ impl VoxelGrid {
     /// Get the resolution.
     pub fn resolution(&self) -> f32 {
         self.config.resolution
+    }
+
+    /// Insert a voxel at the given coordinate.
+    ///
+    /// Used by GPU builder to construct grid incrementally.
+    pub fn insert(&mut self, coord: VoxelCoord, voxel: Voxel) {
+        let idx = self.voxels.len();
+        self.coords.push(coord);
+        self.voxels.push(voxel);
+        self.coord_to_index.insert(coord, idx);
+    }
+
+    /// Build the search index (KD-tree) for radius queries.
+    ///
+    /// Should be called after all voxels have been inserted.
+    pub fn build_search_index(&mut self) {
+        self.search = VoxelSearch::from_voxels(&self.voxels);
+
+        // Update bounds
+        if !self.coords.is_empty() {
+            let (min, max, dims) = cpu::compute_voxel_bounds(&self.coords);
+            self.min_bound = Some(min);
+            self.max_bound = Some(max);
+            self.grid_dims = Some(dims);
+        }
     }
 
     /// Get all voxel means as a flat array [V * 3].
