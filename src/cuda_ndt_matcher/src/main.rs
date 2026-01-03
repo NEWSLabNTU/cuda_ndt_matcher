@@ -162,8 +162,9 @@ impl NdtScanMatcherNode {
         };
 
         // Publishers - Core pose output
-        let pose_pub = node.create_publisher("pose")?;
-        let pose_cov_pub = node.create_publisher("pose_with_covariance")?;
+        // Topic names must match launch file remappings (ndt_pose -> output_pose_topic)
+        let pose_pub = node.create_publisher("ndt_pose")?;
+        let pose_cov_pub = node.create_publisher("ndt_pose_with_covariance")?;
 
         // Publishers - Debug and visualization
         let debug_pubs = DebugPublishers {
