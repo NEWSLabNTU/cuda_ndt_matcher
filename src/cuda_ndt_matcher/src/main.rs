@@ -8,6 +8,7 @@ mod nvtl;
 mod params;
 mod particle;
 mod pointcloud;
+mod tf_handler;
 mod tpe;
 
 use anyhow::Result;
@@ -105,6 +106,9 @@ struct NdtScanMatcherNode {
     latest_sensor_points: Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
     enabled: Arc<AtomicBool>,
     params: Arc<NdtParams>,
+
+    // TF2 handler for sensor frame transforms
+    tf_handler: Arc<tf_handler::TfHandler>,
 }
 
 impl NdtScanMatcherNode {
@@ -121,6 +125,10 @@ impl NdtScanMatcherNode {
 
         // Initialize NDT manager (dual for non-blocking updates)
         let ndt_manager = Arc::new(DualNdtManager::new((*params).clone())?);
+
+        // Initialize TF2 handler for sensor frame transforms
+        let tf_handler = tf_handler::TfHandler::new(node)?;
+        log_info!(NODE_NAME, "TF handler initialized for sensor transforms");
 
         // Shared state
         let map_points: Arc<ArcSwap<Option<Vec<[f32; 3]>>>> = Arc::new(ArcSwap::from_pointee(None));
@@ -193,6 +201,7 @@ impl NdtScanMatcherNode {
             let debug_pubs = debug_pubs.clone();
             let diagnostics = Arc::clone(&diagnostics);
             let params = Arc::clone(&params);
+            let tf_handler = Arc::clone(&tf_handler);
 
             let mut opts = SubscriptionOptions::new("points_raw");
             opts.qos = sensor_qos;
@@ -212,6 +221,7 @@ impl NdtScanMatcherNode {
                     &debug_pubs,
                     &diagnostics,
                     &params,
+                    &tf_handler,
                 );
             })?
         };
@@ -342,6 +352,7 @@ impl NdtScanMatcherNode {
             latest_sensor_points,
             enabled,
             params,
+            tf_handler,
         })
     }
 
@@ -360,6 +371,7 @@ impl NdtScanMatcherNode {
         debug_pubs: &DebugPublishers,
         diagnostics: &Arc<Mutex<DiagnosticsInterface>>,
         params: &NdtParams,
+        tf_handler: &Arc<tf_handler::TfHandler>,
     ) {
         let start_time = Instant::now();
 
@@ -396,6 +408,46 @@ impl NdtScanMatcherNode {
                 gpu_str
             );
         }
+
+        // Transform sensor points from sensor frame to base_link
+        // The sensor frame comes from the PointCloud2 header, target is base_frame from params
+        let sensor_frame = &msg.header.frame_id;
+        let base_frame = &params.frame.base_frame;
+        let stamp_ns =
+            msg.header.stamp.sec as i64 * 1_000_000_000 + msg.header.stamp.nanosec as i64;
+
+        let sensor_points = if sensor_frame != base_frame {
+            match tf_handler.transform_points(
+                &sensor_points,
+                sensor_frame,
+                base_frame,
+                Some(stamp_ns),
+            ) {
+                Some(transformed) => {
+                    log_debug!(
+                        NODE_NAME,
+                        "Transformed {} points: {} -> {}",
+                        transformed.len(),
+                        sensor_frame,
+                        base_frame
+                    );
+                    transformed
+                }
+                None => {
+                    // TF not available yet - use points as-is with warning
+                    log_warn!(
+                        NODE_NAME,
+                        "TF not available: {} -> {}, using raw sensor frame",
+                        sensor_frame,
+                        base_frame
+                    );
+                    sensor_points
+                }
+            }
+        } else {
+            // Already in base_frame, no transform needed
+            sensor_points
+        };
 
         // Always store sensor points for initial pose estimation service (ndt_align_srv)
         // This must happen before any early returns so the align service can work
