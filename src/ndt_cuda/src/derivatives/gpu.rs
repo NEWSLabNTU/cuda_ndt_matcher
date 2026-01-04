@@ -556,11 +556,15 @@ pub fn compute_ndt_gradient_kernel<F: Float>(
                 let x_c_x = x0 * cx0 + x1 * cx1 + x2 * cx2;
 
                 // e_x_cov_x = d1 * d2 * exp(-d2/2 * x'Σ⁻¹x)
+                // Autoware checks validity BEFORE multiplying by d1 (which is negative)
                 let exponent = gauss_d2 * x_c_x * F::new(-0.5);
-                let e_x_cov_x = gauss_d1 * gauss_d2 * F::exp(exponent);
+                let e_x_cov_x_check = gauss_d2 * F::exp(exponent);
 
-                // Check for valid value (use conditional, not continue)
-                let is_valid = e_x_cov_x <= F::new(1.0) && e_x_cov_x >= F::new(0.0);
+                // Check for valid value before applying d1
+                // e_x_cov_x_check = d2 * exp(-d2/2 * x'Σ⁻¹x) should be in [0, 1]
+                let is_valid = e_x_cov_x_check <= F::new(1.0) && e_x_cov_x_check >= F::new(0.0);
+                // Now apply d1 for the actual computation (d1 < 0, so result is negative)
+                let e_x_cov_x = gauss_d1 * e_x_cov_x_check;
                 if is_valid {
                     // x' * Σ⁻¹ (row vector) - for symmetric Σ⁻¹: (Σ⁻¹ * x)' = (cx0, cx1, cx2)
 
@@ -705,11 +709,15 @@ pub fn compute_ndt_gradient_point_to_plane_kernel<F: Float>(
                 let d_sq = d * d;
 
                 // e_d = d1 * d2 * exp(-d2/2 * d²) - coefficient for gradient
+                // Autoware checks validity BEFORE multiplying by d1 (which is negative)
                 let exponent = gauss_d2 * d_sq * F::new(-0.5);
-                let e_d = gauss_d1 * gauss_d2 * F::exp(exponent);
+                let e_d_check = gauss_d2 * F::exp(exponent);
 
-                // Check for valid value
-                let is_valid = e_d <= F::new(1.0) && e_d >= F::new(0.0);
+                // Check for valid value before applying d1
+                // e_d_check = d2 * exp(-d2/2 * d²) should be in [0, 1]
+                let is_valid = e_d_check <= F::new(1.0) && e_d_check >= F::new(0.0);
+                // Now apply d1 for the actual computation (d1 < 0, so result is negative)
+                let e_d = gauss_d1 * e_d_check;
                 if is_valid {
                     // Gradient: e_d * d * n^T * J
                     // Where n^T * J is dot product of normal with each column of Jacobian
@@ -1645,11 +1653,15 @@ fn accumulate_hessian_contribution<F: Float>(
     let x_c_x = x0 * cx0 + x1 * cx1 + x2 * cx2;
 
     // e_x_cov_x = d1 * d2 * exp(-d2/2 * x'Σ⁻¹x)
+    // Autoware checks validity BEFORE multiplying by d1 (which is negative)
     let exponent = gauss_d2 * x_c_x * F::new(-0.5);
-    let e_x_cov_x = gauss_d1 * gauss_d2 * F::exp(exponent);
+    let e_x_cov_x_check = gauss_d2 * F::exp(exponent);
 
-    // Skip invalid contributions
-    let is_valid = e_x_cov_x <= F::new(1.0) && e_x_cov_x >= F::new(0.0);
+    // Check for valid value before applying d1
+    // e_x_cov_x_check = d2 * exp(-d2/2 * x'Σ⁻¹x) should be in [0, 1]
+    let is_valid = e_x_cov_x_check <= F::new(1.0) && e_x_cov_x_check >= F::new(0.0);
+    // Now apply d1 for the actual computation (d1 < 0, so result is negative)
+    let e_x_cov_x = gauss_d1 * e_x_cov_x_check;
     if is_valid {
         // Compute cov_dxd_i = (Σ⁻¹x)' * J[:,i] = cx' * J[:,i]
         // This is the gradient coefficient for pose parameter i
