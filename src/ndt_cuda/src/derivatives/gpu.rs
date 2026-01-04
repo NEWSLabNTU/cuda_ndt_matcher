@@ -765,6 +765,1019 @@ pub fn compute_ndt_gradient_point_to_plane_kernel<F: Float>(
     gradients[gbase + 5] = grad5;
 }
 
+/// Compute Hessian matrix (6x6) for NDT optimization.
+///
+/// This kernel computes the second derivatives of the NDT score function
+/// with respect to the pose parameters. The Hessian is used in Newton's method.
+///
+/// Equation 6.13 from Magnusson 2009:
+/// H[i,j] = e_x_cov_x * (
+///     -d2 * (x'Σ⁻¹J[:,i]) * (x'Σ⁻¹J[:,j]) +  // outer product term
+///     x'Σ⁻¹ * H_block[:,j] +                  // point Hessian term
+///     J[:,i]'Σ⁻¹J[:,j]                        // gradient squared term
+/// )
+///
+/// This version uses fully unrolled loops to avoid dynamic array indexing,
+/// which is not supported by CubeCL.
+///
+/// Note: Parameters are combined to stay within CubeCL's tuple size limits:
+/// - `jacobians_and_hessians`: first N*18 floats are jacobians, next N*144 are point hessians
+/// - `gauss_params`: [d1, d2]
+#[cube(launch_unchecked)]
+#[allow(clippy::too_many_arguments)]
+pub fn compute_ndt_hessian_kernel<F: Float>(
+    // Source points [N * 3]
+    source_points: &Array<F>,
+    // Transformation matrix [16]
+    transform: &Array<F>,
+    // Combined: Point Jacobians [N * 18] + Point Hessians [N * 144]
+    jacobians_and_hessians: &Array<F>,
+    // Voxel means [V * 3]
+    voxel_means: &Array<F>,
+    // Voxel inverse covariances [V * 9]
+    voxel_inv_covs: &Array<F>,
+    // Neighbor indices [N * MAX_NEIGHBORS]
+    neighbor_indices: &Array<i32>,
+    // Neighbor counts [N]
+    neighbor_counts: &Array<u32>,
+    // Gaussian parameters [d1, d2]
+    gauss_params: &Array<F>,
+    // Number of points
+    num_points: u32,
+    // Output: per-point Hessians [N * 36] (6x6 symmetric, stored full)
+    hessians: &mut Array<F>,
+) {
+    let gauss_d1 = gauss_params[0];
+    let gauss_d2 = gauss_params[1];
+
+    let point_idx = ABSOLUTE_POS;
+
+    if point_idx >= num_points {
+        terminate!();
+    }
+
+    // Load and transform source point
+    let sbase = point_idx * 3;
+    let sx = source_points[sbase];
+    let sy = source_points[sbase + 1];
+    let sz = source_points[sbase + 2];
+
+    let (tx, ty, tz) = transform_point_inline(sx, sy, sz, transform);
+
+    // Load point Jacobian (3x6 row-major) - 18 values total
+    // j_rc = Jacobian[row r][col c]
+    // Jacobians are at the start of the combined buffer
+    let jbase = point_idx * 18;
+    let j_00 = jacobians_and_hessians[jbase];
+    let j_01 = jacobians_and_hessians[jbase + 1];
+    let j_02 = jacobians_and_hessians[jbase + 2];
+    let j_03 = jacobians_and_hessians[jbase + 3];
+    let j_04 = jacobians_and_hessians[jbase + 4];
+    let j_05 = jacobians_and_hessians[jbase + 5];
+    let j_10 = jacobians_and_hessians[jbase + 6];
+    let j_11 = jacobians_and_hessians[jbase + 7];
+    let j_12 = jacobians_and_hessians[jbase + 8];
+    let j_13 = jacobians_and_hessians[jbase + 9];
+    let j_14 = jacobians_and_hessians[jbase + 10];
+    let j_15 = jacobians_and_hessians[jbase + 11];
+    let j_20 = jacobians_and_hessians[jbase + 12];
+    let j_21 = jacobians_and_hessians[jbase + 13];
+    let j_22 = jacobians_and_hessians[jbase + 14];
+    let j_23 = jacobians_and_hessians[jbase + 15];
+    let j_24 = jacobians_and_hessians[jbase + 16];
+    let j_25 = jacobians_and_hessians[jbase + 17];
+
+    // Load point Hessian non-zero elements
+    // Structure: 24x6 matrix, but only rows 13,14,17,18,21,22 have non-zero values
+    // and only in columns 3,4,5
+    // Point Hessians start after all jacobians: offset = num_points * 18
+    let hbase = num_points * 18 + point_idx * 144;
+
+    // Block 3 (roll): rows 12-15, non-zero in rows 13,14 cols 3-5
+    let ph_13_3 = jacobians_and_hessians[hbase + 13 * 6 + 3];
+    let ph_13_4 = jacobians_and_hessians[hbase + 13 * 6 + 4];
+    let ph_13_5 = jacobians_and_hessians[hbase + 13 * 6 + 5];
+    let ph_14_3 = jacobians_and_hessians[hbase + 14 * 6 + 3];
+    let ph_14_4 = jacobians_and_hessians[hbase + 14 * 6 + 4];
+    let ph_14_5 = jacobians_and_hessians[hbase + 14 * 6 + 5];
+
+    // Block 4 (pitch): rows 16-19, non-zero in rows 17,18 cols 3-5
+    let ph_17_3 = jacobians_and_hessians[hbase + 17 * 6 + 3];
+    let ph_17_4 = jacobians_and_hessians[hbase + 17 * 6 + 4];
+    let ph_17_5 = jacobians_and_hessians[hbase + 17 * 6 + 5];
+    let ph_18_3 = jacobians_and_hessians[hbase + 18 * 6 + 3];
+    let ph_18_4 = jacobians_and_hessians[hbase + 18 * 6 + 4];
+    let ph_18_5 = jacobians_and_hessians[hbase + 18 * 6 + 5];
+
+    // Block 5 (yaw): rows 20-23, non-zero in rows 21,22 cols 3-5
+    let ph_21_3 = jacobians_and_hessians[hbase + 21 * 6 + 3];
+    let ph_21_4 = jacobians_and_hessians[hbase + 21 * 6 + 4];
+    let ph_21_5 = jacobians_and_hessians[hbase + 21 * 6 + 5];
+    let ph_22_3 = jacobians_and_hessians[hbase + 22 * 6 + 3];
+    let ph_22_4 = jacobians_and_hessians[hbase + 22 * 6 + 4];
+    let ph_22_5 = jacobians_and_hessians[hbase + 22 * 6 + 5];
+
+    // Initialize Hessian accumulators (21 unique values for symmetric 6x6)
+    let mut h00 = F::new(0.0);
+    let mut h01 = F::new(0.0);
+    let mut h02 = F::new(0.0);
+    let mut h03 = F::new(0.0);
+    let mut h04 = F::new(0.0);
+    let mut h05 = F::new(0.0);
+    let mut h11 = F::new(0.0);
+    let mut h12 = F::new(0.0);
+    let mut h13 = F::new(0.0);
+    let mut h14 = F::new(0.0);
+    let mut h15 = F::new(0.0);
+    let mut h22 = F::new(0.0);
+    let mut h23 = F::new(0.0);
+    let mut h24 = F::new(0.0);
+    let mut h25 = F::new(0.0);
+    let mut h33 = F::new(0.0);
+    let mut h34 = F::new(0.0);
+    let mut h35 = F::new(0.0);
+    let mut h44 = F::new(0.0);
+    let mut h45 = F::new(0.0);
+    let mut h55 = F::new(0.0);
+
+    let num_neighbors = neighbor_counts[point_idx];
+    let neighbor_base = point_idx * MAX_NEIGHBORS;
+
+    // Unrolled neighbor loop (up to MAX_NEIGHBORS = 8)
+    // Neighbor 0
+    if num_neighbors > 0 {
+        let voxel_idx = neighbor_indices[neighbor_base];
+        if voxel_idx >= 0 {
+            accumulate_hessian_contribution(
+                voxel_idx as u32,
+                tx,
+                ty,
+                tz,
+                j_00,
+                j_01,
+                j_02,
+                j_03,
+                j_04,
+                j_05,
+                j_10,
+                j_11,
+                j_12,
+                j_13,
+                j_14,
+                j_15,
+                j_20,
+                j_21,
+                j_22,
+                j_23,
+                j_24,
+                j_25,
+                ph_13_3,
+                ph_13_4,
+                ph_13_5,
+                ph_14_3,
+                ph_14_4,
+                ph_14_5,
+                ph_17_3,
+                ph_17_4,
+                ph_17_5,
+                ph_18_3,
+                ph_18_4,
+                ph_18_5,
+                ph_21_3,
+                ph_21_4,
+                ph_21_5,
+                ph_22_3,
+                ph_22_4,
+                ph_22_5,
+                voxel_means,
+                voxel_inv_covs,
+                gauss_d1,
+                gauss_d2,
+                &mut h00,
+                &mut h01,
+                &mut h02,
+                &mut h03,
+                &mut h04,
+                &mut h05,
+                &mut h11,
+                &mut h12,
+                &mut h13,
+                &mut h14,
+                &mut h15,
+                &mut h22,
+                &mut h23,
+                &mut h24,
+                &mut h25,
+                &mut h33,
+                &mut h34,
+                &mut h35,
+                &mut h44,
+                &mut h45,
+                &mut h55,
+            );
+        }
+    }
+
+    // Neighbor 1
+    if num_neighbors > 1 {
+        let voxel_idx = neighbor_indices[neighbor_base + 1];
+        if voxel_idx >= 0 {
+            accumulate_hessian_contribution(
+                voxel_idx as u32,
+                tx,
+                ty,
+                tz,
+                j_00,
+                j_01,
+                j_02,
+                j_03,
+                j_04,
+                j_05,
+                j_10,
+                j_11,
+                j_12,
+                j_13,
+                j_14,
+                j_15,
+                j_20,
+                j_21,
+                j_22,
+                j_23,
+                j_24,
+                j_25,
+                ph_13_3,
+                ph_13_4,
+                ph_13_5,
+                ph_14_3,
+                ph_14_4,
+                ph_14_5,
+                ph_17_3,
+                ph_17_4,
+                ph_17_5,
+                ph_18_3,
+                ph_18_4,
+                ph_18_5,
+                ph_21_3,
+                ph_21_4,
+                ph_21_5,
+                ph_22_3,
+                ph_22_4,
+                ph_22_5,
+                voxel_means,
+                voxel_inv_covs,
+                gauss_d1,
+                gauss_d2,
+                &mut h00,
+                &mut h01,
+                &mut h02,
+                &mut h03,
+                &mut h04,
+                &mut h05,
+                &mut h11,
+                &mut h12,
+                &mut h13,
+                &mut h14,
+                &mut h15,
+                &mut h22,
+                &mut h23,
+                &mut h24,
+                &mut h25,
+                &mut h33,
+                &mut h34,
+                &mut h35,
+                &mut h44,
+                &mut h45,
+                &mut h55,
+            );
+        }
+    }
+
+    // Neighbor 2
+    if num_neighbors > 2 {
+        let voxel_idx = neighbor_indices[neighbor_base + 2];
+        if voxel_idx >= 0 {
+            accumulate_hessian_contribution(
+                voxel_idx as u32,
+                tx,
+                ty,
+                tz,
+                j_00,
+                j_01,
+                j_02,
+                j_03,
+                j_04,
+                j_05,
+                j_10,
+                j_11,
+                j_12,
+                j_13,
+                j_14,
+                j_15,
+                j_20,
+                j_21,
+                j_22,
+                j_23,
+                j_24,
+                j_25,
+                ph_13_3,
+                ph_13_4,
+                ph_13_5,
+                ph_14_3,
+                ph_14_4,
+                ph_14_5,
+                ph_17_3,
+                ph_17_4,
+                ph_17_5,
+                ph_18_3,
+                ph_18_4,
+                ph_18_5,
+                ph_21_3,
+                ph_21_4,
+                ph_21_5,
+                ph_22_3,
+                ph_22_4,
+                ph_22_5,
+                voxel_means,
+                voxel_inv_covs,
+                gauss_d1,
+                gauss_d2,
+                &mut h00,
+                &mut h01,
+                &mut h02,
+                &mut h03,
+                &mut h04,
+                &mut h05,
+                &mut h11,
+                &mut h12,
+                &mut h13,
+                &mut h14,
+                &mut h15,
+                &mut h22,
+                &mut h23,
+                &mut h24,
+                &mut h25,
+                &mut h33,
+                &mut h34,
+                &mut h35,
+                &mut h44,
+                &mut h45,
+                &mut h55,
+            );
+        }
+    }
+
+    // Neighbor 3
+    if num_neighbors > 3 {
+        let voxel_idx = neighbor_indices[neighbor_base + 3];
+        if voxel_idx >= 0 {
+            accumulate_hessian_contribution(
+                voxel_idx as u32,
+                tx,
+                ty,
+                tz,
+                j_00,
+                j_01,
+                j_02,
+                j_03,
+                j_04,
+                j_05,
+                j_10,
+                j_11,
+                j_12,
+                j_13,
+                j_14,
+                j_15,
+                j_20,
+                j_21,
+                j_22,
+                j_23,
+                j_24,
+                j_25,
+                ph_13_3,
+                ph_13_4,
+                ph_13_5,
+                ph_14_3,
+                ph_14_4,
+                ph_14_5,
+                ph_17_3,
+                ph_17_4,
+                ph_17_5,
+                ph_18_3,
+                ph_18_4,
+                ph_18_5,
+                ph_21_3,
+                ph_21_4,
+                ph_21_5,
+                ph_22_3,
+                ph_22_4,
+                ph_22_5,
+                voxel_means,
+                voxel_inv_covs,
+                gauss_d1,
+                gauss_d2,
+                &mut h00,
+                &mut h01,
+                &mut h02,
+                &mut h03,
+                &mut h04,
+                &mut h05,
+                &mut h11,
+                &mut h12,
+                &mut h13,
+                &mut h14,
+                &mut h15,
+                &mut h22,
+                &mut h23,
+                &mut h24,
+                &mut h25,
+                &mut h33,
+                &mut h34,
+                &mut h35,
+                &mut h44,
+                &mut h45,
+                &mut h55,
+            );
+        }
+    }
+
+    // Neighbor 4
+    if num_neighbors > 4 {
+        let voxel_idx = neighbor_indices[neighbor_base + 4];
+        if voxel_idx >= 0 {
+            accumulate_hessian_contribution(
+                voxel_idx as u32,
+                tx,
+                ty,
+                tz,
+                j_00,
+                j_01,
+                j_02,
+                j_03,
+                j_04,
+                j_05,
+                j_10,
+                j_11,
+                j_12,
+                j_13,
+                j_14,
+                j_15,
+                j_20,
+                j_21,
+                j_22,
+                j_23,
+                j_24,
+                j_25,
+                ph_13_3,
+                ph_13_4,
+                ph_13_5,
+                ph_14_3,
+                ph_14_4,
+                ph_14_5,
+                ph_17_3,
+                ph_17_4,
+                ph_17_5,
+                ph_18_3,
+                ph_18_4,
+                ph_18_5,
+                ph_21_3,
+                ph_21_4,
+                ph_21_5,
+                ph_22_3,
+                ph_22_4,
+                ph_22_5,
+                voxel_means,
+                voxel_inv_covs,
+                gauss_d1,
+                gauss_d2,
+                &mut h00,
+                &mut h01,
+                &mut h02,
+                &mut h03,
+                &mut h04,
+                &mut h05,
+                &mut h11,
+                &mut h12,
+                &mut h13,
+                &mut h14,
+                &mut h15,
+                &mut h22,
+                &mut h23,
+                &mut h24,
+                &mut h25,
+                &mut h33,
+                &mut h34,
+                &mut h35,
+                &mut h44,
+                &mut h45,
+                &mut h55,
+            );
+        }
+    }
+
+    // Neighbor 5
+    if num_neighbors > 5 {
+        let voxel_idx = neighbor_indices[neighbor_base + 5];
+        if voxel_idx >= 0 {
+            accumulate_hessian_contribution(
+                voxel_idx as u32,
+                tx,
+                ty,
+                tz,
+                j_00,
+                j_01,
+                j_02,
+                j_03,
+                j_04,
+                j_05,
+                j_10,
+                j_11,
+                j_12,
+                j_13,
+                j_14,
+                j_15,
+                j_20,
+                j_21,
+                j_22,
+                j_23,
+                j_24,
+                j_25,
+                ph_13_3,
+                ph_13_4,
+                ph_13_5,
+                ph_14_3,
+                ph_14_4,
+                ph_14_5,
+                ph_17_3,
+                ph_17_4,
+                ph_17_5,
+                ph_18_3,
+                ph_18_4,
+                ph_18_5,
+                ph_21_3,
+                ph_21_4,
+                ph_21_5,
+                ph_22_3,
+                ph_22_4,
+                ph_22_5,
+                voxel_means,
+                voxel_inv_covs,
+                gauss_d1,
+                gauss_d2,
+                &mut h00,
+                &mut h01,
+                &mut h02,
+                &mut h03,
+                &mut h04,
+                &mut h05,
+                &mut h11,
+                &mut h12,
+                &mut h13,
+                &mut h14,
+                &mut h15,
+                &mut h22,
+                &mut h23,
+                &mut h24,
+                &mut h25,
+                &mut h33,
+                &mut h34,
+                &mut h35,
+                &mut h44,
+                &mut h45,
+                &mut h55,
+            );
+        }
+    }
+
+    // Neighbor 6
+    if num_neighbors > 6 {
+        let voxel_idx = neighbor_indices[neighbor_base + 6];
+        if voxel_idx >= 0 {
+            accumulate_hessian_contribution(
+                voxel_idx as u32,
+                tx,
+                ty,
+                tz,
+                j_00,
+                j_01,
+                j_02,
+                j_03,
+                j_04,
+                j_05,
+                j_10,
+                j_11,
+                j_12,
+                j_13,
+                j_14,
+                j_15,
+                j_20,
+                j_21,
+                j_22,
+                j_23,
+                j_24,
+                j_25,
+                ph_13_3,
+                ph_13_4,
+                ph_13_5,
+                ph_14_3,
+                ph_14_4,
+                ph_14_5,
+                ph_17_3,
+                ph_17_4,
+                ph_17_5,
+                ph_18_3,
+                ph_18_4,
+                ph_18_5,
+                ph_21_3,
+                ph_21_4,
+                ph_21_5,
+                ph_22_3,
+                ph_22_4,
+                ph_22_5,
+                voxel_means,
+                voxel_inv_covs,
+                gauss_d1,
+                gauss_d2,
+                &mut h00,
+                &mut h01,
+                &mut h02,
+                &mut h03,
+                &mut h04,
+                &mut h05,
+                &mut h11,
+                &mut h12,
+                &mut h13,
+                &mut h14,
+                &mut h15,
+                &mut h22,
+                &mut h23,
+                &mut h24,
+                &mut h25,
+                &mut h33,
+                &mut h34,
+                &mut h35,
+                &mut h44,
+                &mut h45,
+                &mut h55,
+            );
+        }
+    }
+
+    // Neighbor 7
+    if num_neighbors > 7 {
+        let voxel_idx = neighbor_indices[neighbor_base + 7];
+        if voxel_idx >= 0 {
+            accumulate_hessian_contribution(
+                voxel_idx as u32,
+                tx,
+                ty,
+                tz,
+                j_00,
+                j_01,
+                j_02,
+                j_03,
+                j_04,
+                j_05,
+                j_10,
+                j_11,
+                j_12,
+                j_13,
+                j_14,
+                j_15,
+                j_20,
+                j_21,
+                j_22,
+                j_23,
+                j_24,
+                j_25,
+                ph_13_3,
+                ph_13_4,
+                ph_13_5,
+                ph_14_3,
+                ph_14_4,
+                ph_14_5,
+                ph_17_3,
+                ph_17_4,
+                ph_17_5,
+                ph_18_3,
+                ph_18_4,
+                ph_18_5,
+                ph_21_3,
+                ph_21_4,
+                ph_21_5,
+                ph_22_3,
+                ph_22_4,
+                ph_22_5,
+                voxel_means,
+                voxel_inv_covs,
+                gauss_d1,
+                gauss_d2,
+                &mut h00,
+                &mut h01,
+                &mut h02,
+                &mut h03,
+                &mut h04,
+                &mut h05,
+                &mut h11,
+                &mut h12,
+                &mut h13,
+                &mut h14,
+                &mut h15,
+                &mut h22,
+                &mut h23,
+                &mut h24,
+                &mut h25,
+                &mut h33,
+                &mut h34,
+                &mut h35,
+                &mut h44,
+                &mut h45,
+                &mut h55,
+            );
+        }
+    }
+
+    // Write output (full 6x6, row-major)
+    let out_base = point_idx * 36;
+    hessians[out_base] = h00;
+    hessians[out_base + 1] = h01;
+    hessians[out_base + 2] = h02;
+    hessians[out_base + 3] = h03;
+    hessians[out_base + 4] = h04;
+    hessians[out_base + 5] = h05;
+
+    hessians[out_base + 6] = h01; // symmetric
+    hessians[out_base + 7] = h11;
+    hessians[out_base + 8] = h12;
+    hessians[out_base + 9] = h13;
+    hessians[out_base + 10] = h14;
+    hessians[out_base + 11] = h15;
+
+    hessians[out_base + 12] = h02;
+    hessians[out_base + 13] = h12;
+    hessians[out_base + 14] = h22;
+    hessians[out_base + 15] = h23;
+    hessians[out_base + 16] = h24;
+    hessians[out_base + 17] = h25;
+
+    hessians[out_base + 18] = h03;
+    hessians[out_base + 19] = h13;
+    hessians[out_base + 20] = h23;
+    hessians[out_base + 21] = h33;
+    hessians[out_base + 22] = h34;
+    hessians[out_base + 23] = h35;
+
+    hessians[out_base + 24] = h04;
+    hessians[out_base + 25] = h14;
+    hessians[out_base + 26] = h24;
+    hessians[out_base + 27] = h34;
+    hessians[out_base + 28] = h44;
+    hessians[out_base + 29] = h45;
+
+    hessians[out_base + 30] = h05;
+    hessians[out_base + 31] = h15;
+    hessians[out_base + 32] = h25;
+    hessians[out_base + 33] = h35;
+    hessians[out_base + 34] = h45;
+    hessians[out_base + 35] = h55;
+}
+
+/// Helper function to accumulate Hessian contribution from a single voxel.
+///
+/// This is a #[cube] function with fully unrolled computations to avoid
+/// dynamic array indexing.
+#[cube]
+#[allow(clippy::too_many_arguments)]
+fn accumulate_hessian_contribution<F: Float>(
+    voxel_idx: u32,
+    tx: F,
+    ty: F,
+    tz: F,
+    // Jacobian elements (3x6 = 18 values)
+    j_00: F,
+    j_01: F,
+    j_02: F,
+    j_03: F,
+    j_04: F,
+    j_05: F,
+    j_10: F,
+    j_11: F,
+    j_12: F,
+    j_13: F,
+    j_14: F,
+    j_15: F,
+    j_20: F,
+    j_21: F,
+    j_22: F,
+    j_23: F,
+    j_24: F,
+    j_25: F,
+    // Point Hessian non-zero elements (18 values)
+    ph_13_3: F,
+    ph_13_4: F,
+    ph_13_5: F,
+    ph_14_3: F,
+    ph_14_4: F,
+    ph_14_5: F,
+    ph_17_3: F,
+    ph_17_4: F,
+    ph_17_5: F,
+    ph_18_3: F,
+    ph_18_4: F,
+    ph_18_5: F,
+    ph_21_3: F,
+    ph_21_4: F,
+    ph_21_5: F,
+    ph_22_3: F,
+    ph_22_4: F,
+    ph_22_5: F,
+    // Voxel data
+    voxel_means: &Array<F>,
+    voxel_inv_covs: &Array<F>,
+    gauss_d1: F,
+    gauss_d2: F,
+    // Hessian accumulators (21 unique values)
+    h00: &mut F,
+    h01: &mut F,
+    h02: &mut F,
+    h03: &mut F,
+    h04: &mut F,
+    h05: &mut F,
+    h11: &mut F,
+    h12: &mut F,
+    h13: &mut F,
+    h14: &mut F,
+    h15: &mut F,
+    h22: &mut F,
+    h23: &mut F,
+    h24: &mut F,
+    h25: &mut F,
+    h33: &mut F,
+    h34: &mut F,
+    h35: &mut F,
+    h44: &mut F,
+    h45: &mut F,
+    h55: &mut F,
+) {
+    // Load voxel mean
+    let vbase = voxel_idx * 3;
+    let x0 = tx - voxel_means[vbase];
+    let x1 = ty - voxel_means[vbase + 1];
+    let x2 = tz - voxel_means[vbase + 2];
+
+    // Load inverse covariance (3x3 row-major)
+    let cbase = voxel_idx * 9;
+    let c00 = voxel_inv_covs[cbase];
+    let c01 = voxel_inv_covs[cbase + 1];
+    let c02 = voxel_inv_covs[cbase + 2];
+    let c10 = voxel_inv_covs[cbase + 3];
+    let c11 = voxel_inv_covs[cbase + 4];
+    let c12 = voxel_inv_covs[cbase + 5];
+    let c20 = voxel_inv_covs[cbase + 6];
+    let c21 = voxel_inv_covs[cbase + 7];
+    let c22 = voxel_inv_covs[cbase + 8];
+
+    // Compute Σ⁻¹ * x = (cx0, cx1, cx2)
+    let cx0 = c00 * x0 + c01 * x1 + c02 * x2;
+    let cx1 = c10 * x0 + c11 * x1 + c12 * x2;
+    let cx2 = c20 * x0 + c21 * x1 + c22 * x2;
+
+    // x' * Σ⁻¹ * x
+    let x_c_x = x0 * cx0 + x1 * cx1 + x2 * cx2;
+
+    // e_x_cov_x = d1 * d2 * exp(-d2/2 * x'Σ⁻¹x)
+    let exponent = gauss_d2 * x_c_x * F::new(-0.5);
+    let e_x_cov_x = gauss_d1 * gauss_d2 * F::exp(exponent);
+
+    // Skip invalid contributions
+    let is_valid = e_x_cov_x <= F::new(1.0) && e_x_cov_x >= F::new(0.0);
+    if is_valid {
+        // Compute cov_dxd_i = (Σ⁻¹x)' * J[:,i] = cx' * J[:,i]
+        // This is the gradient coefficient for pose parameter i
+        let cov_dxd_0 = cx0 * j_00 + cx1 * j_10 + cx2 * j_20;
+        let cov_dxd_1 = cx0 * j_01 + cx1 * j_11 + cx2 * j_21;
+        let cov_dxd_2 = cx0 * j_02 + cx1 * j_12 + cx2 * j_22;
+        let cov_dxd_3 = cx0 * j_03 + cx1 * j_13 + cx2 * j_23;
+        let cov_dxd_4 = cx0 * j_04 + cx1 * j_14 + cx2 * j_24;
+        let cov_dxd_5 = cx0 * j_05 + cx1 * j_15 + cx2 * j_25;
+
+        // Compute Σ⁻¹ * J (3x6 matrix, call it cj)
+        // cj[row][col] = sum_k C[row][k] * J[k][col]
+        let cj_00 = c00 * j_00 + c01 * j_10 + c02 * j_20;
+        let cj_01 = c00 * j_01 + c01 * j_11 + c02 * j_21;
+        let cj_02 = c00 * j_02 + c01 * j_12 + c02 * j_22;
+        let cj_03 = c00 * j_03 + c01 * j_13 + c02 * j_23;
+        let cj_04 = c00 * j_04 + c01 * j_14 + c02 * j_24;
+        let cj_05 = c00 * j_05 + c01 * j_15 + c02 * j_25;
+
+        let cj_10 = c10 * j_00 + c11 * j_10 + c12 * j_20;
+        let cj_11 = c10 * j_01 + c11 * j_11 + c12 * j_21;
+        let cj_12 = c10 * j_02 + c11 * j_12 + c12 * j_22;
+        let cj_13 = c10 * j_03 + c11 * j_13 + c12 * j_23;
+        let cj_14 = c10 * j_04 + c11 * j_14 + c12 * j_24;
+        let cj_15 = c10 * j_05 + c11 * j_15 + c12 * j_25;
+
+        let cj_20 = c20 * j_00 + c21 * j_10 + c22 * j_20;
+        let cj_21 = c20 * j_01 + c21 * j_11 + c22 * j_21;
+        let cj_22 = c20 * j_02 + c21 * j_12 + c22 * j_22;
+        let cj_23 = c20 * j_03 + c21 * j_13 + c22 * j_23;
+        let cj_24 = c20 * j_04 + c21 * j_14 + c22 * j_24;
+        let cj_25 = c20 * j_05 + c21 * j_15 + c22 * j_25;
+
+        // Compute J' * Σ⁻¹ * J (6x6 symmetric matrix)
+        // jtcj[i][j] = J[:,i]' * cj[:,j]
+        let jtcj_00 = j_00 * cj_00 + j_10 * cj_10 + j_20 * cj_20;
+        let jtcj_01 = j_00 * cj_01 + j_10 * cj_11 + j_20 * cj_21;
+        let jtcj_02 = j_00 * cj_02 + j_10 * cj_12 + j_20 * cj_22;
+        let jtcj_03 = j_00 * cj_03 + j_10 * cj_13 + j_20 * cj_23;
+        let jtcj_04 = j_00 * cj_04 + j_10 * cj_14 + j_20 * cj_24;
+        let jtcj_05 = j_00 * cj_05 + j_10 * cj_15 + j_20 * cj_25;
+
+        let jtcj_11 = j_01 * cj_01 + j_11 * cj_11 + j_21 * cj_21;
+        let jtcj_12 = j_01 * cj_02 + j_11 * cj_12 + j_21 * cj_22;
+        let jtcj_13 = j_01 * cj_03 + j_11 * cj_13 + j_21 * cj_23;
+        let jtcj_14 = j_01 * cj_04 + j_11 * cj_14 + j_21 * cj_24;
+        let jtcj_15 = j_01 * cj_05 + j_11 * cj_15 + j_21 * cj_25;
+
+        let jtcj_22 = j_02 * cj_02 + j_12 * cj_12 + j_22 * cj_22;
+        let jtcj_23 = j_02 * cj_03 + j_12 * cj_13 + j_22 * cj_23;
+        let jtcj_24 = j_02 * cj_04 + j_12 * cj_14 + j_22 * cj_24;
+        let jtcj_25 = j_02 * cj_05 + j_12 * cj_15 + j_22 * cj_25;
+
+        let jtcj_33 = j_03 * cj_03 + j_13 * cj_13 + j_23 * cj_23;
+        let jtcj_34 = j_03 * cj_04 + j_13 * cj_14 + j_23 * cj_24;
+        let jtcj_35 = j_03 * cj_05 + j_13 * cj_15 + j_23 * cj_25;
+
+        let jtcj_44 = j_04 * cj_04 + j_14 * cj_14 + j_24 * cj_24;
+        let jtcj_45 = j_04 * cj_05 + j_14 * cj_15 + j_24 * cj_25;
+
+        let jtcj_55 = j_05 * cj_05 + j_15 * cj_15 + j_25 * cj_25;
+
+        // Compute x'Σ⁻¹ * H_block terms (xch)
+        // xch[i][j] = cx' * H_block[i][:,j]
+        // Only non-zero for i >= 3, j >= 3 due to point Hessian structure
+        //
+        // For block i (pose parameter i), the point Hessian has structure:
+        // - Blocks 0,1,2 (translation): all zeros
+        // - Block 3 (roll): rows 12-15, non-zero in rows 13,14 (y,z components)
+        // - Block 4 (pitch): rows 16-19, non-zero in rows 17,18
+        // - Block 5 (yaw): rows 20-23, non-zero in rows 21,22
+        //
+        // xch[i][j] = cx1 * ph[i*4+1, j] + cx2 * ph[i*4+2, j]
+        // (cx0 * row_x is zero, cx0 would multiply zeros anyway for i>=3)
+
+        // xch[3][3] = cx1 * ph_13_3 + cx2 * ph_14_3
+        let xch_33 = cx1 * ph_13_3 + cx2 * ph_14_3;
+        let xch_34 = cx1 * ph_13_4 + cx2 * ph_14_4;
+        let xch_35 = cx1 * ph_13_5 + cx2 * ph_14_5;
+
+        let xch_43 = cx1 * ph_17_3 + cx2 * ph_18_3;
+        let xch_44 = cx1 * ph_17_4 + cx2 * ph_18_4;
+        let xch_45 = cx1 * ph_17_5 + cx2 * ph_18_5;
+
+        let xch_53 = cx1 * ph_21_3 + cx2 * ph_22_3;
+        let xch_54 = cx1 * ph_21_4 + cx2 * ph_22_4;
+        let xch_55 = cx1 * ph_21_5 + cx2 * ph_22_5;
+
+        // Accumulate Hessian: H[i,j] += e_x_cov_x * (-d2 * cov_dxd[i] * cov_dxd[j] + xch[i][j] + jtcj[i][j])
+        let neg_d2 = F::new(0.0) - gauss_d2;
+
+        // Row 0: H[0,0..5]
+        *h00 += e_x_cov_x * (neg_d2 * cov_dxd_0 * cov_dxd_0 + jtcj_00);
+        *h01 += e_x_cov_x * (neg_d2 * cov_dxd_0 * cov_dxd_1 + jtcj_01);
+        *h02 += e_x_cov_x * (neg_d2 * cov_dxd_0 * cov_dxd_2 + jtcj_02);
+        *h03 += e_x_cov_x * (neg_d2 * cov_dxd_0 * cov_dxd_3 + jtcj_03);
+        *h04 += e_x_cov_x * (neg_d2 * cov_dxd_0 * cov_dxd_4 + jtcj_04);
+        *h05 += e_x_cov_x * (neg_d2 * cov_dxd_0 * cov_dxd_5 + jtcj_05);
+
+        // Row 1: H[1,1..5]
+        *h11 += e_x_cov_x * (neg_d2 * cov_dxd_1 * cov_dxd_1 + jtcj_11);
+        *h12 += e_x_cov_x * (neg_d2 * cov_dxd_1 * cov_dxd_2 + jtcj_12);
+        *h13 += e_x_cov_x * (neg_d2 * cov_dxd_1 * cov_dxd_3 + jtcj_13);
+        *h14 += e_x_cov_x * (neg_d2 * cov_dxd_1 * cov_dxd_4 + jtcj_14);
+        *h15 += e_x_cov_x * (neg_d2 * cov_dxd_1 * cov_dxd_5 + jtcj_15);
+
+        // Row 2: H[2,2..5]
+        *h22 += e_x_cov_x * (neg_d2 * cov_dxd_2 * cov_dxd_2 + jtcj_22);
+        *h23 += e_x_cov_x * (neg_d2 * cov_dxd_2 * cov_dxd_3 + jtcj_23);
+        *h24 += e_x_cov_x * (neg_d2 * cov_dxd_2 * cov_dxd_4 + jtcj_24);
+        *h25 += e_x_cov_x * (neg_d2 * cov_dxd_2 * cov_dxd_5 + jtcj_25);
+
+        // Row 3: H[3,3..5] - includes xch terms
+        // For off-diagonal terms H[i,j], both xch[i,j] and xch[j,i] contribute
+        // (from x'Σ⁻¹H_i[:,j] and x'Σ⁻¹H_j[:,i] in Magnusson 2009 Eq. 6.13)
+        *h33 += e_x_cov_x * (neg_d2 * cov_dxd_3 * cov_dxd_3 + xch_33 + jtcj_33);
+        *h34 += e_x_cov_x * (neg_d2 * cov_dxd_3 * cov_dxd_4 + xch_34 + xch_43 + jtcj_34);
+        *h35 += e_x_cov_x * (neg_d2 * cov_dxd_3 * cov_dxd_5 + xch_35 + xch_53 + jtcj_35);
+
+        // Row 4: H[4,4..5] - includes xch terms
+        *h44 += e_x_cov_x * (neg_d2 * cov_dxd_4 * cov_dxd_4 + xch_44 + jtcj_44);
+        *h45 += e_x_cov_x * (neg_d2 * cov_dxd_4 * cov_dxd_5 + xch_45 + xch_54 + jtcj_45);
+
+        // Row 5: H[5,5] - includes xch term
+        *h55 += e_x_cov_x * (neg_d2 * cov_dxd_5 * cov_dxd_5 + xch_55 + jtcj_55);
+    }
+}
+
 /// CPU fallback for point Jacobian computation.
 ///
 /// Computes ∂T(p)/∂pose for each source point, where T is the transformation
@@ -827,6 +1840,137 @@ pub fn compute_point_jacobians_cpu(source_points: &[[f32; 3]], pose: &[f64; 6]) 
     }
 
     jacobians
+}
+
+/// Compute point Hessians on CPU for GPU kernel.
+///
+/// Returns a flattened vector of 24x6 Hessian matrices for each point.
+/// The structure matches the CPU point_hessian from angular derivatives.
+///
+/// # Layout
+/// Each point has 144 floats (24 rows × 6 columns):
+/// - Rows 0-11: translation Hessians (all zeros, second derivatives of translation are 0)
+/// - Rows 12-23: angular Hessians (computed from h_ang × point)
+///
+/// The angular Hessian terms are arranged as:
+/// - Block 3 (rows 12-15): ∂²T/∂roll² and ∂²T/∂roll∂pitch
+/// - Block 4 (rows 16-19): ∂²T/∂pitch² and ∂²T/∂pitch∂yaw
+/// - Block 5 (rows 20-23): ∂²T/∂yaw² and remaining cross terms
+pub fn compute_point_hessians_cpu(source_points: &[[f32; 3]], pose: &[f64; 6]) -> Vec<f32> {
+    let (roll, pitch, yaw) = (pose[3], pose[4], pose[5]);
+
+    // Precompute trig values
+    let (sr, cr) = roll.sin_cos();
+    let (sp, cp) = pitch.sin_cos();
+    let (sy, cy) = yaw.sin_cos();
+
+    // Precompute angular Hessian (h_ang) - 15 terms × 3 components
+    // These are the second derivatives of the rotation matrix w.r.t. angles
+    // a2, a3: ∂²R/∂roll² (y, z components)
+    let a2 = [-cr * sy - sr * sp * cy, -cr * cy + sr * sp * sy, sr * cp];
+    let a3 = [-sr * sy + cr * sp * cy, -cr * sp * sy - sr * cy, -cr * cp];
+
+    // b2, b3: ∂²R/∂roll∂pitch
+    let b2 = [cr * cp * cy, -cr * cp * sy, cr * sp];
+    let b3 = [sr * cp * cy, -sr * cp * sy, sr * sp];
+
+    // c2, c3: ∂²R/∂roll∂yaw
+    let c2 = [-sr * cy - cr * sp * sy, sr * sy - cr * sp * cy, 0.0];
+    let c3 = [cr * cy - sr * sp * sy, -sr * sp * cy - cr * sy, 0.0];
+
+    // d1, d2, d3: ∂²R/∂pitch²
+    let d1 = [-cp * cy, cp * sy, sp];
+    let d2 = [-sr * sp * cy, sr * sp * sy, sr * cp];
+    let d3 = [cr * sp * cy, -cr * sp * sy, -cr * cp];
+
+    // e1, e2, e3: ∂²R/∂pitch∂yaw
+    let e1 = [sp * sy, sp * cy, 0.0];
+    let e2 = [-sr * cp * sy, -sr * cp * cy, 0.0];
+    let e3 = [cr * cp * sy, cr * cp * cy, 0.0];
+
+    // f1, f2, f3: ∂²R/∂yaw²
+    let f1 = [-cp * cy, cp * sy, 0.0];
+    let f2 = [-cr * sy - sr * sp * cy, -cr * cy + sr * sp * sy, 0.0];
+    let f3 = [-sr * sy + cr * sp * cy, -cr * sp * sy - sr * cy, 0.0];
+
+    let mut hessians = Vec::with_capacity(source_points.len() * 144);
+
+    for point in source_points {
+        let (x, y, z) = (point[0] as f64, point[1] as f64, point[2] as f64);
+
+        // The 24x6 point Hessian matrix
+        // Rows 0-11: zeros (translation second derivatives)
+        // Rows 12-23: angular second derivatives
+
+        // We output row-major: 24 rows × 6 columns = 144 values
+        // For GPU efficiency, we only store the non-zero portions
+
+        // Rows 0-11: all zeros (translation has no second derivatives)
+        hessians.extend(std::iter::repeat_n(0.0_f32, 72));
+
+        // Rows 12-15: Block for roll-roll, roll-pitch, roll-yaw in column 3,4,5
+        // Row 12: zeros (x component of roll-* terms)
+        hessians.extend(std::iter::repeat_n(0.0_f32, 6));
+
+        // Row 13: a2·point for col 3, b2·point for col 4, c2·point for col 5
+        hessians.extend(std::iter::repeat_n(0.0_f32, 3));
+        hessians.push((a2[0] * x + a2[1] * y + a2[2] * z) as f32); // col 3
+        hessians.push((b2[0] * x + b2[1] * y + b2[2] * z) as f32); // col 4
+        hessians.push((c2[0] * x + c2[1] * y + c2[2] * z) as f32); // col 5
+
+        // Row 14: a3·point for col 3, b3·point for col 4, c3·point for col 5
+        hessians.extend(std::iter::repeat_n(0.0_f32, 3));
+        hessians.push((a3[0] * x + a3[1] * y + a3[2] * z) as f32); // col 3
+        hessians.push((b3[0] * x + b3[1] * y + b3[2] * z) as f32); // col 4
+        hessians.push((c3[0] * x + c3[1] * y + c3[2] * z) as f32); // col 5
+
+        // Row 15: zeros (w component)
+        hessians.extend(std::iter::repeat_n(0.0_f32, 6));
+
+        // Rows 16-19: Block for pitch-roll, pitch-pitch, pitch-yaw
+        // Row 16: d1·point for col 4, e1·point for col 5
+        hessians.extend(std::iter::repeat_n(0.0_f32, 4));
+        hessians.push((d1[0] * x + d1[1] * y + d1[2] * z) as f32); // col 4
+        hessians.push((e1[0] * x + e1[1] * y + e1[2] * z) as f32); // col 5
+
+        // Row 17: b2·point for col 3, d2·point for col 4, e2·point for col 5
+        hessians.extend(std::iter::repeat_n(0.0_f32, 3));
+        hessians.push((b2[0] * x + b2[1] * y + b2[2] * z) as f32); // col 3
+        hessians.push((d2[0] * x + d2[1] * y + d2[2] * z) as f32); // col 4
+        hessians.push((e2[0] * x + e2[1] * y + e2[2] * z) as f32); // col 5
+
+        // Row 18: b3·point for col 3, d3·point for col 4, e3·point for col 5
+        hessians.extend(std::iter::repeat_n(0.0_f32, 3));
+        hessians.push((b3[0] * x + b3[1] * y + b3[2] * z) as f32); // col 3
+        hessians.push((d3[0] * x + d3[1] * y + d3[2] * z) as f32); // col 4
+        hessians.push((e3[0] * x + e3[1] * y + e3[2] * z) as f32); // col 5
+
+        // Row 19: zeros (w component)
+        hessians.extend(std::iter::repeat_n(0.0_f32, 6));
+
+        // Rows 20-23: Block for yaw-roll, yaw-pitch, yaw-yaw
+        // Row 20: e1·point for col 4, f1·point for col 5
+        hessians.extend(std::iter::repeat_n(0.0_f32, 4));
+        hessians.push((e1[0] * x + e1[1] * y + e1[2] * z) as f32); // col 4
+        hessians.push((f1[0] * x + f1[1] * y + f1[2] * z) as f32); // col 5
+
+        // Row 21: c2·point for col 3, e2·point for col 4, f2·point for col 5
+        hessians.extend(std::iter::repeat_n(0.0_f32, 3));
+        hessians.push((c2[0] * x + c2[1] * y + c2[2] * z) as f32); // col 3
+        hessians.push((e2[0] * x + e2[1] * y + e2[2] * z) as f32); // col 4
+        hessians.push((f2[0] * x + f2[1] * y + f2[2] * z) as f32); // col 5
+
+        // Row 22: c3·point for col 3, e3·point for col 4, f3·point for col 5
+        hessians.extend(std::iter::repeat_n(0.0_f32, 3));
+        hessians.push((c3[0] * x + c3[1] * y + c3[2] * z) as f32); // col 3
+        hessians.push((e3[0] * x + e3[1] * y + e3[2] * z) as f32); // col 4
+        hessians.push((f3[0] * x + f3[1] * y + f3[2] * z) as f32); // col 5
+
+        // Row 23: zeros (w component)
+        hessians.extend(std::iter::repeat_n(0.0_f32, 6));
+    }
+
+    hessians
 }
 
 /// GPU derivative computation context.
@@ -913,6 +2057,8 @@ pub struct GpuDerivativeResult {
     pub score: f64,
     /// Gradient (6 elements) - sum across all points
     pub gradient: [f64; 6],
+    /// Hessian (6x6 matrix) - sum across all points, row-major
+    pub hessian: [[f64; 6]; 6],
     /// Number of point-voxel correspondences
     pub num_correspondences: usize,
 }

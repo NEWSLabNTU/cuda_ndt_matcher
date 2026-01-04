@@ -16,6 +16,7 @@
 //! - `radius_search_kernel`: Find neighboring voxels for each transformed point
 //! - `compute_ndt_score_kernel`: Compute per-point scores
 //! - `compute_ndt_gradient_kernel`: Compute per-point gradients
+//! - `compute_ndt_hessian_kernel`: Compute per-point Hessians
 
 pub mod angular;
 pub mod cpu;
@@ -25,8 +26,8 @@ pub mod types;
 pub use angular::AngularDerivatives;
 pub use cpu::{compute_derivatives_cpu, compute_derivatives_cpu_with_metric};
 pub use gpu::{
-    compute_point_jacobians_cpu, pose_to_transform_matrix, GpuDerivativeResult, GpuDerivatives,
-    GpuVoxelData, MAX_NEIGHBORS,
+    compute_ndt_hessian_kernel, compute_point_hessians_cpu, compute_point_jacobians_cpu,
+    pose_to_transform_matrix, GpuDerivativeResult, GpuDerivatives, GpuVoxelData, MAX_NEIGHBORS,
 };
 pub use types::{
     AggregatedDerivatives, DerivativeResult, DistanceMetric, GaussianParams, PointDerivatives,

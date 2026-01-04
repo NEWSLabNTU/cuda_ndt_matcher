@@ -21,7 +21,8 @@ use cubecl::prelude::*;
 
 use crate::derivatives::gpu::{
     compute_ndt_gradient_kernel, compute_ndt_gradient_point_to_plane_kernel,
-    compute_ndt_nvtl_kernel, compute_ndt_score_kernel, compute_ndt_score_point_to_plane_kernel,
+    compute_ndt_hessian_kernel, compute_ndt_nvtl_kernel, compute_ndt_score_kernel,
+    compute_ndt_score_point_to_plane_kernel, compute_point_hessians_cpu,
     compute_point_jacobians_cpu, pose_to_transform_matrix, radius_search_kernel, GpuVoxelData,
     MAX_NEIGHBORS,
 };
@@ -337,9 +338,10 @@ impl GpuRuntime {
         })
     }
 
-    /// Compute NDT derivatives (score, gradient) for optimization.
+    /// Compute NDT derivatives (score, gradient, Hessian) for optimization.
     ///
     /// This is the main function used during NDT alignment iterations.
+    #[allow(clippy::too_many_arguments)]
     pub fn compute_derivatives(
         &self,
         source_points: &[[f32; 3]],
@@ -353,6 +355,7 @@ impl GpuRuntime {
             return Ok(GpuDerivativeResult {
                 score: 0.0,
                 gradient: [0.0; 6],
+                hessian: [[0.0; 6]; 6],
                 num_correspondences: 0,
             });
         }
@@ -363,8 +366,9 @@ impl GpuRuntime {
         // Convert pose to transform matrix
         let transform = pose_to_transform_matrix(pose);
 
-        // Compute point Jacobians on CPU (small overhead, complex computation)
+        // Compute point Jacobians and Hessians on CPU (small overhead, complex computation)
         let jacobians = compute_point_jacobians_cpu(source_points, pose);
+        let point_hessians = compute_point_hessians_cpu(source_points, pose);
 
         // Flatten source points
         let source_flat: Vec<f32> = source_points
@@ -376,6 +380,7 @@ impl GpuRuntime {
         let source_gpu = self.client.create(f32::as_bytes(&source_flat));
         let transform_gpu = self.client.create(f32::as_bytes(&transform));
         let jacobians_gpu = self.client.create(f32::as_bytes(&jacobians));
+        // Note: point_hessians is combined with jacobians later for Hessian kernel
         let voxel_means_gpu = self.client.create(f32::as_bytes(&voxel_data.means));
         let voxel_inv_covs_gpu = self
             .client
@@ -483,6 +488,46 @@ impl GpuRuntime {
             );
         }
 
+        // Step 5: Compute Hessians
+        let hessians_gpu = self
+            .client
+            .empty(num_points * 36 * std::mem::size_of::<f32>());
+
+        // Combine jacobians and point_hessians into single buffer for kernel
+        // (CubeCL has parameter count limits)
+        let mut jacobians_and_hessians = jacobians.clone();
+        jacobians_and_hessians.extend_from_slice(&point_hessians);
+        let jacobians_and_hessians_gpu = self.client.create(f32::as_bytes(&jacobians_and_hessians));
+
+        let gauss_params = [gauss_d1, gauss_d2];
+        let gauss_params_gpu = self.client.create(f32::as_bytes(&gauss_params));
+
+        unsafe {
+            compute_ndt_hessian_kernel::launch_unchecked::<f32, CudaRuntime>(
+                &self.client,
+                CubeCount::Static(cube_count, 1, 1),
+                CubeDim::new(256, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&source_gpu, num_points * 3, 1),
+                ArrayArg::from_raw_parts::<f32>(&transform_gpu, 16, 1),
+                ArrayArg::from_raw_parts::<f32>(
+                    &jacobians_and_hessians_gpu,
+                    num_points * 18 + num_points * 144,
+                    1,
+                ),
+                ArrayArg::from_raw_parts::<f32>(&voxel_means_gpu, num_voxels * 3, 1),
+                ArrayArg::from_raw_parts::<f32>(&voxel_inv_covs_gpu, num_voxels * 9, 1),
+                ArrayArg::from_raw_parts::<i32>(
+                    &neighbor_indices_gpu,
+                    num_points * MAX_NEIGHBORS as usize,
+                    1,
+                ),
+                ArrayArg::from_raw_parts::<u32>(&neighbor_counts_gpu, num_points, 1),
+                ArrayArg::from_raw_parts::<f32>(&gauss_params_gpu, 2, 1),
+                ScalarArg::new(num_points as u32),
+                ArrayArg::from_raw_parts::<f32>(&hessians_gpu, num_points * 36, 1),
+            );
+        }
+
         // Read results back
         let scores_bytes = self.client.read_one(scores_gpu);
         let scores = f32::from_bytes(&scores_bytes);
@@ -492,6 +537,9 @@ impl GpuRuntime {
 
         let gradients_bytes = self.client.read_one(gradients_gpu);
         let gradients = f32::from_bytes(&gradients_bytes);
+
+        let hessians_bytes = self.client.read_one(hessians_gpu);
+        let hessians = f32::from_bytes(&hessians_bytes);
 
         // Reduce on CPU (small reduction, not worth GPU overhead)
         let total_score: f64 = scores.iter().map(|&s| s as f64).sum();
@@ -504,9 +552,19 @@ impl GpuRuntime {
             }
         }
 
+        let mut total_hessian = [[0.0f64; 6]; 6];
+        for i in 0..num_points {
+            for row in 0..6 {
+                for col in 0..6 {
+                    total_hessian[row][col] += hessians[i * 36 + row * 6 + col] as f64;
+                }
+            }
+        }
+
         Ok(GpuDerivativeResult {
             score: total_score,
             gradient: total_gradient,
+            hessian: total_hessian,
             num_correspondences: total_correspondences,
         })
     }
@@ -535,6 +593,7 @@ impl GpuRuntime {
             return Ok(GpuDerivativeResult {
                 score: 0.0,
                 gradient: [0.0; 6],
+                hessian: [[0.0; 6]; 6],
                 num_correspondences: 0,
             });
         }
@@ -545,8 +604,9 @@ impl GpuRuntime {
         // Convert pose to transform matrix
         let transform = pose_to_transform_matrix(pose);
 
-        // Compute point Jacobians on CPU (small overhead, complex computation)
+        // Compute point Jacobians and Hessians on CPU (small overhead, complex computation)
         let jacobians = compute_point_jacobians_cpu(source_points, pose);
+        let point_hessians = compute_point_hessians_cpu(source_points, pose);
 
         // Flatten source points
         let source_flat: Vec<f32> = source_points
@@ -558,6 +618,7 @@ impl GpuRuntime {
         let source_gpu = self.client.create(f32::as_bytes(&source_flat));
         let transform_gpu = self.client.create(f32::as_bytes(&transform));
         let jacobians_gpu = self.client.create(f32::as_bytes(&jacobians));
+        // Note: point_hessians is combined with jacobians later for Hessian kernel
         let voxel_means_gpu = self.client.create(f32::as_bytes(&voxel_data.means));
         let voxel_inv_covs_gpu = self
             .client
@@ -723,6 +784,49 @@ impl GpuRuntime {
             }
         }
 
+        // Step 4: Compute Hessians (only for PointToDistribution metric)
+        let hessians_gpu = self
+            .client
+            .empty(num_points * 36 * std::mem::size_of::<f32>());
+
+        if metric == DistanceMetric::PointToDistribution {
+            // Combine jacobians and point_hessians into single buffer for kernel
+            // (CubeCL has parameter count limits)
+            let mut jacobians_and_hessians = jacobians.clone();
+            jacobians_and_hessians.extend_from_slice(&point_hessians);
+            let jacobians_and_hessians_gpu =
+                self.client.create(f32::as_bytes(&jacobians_and_hessians));
+
+            let gauss_params = [gauss_d1, gauss_d2];
+            let gauss_params_gpu = self.client.create(f32::as_bytes(&gauss_params));
+
+            unsafe {
+                compute_ndt_hessian_kernel::launch_unchecked::<f32, CudaRuntime>(
+                    &self.client,
+                    CubeCount::Static(cube_count, 1, 1),
+                    CubeDim::new(256, 1, 1),
+                    ArrayArg::from_raw_parts::<f32>(&source_gpu, num_points * 3, 1),
+                    ArrayArg::from_raw_parts::<f32>(&transform_gpu, 16, 1),
+                    ArrayArg::from_raw_parts::<f32>(
+                        &jacobians_and_hessians_gpu,
+                        num_points * 18 + num_points * 144,
+                        1,
+                    ),
+                    ArrayArg::from_raw_parts::<f32>(&voxel_means_gpu, num_voxels * 3, 1),
+                    ArrayArg::from_raw_parts::<f32>(&voxel_inv_covs_gpu, num_voxels * 9, 1),
+                    ArrayArg::from_raw_parts::<i32>(
+                        &neighbor_indices_gpu,
+                        num_points * MAX_NEIGHBORS as usize,
+                        1,
+                    ),
+                    ArrayArg::from_raw_parts::<u32>(&neighbor_counts_gpu, num_points, 1),
+                    ArrayArg::from_raw_parts::<f32>(&gauss_params_gpu, 2, 1),
+                    ScalarArg::new(num_points as u32),
+                    ArrayArg::from_raw_parts::<f32>(&hessians_gpu, num_points * 36, 1),
+                );
+            }
+        }
+
         // Read results back
         let scores_bytes = self.client.read_one(scores_gpu);
         let scores = f32::from_bytes(&scores_bytes);
@@ -732,6 +836,9 @@ impl GpuRuntime {
 
         let gradients_bytes = self.client.read_one(gradients_gpu);
         let gradients = f32::from_bytes(&gradients_bytes);
+
+        let hessians_bytes = self.client.read_one(hessians_gpu);
+        let hessians = f32::from_bytes(&hessians_bytes);
 
         // Reduce on CPU (small reduction, not worth GPU overhead)
         let total_score: f64 = scores.iter().map(|&s| s as f64).sum();
@@ -744,9 +851,21 @@ impl GpuRuntime {
             }
         }
 
+        let mut total_hessian = [[0.0f64; 6]; 6];
+        if metric == DistanceMetric::PointToDistribution {
+            for i in 0..num_points {
+                for row in 0..6 {
+                    for col in 0..6 {
+                        total_hessian[row][col] += hessians[i * 36 + row * 6 + col] as f64;
+                    }
+                }
+            }
+        }
+
         Ok(GpuDerivativeResult {
             score: total_score,
             gradient: total_gradient,
+            hessian: total_hessian,
             num_correspondences: total_correspondences,
         })
     }
@@ -819,6 +938,8 @@ pub struct GpuDerivativeResult {
     pub score: f64,
     /// Total gradient (6 elements)
     pub gradient: [f64; 6],
+    /// Total Hessian (6x6 matrix, row-major)
+    pub hessian: [[f64; 6]; 6],
     /// Total number of correspondences
     pub num_correspondences: usize,
 }
