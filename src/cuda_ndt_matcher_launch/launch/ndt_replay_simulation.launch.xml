@@ -25,6 +25,12 @@
   <!-- RViz -->
   <arg name="rviz" default="true"/>
 
+  <!-- User-defined initial pose (for headless testing without RViz) -->
+  <!-- Format: [x, y, z, qx, qy, qz, qw] in map frame -->
+  <!-- Default values are for sample-rosbag at approximate starting position -->
+  <arg name="user_defined_initial_pose_enable" default="false"/>
+  <arg name="user_defined_initial_pose" default="[89571.0, 42301.0, 0.0, 0.0, 0.0, 0.28, 0.96]"/>
+
   <!-- CUDA NDT parameter file -->
   <arg name="ndt_param_file" default="$(find-pkg-share cuda_ndt_matcher_launch)/config/ndt_scan_matcher.param.yaml"/>
 
@@ -75,6 +81,8 @@
     <!-- CUDA NDT localization stack -->
     <include file="$(find-pkg-share cuda_ndt_matcher_launch)/launch/cuda_localization.launch.xml">
       <arg name="ndt_param_file" value="$(var ndt_param_file)"/>
+      <arg name="user_defined_initial_pose_enable" value="$(var user_defined_initial_pose_enable)"/>
+      <arg name="user_defined_initial_pose" value="$(var user_defined_initial_pose)"/>
       <!-- gnss_enabled defaults to true, enabling automatic_pose_initializer -->
     </include>
   </group>

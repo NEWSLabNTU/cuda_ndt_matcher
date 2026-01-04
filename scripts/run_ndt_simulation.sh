@@ -40,6 +40,13 @@ if [[ "$RVIZ" == "true" ]]; then
     fi
 fi
 
+# When running without RViz (headless), enable user-defined initial pose
+# This provides the initial pose that would normally be set via RViz "2D Pose Estimate"
+USE_INITIAL_POSE="false"
+if [[ "$RVIZ" == "false" ]]; then
+    USE_INITIAL_POSE="true"
+fi
+
 # Source the local workspace setup
 source "$PROJECT_DIR/install/setup.bash"
 
@@ -65,4 +72,5 @@ exec \
     cuda_ndt_matcher_launch ndt_replay_simulation.launch.xml \
     use_cuda:="$USE_CUDA" \
     map_path:="$MAP_PATH" \
-    rviz:="$RVIZ"
+    rviz:="$RVIZ" \
+    user_defined_initial_pose_enable:="$USE_INITIAL_POSE"

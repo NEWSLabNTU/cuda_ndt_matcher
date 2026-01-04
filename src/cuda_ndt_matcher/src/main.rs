@@ -162,9 +162,9 @@ impl NdtScanMatcherNode {
         };
 
         // Publishers - Core pose output
-        // Topic names must match launch file remappings (ndt_pose -> output_pose_topic)
-        let pose_pub = node.create_publisher("ndt_pose")?;
-        let pose_cov_pub = node.create_publisher("ndt_pose_with_covariance")?;
+        // Use actual topic names directly since rclrs doesn't support launch file remappings
+        let pose_pub = node.create_publisher("pose")?;
+        let pose_cov_pub = node.create_publisher("pose_with_covariance")?;
 
         // Publishers - Debug and visualization
         let debug_pubs = DebugPublishers {
