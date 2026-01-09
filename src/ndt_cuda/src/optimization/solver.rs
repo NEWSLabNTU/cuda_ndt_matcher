@@ -350,8 +350,9 @@ impl NdtOptimizer {
 
         // Main optimization loop
         for iteration in 0..self.config.ndt.max_iterations {
-            // Compute derivatives at current pose using GPU pipeline
-            let gpu_result = pipeline.compute_iteration(&pose)?;
+            // Compute derivatives at current pose using GPU pipeline with GPU reduction
+            // (downloads only 43 floats vs N×43 floats with CPU reduction)
+            let gpu_result = pipeline.compute_iteration_gpu_reduce(&pose)?;
 
             // Convert GPU result to nalgebra types
             let gradient = Vector6::from_row_slice(&gpu_result.gradient);
@@ -558,8 +559,9 @@ impl NdtOptimizer {
 
         // Main optimization loop
         for iteration in 0..self.config.ndt.max_iterations {
-            // Compute derivatives at current pose using GPU pipeline
-            let gpu_result = pipeline.compute_iteration(&pose)?;
+            // Compute derivatives at current pose using GPU pipeline with GPU reduction
+            // (downloads only 43 floats vs N×43 floats with CPU reduction)
+            let gpu_result = pipeline.compute_iteration_gpu_reduce(&pose)?;
 
             // Convert GPU result to nalgebra types
             let gradient = Vector6::from_row_slice(&gpu_result.gradient);

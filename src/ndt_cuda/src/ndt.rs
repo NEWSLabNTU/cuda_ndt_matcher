@@ -635,7 +635,8 @@ impl NdtScanMatcher {
                 })
                 .collect();
 
-            match pipeline.compute_scores_batch(source_points, &poses_6dof) {
+            // Use GPU reduction path: downloads M×4 floats vs M×N×4 floats
+            match pipeline.compute_scores_batch_gpu_reduce(source_points, &poses_6dof) {
                 Ok(results) => {
                     return Ok(results.iter().map(|r| r.nvtl).collect());
                 }
