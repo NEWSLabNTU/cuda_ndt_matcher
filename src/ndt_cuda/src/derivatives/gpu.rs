@@ -612,14 +612,15 @@ pub fn compute_ndt_gradient_kernel<F: Float>(
         }
     }
 
-    // Write output
-    let gbase = point_idx * 6;
-    gradients[gbase] = grad0;
-    gradients[gbase + 1] = grad1;
-    gradients[gbase + 2] = grad2;
-    gradients[gbase + 3] = grad3;
-    gradients[gbase + 4] = grad4;
-    gradients[gbase + 5] = grad5;
+    // Write output (column-major: component * num_points + point_idx)
+    // This layout enables efficient CUB segmented reduction
+    let np = num_points;
+    gradients[point_idx] = grad0;
+    gradients[np + point_idx] = grad1;
+    gradients[np * 2 + point_idx] = grad2;
+    gradients[np * 3 + point_idx] = grad3;
+    gradients[np * 4 + point_idx] = grad4;
+    gradients[np * 5 + point_idx] = grad5;
 }
 
 /// Compute gradient contributions using point-to-plane distance metric.
@@ -763,14 +764,15 @@ pub fn compute_ndt_gradient_point_to_plane_kernel<F: Float>(
         }
     }
 
-    // Write output
-    let gbase = point_idx * 6;
-    gradients[gbase] = grad0;
-    gradients[gbase + 1] = grad1;
-    gradients[gbase + 2] = grad2;
-    gradients[gbase + 3] = grad3;
-    gradients[gbase + 4] = grad4;
-    gradients[gbase + 5] = grad5;
+    // Write output (column-major: component * num_points + point_idx)
+    // This layout enables efficient CUB segmented reduction
+    let np = num_points;
+    gradients[point_idx] = grad0;
+    gradients[np + point_idx] = grad1;
+    gradients[np * 2 + point_idx] = grad2;
+    gradients[np * 3 + point_idx] = grad3;
+    gradients[np * 4 + point_idx] = grad4;
+    gradients[np * 5 + point_idx] = grad5;
 }
 
 /// Compute Hessian matrix (6x6) for NDT optimization.
@@ -1504,49 +1506,56 @@ pub fn compute_ndt_hessian_kernel<F: Float>(
         }
     }
 
-    // Write output (full 6x6, row-major)
-    let out_base = point_idx * 36;
-    hessians[out_base] = h00;
-    hessians[out_base + 1] = h01;
-    hessians[out_base + 2] = h02;
-    hessians[out_base + 3] = h03;
-    hessians[out_base + 4] = h04;
-    hessians[out_base + 5] = h05;
+    // Write output (full 6x6, column-major: component * num_points + point_idx)
+    // This layout enables efficient CUB segmented reduction
+    let np = num_points;
+    // Row 0
+    hessians[point_idx] = h00;
+    hessians[np + point_idx] = h01;
+    hessians[np * 2 + point_idx] = h02;
+    hessians[np * 3 + point_idx] = h03;
+    hessians[np * 4 + point_idx] = h04;
+    hessians[np * 5 + point_idx] = h05;
 
-    hessians[out_base + 6] = h01; // symmetric
-    hessians[out_base + 7] = h11;
-    hessians[out_base + 8] = h12;
-    hessians[out_base + 9] = h13;
-    hessians[out_base + 10] = h14;
-    hessians[out_base + 11] = h15;
+    // Row 1 (symmetric)
+    hessians[np * 6 + point_idx] = h01;
+    hessians[np * 7 + point_idx] = h11;
+    hessians[np * 8 + point_idx] = h12;
+    hessians[np * 9 + point_idx] = h13;
+    hessians[np * 10 + point_idx] = h14;
+    hessians[np * 11 + point_idx] = h15;
 
-    hessians[out_base + 12] = h02;
-    hessians[out_base + 13] = h12;
-    hessians[out_base + 14] = h22;
-    hessians[out_base + 15] = h23;
-    hessians[out_base + 16] = h24;
-    hessians[out_base + 17] = h25;
+    // Row 2
+    hessians[np * 12 + point_idx] = h02;
+    hessians[np * 13 + point_idx] = h12;
+    hessians[np * 14 + point_idx] = h22;
+    hessians[np * 15 + point_idx] = h23;
+    hessians[np * 16 + point_idx] = h24;
+    hessians[np * 17 + point_idx] = h25;
 
-    hessians[out_base + 18] = h03;
-    hessians[out_base + 19] = h13;
-    hessians[out_base + 20] = h23;
-    hessians[out_base + 21] = h33;
-    hessians[out_base + 22] = h34;
-    hessians[out_base + 23] = h35;
+    // Row 3
+    hessians[np * 18 + point_idx] = h03;
+    hessians[np * 19 + point_idx] = h13;
+    hessians[np * 20 + point_idx] = h23;
+    hessians[np * 21 + point_idx] = h33;
+    hessians[np * 22 + point_idx] = h34;
+    hessians[np * 23 + point_idx] = h35;
 
-    hessians[out_base + 24] = h04;
-    hessians[out_base + 25] = h14;
-    hessians[out_base + 26] = h24;
-    hessians[out_base + 27] = h34;
-    hessians[out_base + 28] = h44;
-    hessians[out_base + 29] = h45;
+    // Row 4
+    hessians[np * 24 + point_idx] = h04;
+    hessians[np * 25 + point_idx] = h14;
+    hessians[np * 26 + point_idx] = h24;
+    hessians[np * 27 + point_idx] = h34;
+    hessians[np * 28 + point_idx] = h44;
+    hessians[np * 29 + point_idx] = h45;
 
-    hessians[out_base + 30] = h05;
-    hessians[out_base + 31] = h15;
-    hessians[out_base + 32] = h25;
-    hessians[out_base + 33] = h35;
-    hessians[out_base + 34] = h45;
-    hessians[out_base + 35] = h55;
+    // Row 5
+    hessians[np * 30 + point_idx] = h05;
+    hessians[np * 31 + point_idx] = h15;
+    hessians[np * 32 + point_idx] = h25;
+    hessians[np * 33 + point_idx] = h35;
+    hessians[np * 34 + point_idx] = h45;
+    hessians[np * 35 + point_idx] = h55;
 }
 
 /// Helper function to accumulate Hessian contribution from a single voxel.

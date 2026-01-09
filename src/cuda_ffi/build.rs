@@ -25,7 +25,11 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     // Compile CUDA source files
-    let cuda_sources = ["csrc/radix_sort.cu", "csrc/segment_detect.cu"];
+    let cuda_sources = [
+        "csrc/radix_sort.cu",
+        "csrc/segment_detect.cu",
+        "csrc/segmented_reduce.cu",
+    ];
 
     for source in &cuda_sources {
         compile_cuda_source(source, &out_dir, &cuda_include);
@@ -42,6 +46,7 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", out_dir.display());
     println!("cargo:rustc-link-lib=static=radix_sort");
     println!("cargo:rustc-link-lib=static=segment_detect");
+    println!("cargo:rustc-link-lib=static=segmented_reduce");
 
     // Rerun if CUDA sources change
     for source in &cuda_sources {

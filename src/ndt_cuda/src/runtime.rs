@@ -545,18 +545,20 @@ impl GpuRuntime {
         let total_score: f64 = scores.iter().map(|&s| s as f64).sum();
         let total_correspondences: usize = correspondences.iter().map(|&c| c as usize).sum();
 
+        // Reduce on CPU (column-major layout: component * num_points + point_idx)
         let mut total_gradient = [0.0f64; 6];
-        for i in 0..num_points {
-            for j in 0..6 {
-                total_gradient[j] += gradients[i * 6 + j] as f64;
+        for j in 0..6 {
+            for i in 0..num_points {
+                total_gradient[j] += gradients[j * num_points + i] as f64;
             }
         }
 
         let mut total_hessian = [[0.0f64; 6]; 6];
-        for i in 0..num_points {
-            for row in 0..6 {
-                for col in 0..6 {
-                    total_hessian[row][col] += hessians[i * 36 + row * 6 + col] as f64;
+        for (row, row_arr) in total_hessian.iter_mut().enumerate() {
+            for (col, cell) in row_arr.iter_mut().enumerate() {
+                let component = row * 6 + col;
+                for i in 0..num_points {
+                    *cell += hessians[component * num_points + i] as f64;
                 }
             }
         }
@@ -840,23 +842,24 @@ impl GpuRuntime {
         let hessians_bytes = self.client.read_one(hessians_gpu);
         let hessians = f32::from_bytes(&hessians_bytes);
 
-        // Reduce on CPU (small reduction, not worth GPU overhead)
+        // Reduce on CPU (column-major layout: component * num_points + point_idx)
         let total_score: f64 = scores.iter().map(|&s| s as f64).sum();
         let total_correspondences: usize = correspondences.iter().map(|&c| c as usize).sum();
 
         let mut total_gradient = [0.0f64; 6];
-        for i in 0..num_points {
-            for j in 0..6 {
-                total_gradient[j] += gradients[i * 6 + j] as f64;
+        for j in 0..6 {
+            for i in 0..num_points {
+                total_gradient[j] += gradients[j * num_points + i] as f64;
             }
         }
 
         let mut total_hessian = [[0.0f64; 6]; 6];
         if metric == DistanceMetric::PointToDistribution {
-            for i in 0..num_points {
-                for row in 0..6 {
-                    for col in 0..6 {
-                        total_hessian[row][col] += hessians[i * 36 + row * 6 + col] as f64;
+            for (row, row_arr) in total_hessian.iter_mut().enumerate() {
+                for (col, cell) in row_arr.iter_mut().enumerate() {
+                    let component = row * 6 + col;
+                    for i in 0..num_points {
+                        *cell += hessians[component * num_points + i] as f64;
                     }
                 }
             }

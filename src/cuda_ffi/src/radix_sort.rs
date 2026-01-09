@@ -84,7 +84,7 @@ impl From<c_int> for CudaError {
     }
 }
 
-pub(crate) fn check_cuda(code: c_int) -> Result<(), CudaError> {
+pub fn check_cuda(code: c_int) -> Result<(), CudaError> {
     let err = CudaError::from(code);
     if err == CudaError::Success {
         Ok(())
@@ -98,14 +98,14 @@ pub(crate) fn check_cuda(code: c_int) -> Result<(), CudaError> {
 // ============================================================================
 
 /// RAII wrapper for CUDA device memory.
-pub(crate) struct DeviceBuffer {
+pub struct DeviceBuffer {
     ptr: *mut std::ffi::c_void,
     size: usize,
 }
 
 impl DeviceBuffer {
     /// Allocate device memory.
-    pub(crate) fn new(size: usize) -> Result<Self, CudaError> {
+    pub fn new(size: usize) -> Result<Self, CudaError> {
         let mut ptr: *mut std::ffi::c_void = ptr::null_mut();
         unsafe {
             check_cuda(cudaMalloc(&mut ptr, size))?;
@@ -114,7 +114,7 @@ impl DeviceBuffer {
     }
 
     /// Copy data from host to device.
-    pub(crate) fn copy_from_host<T>(&mut self, data: &[T]) -> Result<(), CudaError> {
+    pub fn copy_from_host<T>(&mut self, data: &[T]) -> Result<(), CudaError> {
         let bytes = std::mem::size_of_val(data);
         assert!(bytes <= self.size, "Data too large for buffer");
         unsafe {
@@ -128,7 +128,7 @@ impl DeviceBuffer {
     }
 
     /// Copy data from device to host.
-    pub(crate) fn copy_to_host<T>(&self, data: &mut [T]) -> Result<(), CudaError> {
+    pub fn copy_to_host<T>(&self, data: &mut [T]) -> Result<(), CudaError> {
         let bytes = std::mem::size_of_val(data);
         assert!(bytes <= self.size, "Buffer too small for data");
         unsafe {
@@ -142,7 +142,7 @@ impl DeviceBuffer {
     }
 
     /// Get raw pointer.
-    pub(crate) fn as_ptr(&self) -> *mut std::ffi::c_void {
+    pub fn as_ptr(&self) -> *mut std::ffi::c_void {
         self.ptr
     }
 }

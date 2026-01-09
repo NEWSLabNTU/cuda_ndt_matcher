@@ -15,9 +15,10 @@
 //!   Download: score [1] + gradient [6] + hessian [36] = 43 floats
 //! ```
 //!
-//! This reduces transfers from ~240 per alignment to ~63 (74% reduction).
+//! With CUB GPU reduction, only 43 floats are downloaded per iteration instead
+//! of N×43 floats (1000× reduction for N=1000 points).
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use cubecl::client::ComputeClient;
 use cubecl::cuda::{CudaDevice, CudaRuntime};
 use cubecl::prelude::*;
@@ -76,6 +77,12 @@ pub struct GpuDerivativePipeline {
 
     // Search radius squared
     search_radius_sq: f32,
+
+    // CUB reduction buffers
+    reduce_temp: Handle,      // Temporary storage for CUB
+    reduce_temp_bytes: usize, // Size of temp storage
+    reduce_offsets: Handle,   // Segment offsets [44] for 43 segments
+    reduce_output: Handle,    // Reduction output [43] floats
 }
 
 impl GpuDerivativePipeline {
@@ -110,6 +117,18 @@ impl GpuDerivativePipeline {
 
         let gauss_params = client.empty(2 * std::mem::size_of::<f32>());
 
+        // CUB reduction buffers
+        // 43 segments: 1 score + 6 gradient + 36 hessian
+        // Total items = num_points * 43 (but we reduce separately for simplicity)
+        let num_segments = 43;
+        let total_items = max_points * num_segments;
+        let reduce_temp_bytes =
+            cuda_ffi::segmented_reduce_sum_f32_temp_size(total_items, num_segments)
+                .context("Failed to query CUB reduce temp size")?;
+        let reduce_temp = client.empty(reduce_temp_bytes.max(1));
+        let reduce_offsets = client.empty((num_segments + 1) * std::mem::size_of::<i32>());
+        let reduce_output = client.empty(num_segments * std::mem::size_of::<f32>());
+
         Ok(Self {
             client,
             max_points,
@@ -133,6 +152,10 @@ impl GpuDerivativePipeline {
             jacobians_combined,
             gauss_params,
             search_radius_sq: 4.0, // Default 2.0^2
+            reduce_temp,
+            reduce_temp_bytes,
+            reduce_offsets,
+            reduce_output,
         })
     }
 
@@ -392,7 +415,7 @@ impl GpuDerivativePipeline {
         let hessians_bytes = self.client.read_one(self.hessians.clone());
         let hessians = f32::from_bytes(&hessians_bytes);
 
-        // Reduce on CPU
+        // Reduce on CPU (column-major layout: component * num_points + point_idx)
         let total_score: f64 = scores[..num_points].iter().map(|&s| s as f64).sum();
         let total_correspondences: usize = correspondences[..num_points]
             .iter()
@@ -400,18 +423,289 @@ impl GpuDerivativePipeline {
             .sum();
 
         let mut total_gradient = [0.0f64; 6];
-        for i in 0..num_points {
-            for j in 0..6 {
-                total_gradient[j] += gradients[i * 6 + j] as f64;
+        for j in 0..6 {
+            for i in 0..num_points {
+                total_gradient[j] += gradients[j * num_points + i] as f64;
             }
         }
 
         let mut total_hessian = [[0.0f64; 6]; 6];
-        for i in 0..num_points {
-            for row in 0..6 {
-                for col in 0..6 {
-                    total_hessian[row][col] += hessians[i * 36 + row * 6 + col] as f64;
+        for (row, row_arr) in total_hessian.iter_mut().enumerate() {
+            for (col, cell) in row_arr.iter_mut().enumerate() {
+                let component = row * 6 + col;
+                for i in 0..num_points {
+                    *cell += hessians[component * num_points + i] as f64;
                 }
+            }
+        }
+
+        Ok(GpuDerivativeResult {
+            score: total_score,
+            gradient: total_gradient,
+            hessian: total_hessian,
+            num_correspondences: total_correspondences,
+        })
+    }
+
+    /// Get raw CUDA device pointer from CubeCL handle.
+    fn raw_ptr(&self, handle: &Handle) -> u64 {
+        let binding = handle.clone().binding();
+        let resource = self.client.get_resource(binding);
+        resource.resource().ptr
+    }
+
+    /// Compute a single optimization iteration with GPU reduction.
+    ///
+    /// This variant uses CUB DeviceSegmentedReduce to sum gradients and Hessians
+    /// on the GPU, downloading only 43 floats instead of N×43 floats.
+    ///
+    /// # Arguments
+    /// * `pose` - Current pose [x, y, z, roll, pitch, yaw]
+    ///
+    /// # Returns
+    /// `GpuDerivativeResult` with score, gradient, and Hessian.
+    pub fn compute_iteration_gpu_reduce(&mut self, pose: &[f64; 6]) -> Result<GpuDerivativeResult> {
+        let num_points = self.num_points;
+        let num_voxels = self.num_voxels;
+        if num_points == 0 {
+            return Ok(GpuDerivativeResult {
+                score: 0.0,
+                gradient: [0.0; 6],
+                hessian: [[0.0; 6]; 6],
+                num_correspondences: 0,
+            });
+        }
+
+        // Step 1-5: Same as compute_iteration (kernels already produce column-major output)
+        // Run all GPU kernels (transform, radius search, score, gradient, hessian)
+        let transform = pose_to_transform_matrix(pose);
+        self.transform = self.client.create(f32::as_bytes(&transform));
+
+        // Compute Jacobians and point Hessians on CPU (needed for gradient/hessian kernels)
+        let source_points_bytes = self.client.read_one(self.source_points.clone());
+        let source_points: Vec<[f32; 3]> = source_points_bytes
+            .chunks(12)
+            .map(|chunk| {
+                let x = f32::from_le_bytes(chunk[0..4].try_into().unwrap());
+                let y = f32::from_le_bytes(chunk[4..8].try_into().unwrap());
+                let z = f32::from_le_bytes(chunk[8..12].try_into().unwrap());
+                [x, y, z]
+            })
+            .collect();
+
+        let jacobians = compute_point_jacobians_cpu(&source_points, pose);
+        let point_hessians = compute_point_hessians_cpu(&source_points, pose);
+
+        // Upload Jacobians
+        self.jacobians = self.client.create(f32::as_bytes(&jacobians));
+
+        // Combine jacobians and point_hessians for Hessian kernel
+        let mut jacobians_combined = jacobians.clone();
+        jacobians_combined.extend_from_slice(&point_hessians);
+        self.jacobians_combined = self.client.create(f32::as_bytes(&jacobians_combined));
+
+        let cube_count = num_points.div_ceil(256) as u32;
+
+        // Transform points
+        unsafe {
+            transform_points_kernel::launch_unchecked::<f32, CudaRuntime>(
+                &self.client,
+                CubeCount::Static(cube_count, 1, 1),
+                CubeDim::new(256, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.source_points, num_points * 3, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.transform, 16, 1),
+                ScalarArg::new(num_points as u32),
+                ArrayArg::from_raw_parts::<f32>(&self.transformed_points, num_points * 3, 1),
+            );
+        }
+
+        // Radius search
+        unsafe {
+            radius_search_kernel::launch_unchecked::<f32, CudaRuntime>(
+                &self.client,
+                CubeCount::Static(cube_count, 1, 1),
+                CubeDim::new(256, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.transformed_points, num_points * 3, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.voxel_means, num_voxels * 3, 1),
+                ArrayArg::from_raw_parts::<u32>(&self.voxel_valid, num_voxels, 1),
+                ScalarArg::new(self.search_radius_sq),
+                ScalarArg::new(num_points as u32),
+                ScalarArg::new(num_voxels as u32),
+                ArrayArg::from_raw_parts::<i32>(
+                    &self.neighbor_indices,
+                    num_points * MAX_NEIGHBORS as usize,
+                    1,
+                ),
+                ArrayArg::from_raw_parts::<u32>(&self.neighbor_counts, num_points, 1),
+            );
+        }
+
+        // Read Gaussian parameters
+        let gauss_params_bytes = self.client.read_one(self.gauss_params.clone());
+        let gauss_d1 = f32::from_le_bytes(gauss_params_bytes[0..4].try_into().unwrap());
+        let gauss_d2 = f32::from_le_bytes(gauss_params_bytes[4..8].try_into().unwrap());
+
+        // Score kernel
+        unsafe {
+            compute_ndt_score_kernel::launch_unchecked::<f32, CudaRuntime>(
+                &self.client,
+                CubeCount::Static(cube_count, 1, 1),
+                CubeDim::new(256, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.source_points, num_points * 3, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.transform, 16, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.voxel_means, num_voxels * 3, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.voxel_inv_covs, num_voxels * 9, 1),
+                ArrayArg::from_raw_parts::<i32>(
+                    &self.neighbor_indices,
+                    num_points * MAX_NEIGHBORS as usize,
+                    1,
+                ),
+                ArrayArg::from_raw_parts::<u32>(&self.neighbor_counts, num_points, 1),
+                ScalarArg::new(gauss_d1),
+                ScalarArg::new(gauss_d2),
+                ScalarArg::new(num_points as u32),
+                ArrayArg::from_raw_parts::<f32>(&self.scores, num_points, 1),
+                ArrayArg::from_raw_parts::<u32>(&self.correspondences, num_points, 1),
+            );
+        }
+
+        // Gradient kernel
+        unsafe {
+            compute_ndt_gradient_kernel::launch_unchecked::<f32, CudaRuntime>(
+                &self.client,
+                CubeCount::Static(cube_count, 1, 1),
+                CubeDim::new(256, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.source_points, num_points * 3, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.transform, 16, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.jacobians, num_points * 18, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.voxel_means, num_voxels * 3, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.voxel_inv_covs, num_voxels * 9, 1),
+                ArrayArg::from_raw_parts::<i32>(
+                    &self.neighbor_indices,
+                    num_points * MAX_NEIGHBORS as usize,
+                    1,
+                ),
+                ArrayArg::from_raw_parts::<u32>(&self.neighbor_counts, num_points, 1),
+                ScalarArg::new(gauss_d1),
+                ScalarArg::new(gauss_d2),
+                ScalarArg::new(num_points as u32),
+                ArrayArg::from_raw_parts::<f32>(&self.gradients, num_points * 6, 1),
+            );
+        }
+
+        // Hessian kernel
+        unsafe {
+            compute_ndt_hessian_kernel::launch_unchecked::<f32, CudaRuntime>(
+                &self.client,
+                CubeCount::Static(cube_count, 1, 1),
+                CubeDim::new(256, 1, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.source_points, num_points * 3, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.transform, 16, 1),
+                ArrayArg::from_raw_parts::<f32>(
+                    &self.jacobians_combined,
+                    num_points * (18 + 144),
+                    1,
+                ),
+                ArrayArg::from_raw_parts::<f32>(&self.voxel_means, num_voxels * 3, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.voxel_inv_covs, num_voxels * 9, 1),
+                ArrayArg::from_raw_parts::<i32>(
+                    &self.neighbor_indices,
+                    num_points * MAX_NEIGHBORS as usize,
+                    1,
+                ),
+                ArrayArg::from_raw_parts::<u32>(&self.neighbor_counts, num_points, 1),
+                ArrayArg::from_raw_parts::<f32>(&self.gauss_params, 2, 1),
+                ScalarArg::new(num_points as u32),
+                ArrayArg::from_raw_parts::<f32>(&self.hessians, num_points * 36, 1),
+            );
+        }
+
+        // Step 6: GPU reduction using CUB DeviceSegmentedReduce
+        // We do 3 separate reductions:
+        // 1. scores [N] -> [1]
+        // 2. gradients [6*N] -> [6]
+        // 3. hessians [36*N] -> [36]
+
+        // Sync CubeCL before cuda_ffi
+        cubecl::future::block_on(self.client.sync());
+
+        let n = num_points as i32;
+
+        // Reduce scores (1 segment)
+        let score_offsets: Vec<i32> = vec![0, n];
+        self.reduce_offsets = self.client.create(i32::as_bytes(&score_offsets));
+        cubecl::future::block_on(self.client.sync());
+
+        unsafe {
+            cuda_ffi::segmented_reduce_sum_f32_inplace(
+                self.raw_ptr(&self.reduce_temp),
+                self.reduce_temp_bytes,
+                self.raw_ptr(&self.scores),
+                self.raw_ptr(&self.reduce_output),
+                1,
+                self.raw_ptr(&self.reduce_offsets),
+            )
+            .context("CUB reduce scores failed")?;
+        }
+
+        let score_bytes = self.client.read_one(self.reduce_output.clone());
+        let total_score = f32::from_le_bytes(score_bytes[..4].try_into().unwrap()) as f64;
+
+        // Reduce correspondences on CPU (it's u32, not f32)
+        let correspondences_bytes = self.client.read_one(self.correspondences.clone());
+        let correspondences = u32::from_bytes(&correspondences_bytes);
+        let total_correspondences: usize = correspondences[..num_points]
+            .iter()
+            .map(|&c| c as usize)
+            .sum();
+
+        // Reduce gradients (6 segments)
+        let grad_offsets: Vec<i32> = (0..=6).map(|i| i * n).collect();
+        self.reduce_offsets = self.client.create(i32::as_bytes(&grad_offsets));
+        cubecl::future::block_on(self.client.sync());
+
+        unsafe {
+            cuda_ffi::segmented_reduce_sum_f32_inplace(
+                self.raw_ptr(&self.reduce_temp),
+                self.reduce_temp_bytes,
+                self.raw_ptr(&self.gradients),
+                self.raw_ptr(&self.reduce_output),
+                6,
+                self.raw_ptr(&self.reduce_offsets),
+            )
+            .context("CUB reduce gradients failed")?;
+        }
+
+        let grad_bytes = self.client.read_one(self.reduce_output.clone());
+        let grad_floats = f32::from_bytes(&grad_bytes);
+        let mut total_gradient = [0.0f64; 6];
+        for i in 0..6 {
+            total_gradient[i] = grad_floats[i] as f64;
+        }
+
+        // Reduce hessians (36 segments)
+        let hess_offsets: Vec<i32> = (0..=36).map(|i| i * n).collect();
+        self.reduce_offsets = self.client.create(i32::as_bytes(&hess_offsets));
+        cubecl::future::block_on(self.client.sync());
+
+        unsafe {
+            cuda_ffi::segmented_reduce_sum_f32_inplace(
+                self.raw_ptr(&self.reduce_temp),
+                self.reduce_temp_bytes,
+                self.raw_ptr(&self.hessians),
+                self.raw_ptr(&self.reduce_output),
+                36,
+                self.raw_ptr(&self.reduce_offsets),
+            )
+            .context("CUB reduce hessians failed")?;
+        }
+
+        let hess_bytes = self.client.read_one(self.reduce_output.clone());
+        let hess_floats = f32::from_bytes(&hess_bytes);
+        let mut total_hessian = [[0.0f64; 6]; 6];
+        for row in 0..6 {
+            for col in 0..6 {
+                total_hessian[row][col] = hess_floats[row * 6 + col] as f64;
             }
         }
 
@@ -538,6 +832,108 @@ mod tests {
 
         let pose = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
         let result = pipeline.compute_iteration(&pose).unwrap();
+        assert_eq!(result.num_correspondences, 0);
+        assert_eq!(result.score, 0.0);
+    }
+
+    #[test]
+    fn test_pipeline_gpu_reduce_vs_cpu_reduce() {
+        let mut pipeline_cpu = GpuDerivativePipeline::new(1000, 500).unwrap();
+        let mut pipeline_gpu = GpuDerivativePipeline::new(1000, 500).unwrap();
+        let points = make_test_points();
+        let voxel_data = make_test_voxel_data();
+
+        pipeline_cpu
+            .upload_alignment_data(&points, &voxel_data, -0.5, 1.0, 2.0)
+            .unwrap();
+        pipeline_gpu
+            .upload_alignment_data(&points, &voxel_data, -0.5, 1.0, 2.0)
+            .unwrap();
+
+        // Test with multiple poses
+        let poses = [
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.1, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 0.1, 0.0, 0.0, 0.0, 0.05],
+        ];
+
+        for pose in &poses {
+            let cpu_result = pipeline_cpu.compute_iteration(pose).unwrap();
+            let gpu_result = pipeline_gpu.compute_iteration_gpu_reduce(pose).unwrap();
+
+            // Score should match closely
+            let score_diff = (cpu_result.score - gpu_result.score).abs();
+            assert!(
+                score_diff < 0.001,
+                "Score mismatch: CPU={}, GPU={}, diff={}",
+                cpu_result.score,
+                gpu_result.score,
+                score_diff
+            );
+
+            // Correspondences should match exactly
+            assert_eq!(
+                cpu_result.num_correspondences, gpu_result.num_correspondences,
+                "Correspondence count mismatch"
+            );
+
+            // Gradients should match
+            for i in 0..6 {
+                let grad_diff = (cpu_result.gradient[i] - gpu_result.gradient[i]).abs();
+                let rel_diff = if cpu_result.gradient[i].abs() > 1e-6 {
+                    grad_diff / cpu_result.gradient[i].abs()
+                } else {
+                    grad_diff
+                };
+                assert!(
+                    rel_diff < 0.001,
+                    "Gradient[{}] mismatch: CPU={}, GPU={}, rel_diff={}",
+                    i,
+                    cpu_result.gradient[i],
+                    gpu_result.gradient[i],
+                    rel_diff
+                );
+            }
+
+            // Hessian diagonal should match
+            for i in 0..6 {
+                let hess_diff = (cpu_result.hessian[i][i] - gpu_result.hessian[i][i]).abs();
+                let rel_diff = if cpu_result.hessian[i][i].abs() > 1e-6 {
+                    hess_diff / cpu_result.hessian[i][i].abs()
+                } else {
+                    hess_diff
+                };
+                assert!(
+                    rel_diff < 0.001,
+                    "Hessian[{},{}] mismatch: CPU={}, GPU={}, rel_diff={}",
+                    i,
+                    i,
+                    cpu_result.hessian[i][i],
+                    gpu_result.hessian[i][i],
+                    rel_diff
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_pipeline_gpu_reduce_empty_input() {
+        let mut pipeline = GpuDerivativePipeline::new(1000, 500).unwrap();
+        let points: Vec<[f32; 3]> = vec![];
+        let voxel_data = GpuVoxelData {
+            means: vec![],
+            inv_covariances: vec![],
+            principal_axes: vec![],
+            valid: vec![],
+            num_voxels: 0,
+        };
+
+        pipeline
+            .upload_alignment_data(&points, &voxel_data, -0.5, 1.0, 2.0)
+            .unwrap();
+
+        let pose = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        let result = pipeline.compute_iteration_gpu_reduce(&pose).unwrap();
         assert_eq!(result.num_correspondences, 0);
         assert_eq!(result.score, 0.0);
     }
