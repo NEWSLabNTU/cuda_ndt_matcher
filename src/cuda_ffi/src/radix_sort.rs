@@ -84,7 +84,7 @@ impl From<c_int> for CudaError {
     }
 }
 
-fn check_cuda(code: c_int) -> Result<(), CudaError> {
+pub(crate) fn check_cuda(code: c_int) -> Result<(), CudaError> {
     let err = CudaError::from(code);
     if err == CudaError::Success {
         Ok(())
@@ -98,14 +98,14 @@ fn check_cuda(code: c_int) -> Result<(), CudaError> {
 // ============================================================================
 
 /// RAII wrapper for CUDA device memory.
-struct DeviceBuffer {
+pub(crate) struct DeviceBuffer {
     ptr: *mut std::ffi::c_void,
     size: usize,
 }
 
 impl DeviceBuffer {
     /// Allocate device memory.
-    fn new(size: usize) -> Result<Self, CudaError> {
+    pub(crate) fn new(size: usize) -> Result<Self, CudaError> {
         let mut ptr: *mut std::ffi::c_void = ptr::null_mut();
         unsafe {
             check_cuda(cudaMalloc(&mut ptr, size))?;
@@ -114,7 +114,7 @@ impl DeviceBuffer {
     }
 
     /// Copy data from host to device.
-    fn copy_from_host<T>(&mut self, data: &[T]) -> Result<(), CudaError> {
+    pub(crate) fn copy_from_host<T>(&mut self, data: &[T]) -> Result<(), CudaError> {
         let bytes = std::mem::size_of_val(data);
         assert!(bytes <= self.size, "Data too large for buffer");
         unsafe {
@@ -128,7 +128,7 @@ impl DeviceBuffer {
     }
 
     /// Copy data from device to host.
-    fn copy_to_host<T>(&self, data: &mut [T]) -> Result<(), CudaError> {
+    pub(crate) fn copy_to_host<T>(&self, data: &mut [T]) -> Result<(), CudaError> {
         let bytes = std::mem::size_of_val(data);
         assert!(bytes <= self.size, "Buffer too small for data");
         unsafe {
@@ -142,7 +142,7 @@ impl DeviceBuffer {
     }
 
     /// Get raw pointer.
-    fn as_ptr(&self) -> *mut std::ffi::c_void {
+    pub(crate) fn as_ptr(&self) -> *mut std::ffi::c_void {
         self.ptr
     }
 }
@@ -299,6 +299,75 @@ impl Default for RadixSorter {
     fn default() -> Self {
         Self::new().expect("Failed to create RadixSorter")
     }
+}
+
+// ============================================================================
+// In-Place API (for zero-copy pipeline)
+// ============================================================================
+
+/// Query temporary storage size for radix sort.
+///
+/// # Arguments
+/// * `num_items` - Number of items to sort
+///
+/// # Returns
+/// Required temporary storage size in bytes.
+pub fn radix_sort_temp_size(num_items: usize) -> Result<usize, CudaError> {
+    let mut temp_bytes: usize = 0;
+    unsafe {
+        check_cuda(cub_radix_sort_pairs_u64_u32_temp_size(
+            &mut temp_bytes,
+            num_items as c_int,
+            0,
+            64,
+        ))?;
+    }
+    Ok(temp_bytes)
+}
+
+/// Sort key-value pairs in-place using pre-allocated GPU buffers.
+///
+/// This function operates directly on GPU memory without any CPU-GPU transfers.
+/// All pointers must be valid CUDA device pointers (CUdeviceptr).
+///
+/// # Arguments
+/// * `d_temp` - Device pointer to temporary storage
+/// * `temp_bytes` - Size of temporary storage
+/// * `d_keys_in` - Device pointer to input keys (u64)
+/// * `d_keys_out` - Device pointer to output keys (u64)
+/// * `d_values_in` - Device pointer to input values (u32)
+/// * `d_values_out` - Device pointer to output values (u32)
+/// * `num_items` - Number of items to sort
+///
+/// # Safety
+/// All device pointers must be valid and have sufficient allocated size.
+pub unsafe fn sort_pairs_inplace(
+    d_temp: u64,
+    temp_bytes: usize,
+    d_keys_in: u64,
+    d_keys_out: u64,
+    d_values_in: u64,
+    d_values_out: u64,
+    num_items: usize,
+) -> Result<(), CudaError> {
+    if num_items == 0 {
+        return Ok(());
+    }
+
+    check_cuda(cub_radix_sort_pairs_u64_u32(
+        d_temp as *mut std::ffi::c_void,
+        temp_bytes,
+        d_keys_in as *const u64,
+        d_keys_out as *mut u64,
+        d_values_in as *const u32,
+        d_values_out as *mut u32,
+        num_items as c_int,
+        0,               // begin_bit
+        64,              // end_bit
+        ptr::null_mut(), // default stream
+    ))?;
+
+    check_cuda(cudaDeviceSynchronize())
 }
 
 // ============================================================================
