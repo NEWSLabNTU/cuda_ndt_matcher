@@ -24,6 +24,7 @@
 use anyhow::{bail, Result};
 use nalgebra::{Isometry3, Matrix6};
 use rayon::prelude::*;
+use tracing::{debug, warn};
 
 use crate::derivatives::gpu::GpuVoxelData;
 use crate::derivatives::{DistanceMetric, GaussianParams};
@@ -289,14 +290,9 @@ impl NdtScanMatcher {
         // Initialize GPU runtime if enabled and available
         let gpu_runtime = if config.use_gpu && is_cuda_available() {
             match GpuRuntime::new() {
-                Ok(runtime) => {
-                    eprintln!("[ndt_cuda] GPU runtime initialized successfully");
-                    Some(runtime)
-                }
+                Ok(runtime) => Some(runtime),
                 Err(e) => {
-                    eprintln!(
-                        "[ndt_cuda] Failed to initialize GPU runtime: {e}. Falling back to CPU."
-                    );
+                    warn!("Failed to initialize GPU runtime: {e}. Falling back to CPU.");
                     None
                 }
             }
@@ -354,6 +350,13 @@ impl NdtScanMatcher {
         if grid.is_empty() {
             bail!("No voxels created from target points (too sparse?)");
         }
+
+        debug!(
+            num_points = points.len(),
+            num_voxels = grid.len(),
+            resolution = self.config.resolution,
+            "Target grid created"
+        );
 
         // Prepare GPU voxel data if GPU runtime is available
         if self.gpu_runtime.is_some() {

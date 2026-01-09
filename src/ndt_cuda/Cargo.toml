@@ -18,6 +18,9 @@ nalgebra = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 
+# Logging (tracing for ROS-independent library; cuda_ndt_matcher uses rclrs logging)
+tracing = "0.1"
+
 # Parallel CPU (for reference implementation)
 rayon = "1.10"
 
