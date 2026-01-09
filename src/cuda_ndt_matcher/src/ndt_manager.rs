@@ -54,6 +54,7 @@ impl NdtManager {
             .outlier_ratio(0.55) // Autoware default
             .regularization_enabled(params.regularization.enabled)
             .regularization_scale_factor(params.regularization.scale_factor)
+            .use_gpu(true) // Enable CUDA acceleration
             .build()?;
 
         if params.regularization.enabled {
