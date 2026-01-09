@@ -87,6 +87,9 @@ struct DebugPublishers {
     // MULTI_NDT covariance debug: poses from offset alignments
     multi_ndt_pose_pub: Publisher<PoseArray>,
 
+    // MULTI_NDT covariance debug: initial poses before alignment
+    multi_initial_pose_pub: Publisher<PoseArray>,
+
     // Debug map: currently loaded point cloud map
     debug_loaded_pointcloud_map_pub: Publisher<PointCloud2>,
 }
@@ -221,6 +224,7 @@ impl NdtScanMatcherNode {
             voxel_score_points_pub: node.create_publisher("voxel_score_points")?,
             // MULTI_NDT covariance debug
             multi_ndt_pose_pub: node.create_publisher("multi_ndt_pose")?,
+            multi_initial_pose_pub: node.create_publisher("multi_initial_pose")?,
             // Debug loaded map
             debug_loaded_pointcloud_map_pub: node
                 .create_publisher("debug/loaded_pointcloud_map")?,
@@ -788,6 +792,15 @@ impl NdtScanMatcherNode {
                     poses,
                 };
                 let _ = debug_pubs.multi_ndt_pose_pub.publish(&pose_array_msg);
+            }
+
+            // Publish MULTI_NDT initial poses for debug visualization
+            if let Some(poses) = covariance_result.multi_initial_poses {
+                let pose_array_msg = PoseArray {
+                    header: header.clone(),
+                    poses,
+                };
+                let _ = debug_pubs.multi_initial_pose_pub.publish(&pose_array_msg);
             }
         }
 

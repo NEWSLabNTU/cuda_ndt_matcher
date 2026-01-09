@@ -25,6 +25,9 @@ pub struct CovarianceEstimationResult {
     /// Poses from MULTI_NDT estimation (for debug visualization)
     /// Contains the primary result pose followed by all offset alignment results.
     pub multi_ndt_poses: Option<Vec<Pose>>,
+    /// Initial poses used for MULTI_NDT estimation (for debug visualization)
+    /// Contains the primary initial pose followed by all offset initial guesses.
+    pub multi_initial_poses: Option<Vec<Pose>>,
 }
 
 /// Estimate covariance using ndt_cuda result
@@ -71,6 +74,7 @@ pub fn estimate_covariance(
         covariance,
         xy_covariance,
         multi_ndt_poses: None,
+        multi_initial_poses: None,
     }
 }
 
@@ -212,8 +216,10 @@ pub fn calculate_softmax_weights(scores: &[f64], temperature: f64) -> Vec<f64> {
 pub struct MultiNdtResult {
     /// Estimated 2D covariance matrix
     pub covariance: [[f64; 2]; 2],
-    /// Poses used for estimation (offset poses)
+    /// Result poses after alignment (MULTI_NDT) or offset poses (MULTI_NDT_SCORE)
     pub poses_searched: Vec<Pose>,
+    /// Initial offset poses before alignment (for debug visualization)
+    pub initial_poses: Vec<Pose>,
     /// NVTL scores at each pose (for MULTI_NDT_SCORE mode)
     pub nvtl_scores: Vec<f64>,
 }
@@ -314,6 +320,7 @@ pub fn estimate_xy_covariance_by_multi_ndt(
     MultiNdtResult {
         covariance: corrected_cov,
         poses_searched,
+        initial_poses: offset_poses,
         nvtl_scores: Vec::new(),
     }
 }
@@ -361,7 +368,8 @@ pub fn estimate_xy_covariance_by_multi_ndt_score(
 
     MultiNdtResult {
         covariance,
-        poses_searched: offset_poses,
+        poses_searched: offset_poses.clone(),
+        initial_poses: offset_poses,
         nvtl_scores,
     }
 }
@@ -408,6 +416,7 @@ pub fn estimate_covariance_full(
     // Start with static covariance rotated to match the result pose
     let mut covariance = rotate_covariance(&params.output_pose_covariance, result_pose);
     let mut multi_ndt_poses: Option<Vec<Pose>> = None;
+    let mut multi_initial_poses: Option<Vec<Pose>> = None;
 
     let xy_covariance = match params.covariance_estimation_type {
         CovarianceEstimationType::Fixed => None,
@@ -441,10 +450,15 @@ pub fn estimate_covariance_full(
                         &params.estimation,
                     );
 
-                    // Capture poses for debug visualization: primary + offset results
+                    // Capture result poses for debug visualization: primary + offset results
                     let mut poses = vec![result_pose.clone()];
                     poses.extend(multi_result.poses_searched);
                     multi_ndt_poses = Some(poses);
+
+                    // Capture initial poses for debug visualization: primary + offset initials
+                    let mut initials = vec![result_pose.clone()];
+                    initials.extend(multi_result.initial_poses);
+                    multi_initial_poses = Some(initials);
 
                     let scaled = scale_covariance_2d(
                         &multi_result.covariance,
@@ -496,9 +510,15 @@ pub fn estimate_covariance_full(
                     );
 
                     // Capture poses for debug visualization: primary + offset poses
+                    // (For MULTI_NDT_SCORE, result poses = initial poses since no alignment)
                     let mut poses = vec![result_pose.clone()];
                     poses.extend(multi_result.poses_searched);
                     multi_ndt_poses = Some(poses);
+
+                    // Capture initial poses for debug visualization
+                    let mut initials = vec![result_pose.clone()];
+                    initials.extend(multi_result.initial_poses);
+                    multi_initial_poses = Some(initials);
 
                     let scaled = scale_covariance_2d(
                         &multi_result.covariance,
@@ -542,6 +562,7 @@ pub fn estimate_covariance_full(
         covariance,
         xy_covariance,
         multi_ndt_poses,
+        multi_initial_poses,
     }
 }
 

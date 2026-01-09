@@ -2,7 +2,7 @@
 
 Feature comparison between `cuda_ndt_matcher` and Autoware's `ndt_scan_matcher`.
 
-**Last Updated**: 2026-01-09 (PoseArray and Debug Map publishers complete)
+**Last Updated**: 2026-01-09 (multi_initial_pose PoseArray complete)
 
 ---
 
@@ -215,15 +215,15 @@ See `docs/roadmap/phase-13-gpu-scoring-pipeline.md` for implementation details.
 
 ## 5. Initial Pose Estimation
 
-| Feature                 | Status | GPU | Autoware Diff       | GPU Rationale                    |
-|-------------------------|--------|-----|---------------------|----------------------------------|
-| SmartPoseBuffer         | ✅     | —   | Same interpolation  | Sequential buffer operations     |
-| Pose timeout validation | ✅     | —   | Same thresholds     | Single check                     |
-| Distance tolerance      | ✅     | —   | Same thresholds     | Single check                     |
-| TPE optimization        | ✅     | —   | Same algorithm      | Sequential Bayesian optimization |
-| Particle evaluation     | ✅     | ✅  | Same                | Uses GPU NVTL batch              |
-| Monte Carlo markers     | ✅     | —   | Same visualization  | ROS message creation             |
-| PoseArray publication   | ❌     | -   | **Missing** (debug) | Not needed for function          |
+| Feature                 | Status | GPU | Autoware Diff       | GPU Rationale                                        |
+|-------------------------|--------|-----|---------------------|------------------------------------------------------|
+| SmartPoseBuffer         | ✅     | —   | Same interpolation  | Sequential buffer operations                         |
+| Pose timeout validation | ✅     | —   | Same thresholds     | Single check                                         |
+| Distance tolerance      | ✅     | —   | Same thresholds     | Single check                                         |
+| TPE optimization        | ✅     | —   | Same algorithm      | Sequential Bayesian optimization                     |
+| Particle evaluation     | ✅     | ✅  | Same                | Uses GPU NVTL batch                                  |
+| Monte Carlo markers     | ✅     | —   | Same visualization  | ROS message creation                                 |
+| `multi_initial_pose`    | ✅     | —   | Same                | Initial offset poses for MULTI_NDT covariance        |
 
 **GPU status**: Particle NVTL evaluation already uses GPU batch. TPE itself is inherently sequential.
 
@@ -294,8 +294,8 @@ See `docs/roadmap/phase-13-gpu-scoring-pipeline.md` for implementation details.
 | `no_ground_*` publishers (3)   | ✅     | Same topics         |
 | `voxel_score_points` pub       | ✅     | Same (RGB colors)   |
 | `multi_ndt_pose` PoseArray     | ✅     | Same                |
+| `multi_initial_pose` PoseArray | ✅     | Same                |
 | `debug/loaded_pointcloud_map`  | ✅     | Same                |
-| `multi_initial_pose` PoseArray | ❌     | **Missing** (debug) |
 
 ---
 
@@ -322,7 +322,6 @@ All functional features are implemented. Ground point filtering was added in Pha
 
 | Feature                     | Priority | Effort | GPU |
 |-----------------------------|----------|--------|-----|
-| Multi-initial PoseArray     | Low      | Low    | No  |
 | Distance old/new publishers | Low      | Low    | No  |
 
 ### Intentionally Not Implemented
@@ -433,8 +432,25 @@ See `docs/roadmap/phase-12-gpu-derivative-pipeline.md` for implementation detail
 
 ### Medium Priority
 
-5. **GPU batch alignment** - Benefits MULTI_NDT mode (3-5x)
+5. ~~**GPU batch alignment**~~ ✅ Complete - `align_batch_gpu()` with shared voxel data (~2-3x speedup)
 
 ### Low Priority
 
-6. ~~Debug visualization features~~ Partially complete - Per-point score visualization done; remaining debug publishers low impact
+6. ~~**Debug visualization features**~~ ✅ Complete - Per-point scores, multi_ndt_pose, multi_initial_pose PoseArrays, debug map publisher all done.
+
+---
+
+## Completion Summary
+
+**Feature parity**: All functional features from Autoware's `ndt_scan_matcher` are implemented. The CUDA implementation is a drop-in replacement.
+
+**GPU acceleration**: All compute-heavy operations run on GPU:
+- Voxel grid construction (zero-copy pipeline)
+- NDT alignment (`align_gpu()` path)
+- Batch scoring (`GpuScoringPipeline`)
+- Batch alignment (`align_batch_gpu()`)
+
+**Remaining low-priority item**:
+- Distance old/new publishers (debug only)
+
+This is an optional debug feature with no impact on localization accuracy or performance.
