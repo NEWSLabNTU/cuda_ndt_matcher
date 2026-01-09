@@ -94,6 +94,37 @@ pub fn compute_morton_codes_kernel<F: Float>(
     indices[idx] = idx;
 }
 
+/// GPU kernel: Pack split Morton codes (u32 low + u32 high) into u64 format.
+///
+/// This kernel eliminates the CPU round-trip for Morton code packing before radix sort.
+/// The output is a u64 array stored as 2×u32 per element (little-endian: low first, high second).
+///
+/// # Inputs
+/// - `codes_low`: [N] lower 32 bits of Morton codes
+/// - `codes_high`: [N] upper 32 bits of Morton codes
+/// - `num_points`: number of points
+///
+/// # Outputs
+/// - `packed`: [N*2] packed Morton codes as u32 pairs (u64 in little-endian layout)
+#[cube(launch_unchecked)]
+pub fn pack_morton_codes_kernel(
+    codes_low: &Array<u32>,
+    codes_high: &Array<u32>,
+    num_points: u32,
+    packed: &mut Array<u32>,
+) {
+    let idx = ABSOLUTE_POS;
+
+    if idx >= num_points {
+        terminate!();
+    }
+
+    // Write u64 as two u32s in little-endian order (low first, high second)
+    let out_base = idx * 2;
+    packed[out_base] = codes_low[idx];
+    packed[out_base + 1] = codes_high[idx];
+}
+
 /// Expand bits for Morton encoding (GPU version).
 /// Spreads 21 bits across 63 bits with 2-bit gaps.
 #[cube]

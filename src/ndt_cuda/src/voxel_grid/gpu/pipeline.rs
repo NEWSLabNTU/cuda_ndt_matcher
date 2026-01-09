@@ -39,7 +39,7 @@ use cubecl::cuda::{CudaDevice, CudaRuntime};
 use cubecl::prelude::*;
 use cubecl::server::Handle;
 
-use super::morton::compute_morton_codes_kernel;
+use super::morton::{compute_morton_codes_kernel, pack_morton_codes_kernel};
 use super::statistics::{
     accumulate_segment_covariances_kernel, accumulate_segment_sums_kernel, compute_means_kernel,
     finalize_voxels_cpu,
@@ -63,6 +63,9 @@ pub struct GpuPipelineBuffers {
     morton_codes_low: Handle,  // [u32; max_points]
     morton_codes_high: Handle, // [u32; max_points]
     point_indices: Handle,     // [u32; max_points]
+
+    // Packed Morton codes for radix sort input (zero-copy from morton kernel)
+    packed_codes: Handle, // [u64; max_points] (8 bytes per element)
 
     // Radix sort output
     sorted_codes: Handle,   // [u64; max_points] (8 bytes per element)
@@ -117,6 +120,9 @@ impl GpuPipelineBuffers {
         let morton_codes_high = client.empty(max_points * std::mem::size_of::<u32>());
         let point_indices = client.empty(max_points * std::mem::size_of::<u32>());
 
+        // Packed Morton codes buffer (input to radix sort, populated by pack_morton_codes_kernel)
+        let packed_codes = client.empty(max_points * std::mem::size_of::<u64>());
+
         let sorted_codes = client.empty(max_points * std::mem::size_of::<u64>());
         let sorted_indices = client.empty(max_points * std::mem::size_of::<u32>());
 
@@ -142,6 +148,7 @@ impl GpuPipelineBuffers {
             morton_codes_low,
             morton_codes_high,
             point_indices,
+            packed_codes,
             sorted_codes,
             sorted_indices,
             boundaries,
@@ -229,57 +236,40 @@ impl GpuPipelineBuffers {
     /// Run radix sort using cuda_ffi in-place API.
     ///
     /// Sorts Morton codes in `sorted_codes` with corresponding indices.
+    /// Uses GPU kernel to pack split Morton codes (u32 low + u32 high) into u64 format,
+    /// eliminating the CPU round-trip that was previously required.
     fn radix_sort_inplace(&self, num_points: usize) -> Result<()> {
         if num_points == 0 {
             return Ok(());
         }
 
-        // We need input and output buffers for sort
-        // Input: morton_codes (packed), point_indices
-        // Output: sorted_codes, sorted_indices
-
-        // The challenge is that morton codes are in split format (low/high u32)
-        // and we need packed u64 for cuda_ffi
-
-        // For now, download, pack, upload, sort, which defeats zero-copy
-        // TODO: Add a CubeCL kernel to pack u64 on GPU
-
-        let codes_low_bytes = self.client.read_one(self.morton_codes_low.clone());
-        let codes_high_bytes = self.client.read_one(self.morton_codes_high.clone());
-        let indices_bytes = self.client.read_one(self.point_indices.clone());
-
-        let codes_low = u32::from_bytes(&codes_low_bytes);
-        let codes_high = u32::from_bytes(&codes_high_bytes);
-        let indices = u32::from_bytes(&indices_bytes);
-
-        // Pack Morton codes
-        let mut packed_codes: Vec<u64> = Vec::with_capacity(num_points);
-        for i in 0..num_points {
-            let code = (codes_high[i] as u64) << 32 | codes_low[i] as u64;
-            packed_codes.push(code);
+        // Pack split Morton codes (u32 low + u32 high) into u64 on GPU
+        // This is the zero-copy path that avoids CPU round-trip
+        let cube_count = num_points.div_ceil(256) as u32;
+        unsafe {
+            pack_morton_codes_kernel::launch_unchecked::<CudaRuntime>(
+                &self.client,
+                CubeCount::Static(cube_count, 1, 1),
+                CubeDim::new(256, 1, 1),
+                ArrayArg::from_raw_parts::<u32>(&self.morton_codes_low, num_points, 1),
+                ArrayArg::from_raw_parts::<u32>(&self.morton_codes_high, num_points, 1),
+                ScalarArg::new(num_points as u32),
+                // Output: packed_codes is [u64; N] but we pass as [u32; N*2]
+                ArrayArg::from_raw_parts::<u32>(&self.packed_codes, num_points * 2, 1),
+            );
         }
-
-        // Upload packed codes and indices to temporary input position
-        // We'll use boundaries and indices_scratch as input buffers
-        let input_codes_bytes: Vec<u8> =
-            packed_codes.iter().flat_map(|c| c.to_le_bytes()).collect();
-        let input_indices_bytes: Vec<u8> = indices.iter().flat_map(|i| i.to_le_bytes()).collect();
-
-        // Create temporary input buffers
-        let input_codes = self.client.create(&input_codes_bytes);
-        let input_indices = self.client.create(&input_indices_bytes);
 
         // Sync CubeCL before cuda_ffi
         cubecl::future::block_on(self.client.sync());
 
-        // Call cuda_ffi sort
+        // Call cuda_ffi sort with GPU-packed codes
         unsafe {
             cuda_ffi::sort_pairs_inplace(
                 self.raw_ptr(&self.sort_temp),
                 self.sort_temp_bytes,
-                self.raw_ptr(&input_codes),
+                self.raw_ptr(&self.packed_codes),
                 self.raw_ptr(&self.sorted_codes),
-                self.raw_ptr(&input_indices),
+                self.raw_ptr(&self.point_indices),
                 self.raw_ptr(&self.sorted_indices),
                 num_points,
             )
