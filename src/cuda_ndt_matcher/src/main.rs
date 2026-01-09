@@ -683,12 +683,6 @@ impl NdtScanMatcherNode {
             }
         };
 
-        // Log warning if not converged, but still use the result
-        // (Autoware publishes even when max iterations reached)
-        if !result.converged {
-            log_warn!(NODE_NAME, "NDT did not converge, score={:.3}", result.score);
-        }
-
         // ---- Compute scores for filtering decision ----
         // Like Autoware, we compute NVTL and transform_probability before deciding to publish
 
@@ -703,7 +697,20 @@ impl NdtScanMatcherNode {
         // Calculate execution time (needed for diagnostics regardless of publish decision)
         let exe_time_ms = start_time.elapsed().as_secs_f32() * 1000.0;
 
-        // ---- Score threshold check (like Autoware's is_converged check) ----
+        // ---- Convergence gating (matching Autoware's behavior) ----
+        // Autoware gates pose publishing on three conditions:
+        // 1. is_ok_iteration_num: did NOT hit max iterations (result.converged)
+        // 2. is_local_optimal_solution_oscillation: oscillation count <= 10
+        // 3. is_ok_score: score above threshold
+
+        // Check 1: Max iterations (result.converged is false when max iterations reached)
+        let is_ok_iteration_num = result.converged;
+
+        // Check 2: Oscillation count (Autoware uses threshold of 10)
+        const OSCILLATION_THRESHOLD: usize = 10;
+        let is_ok_oscillation = result.oscillation_count <= OSCILLATION_THRESHOLD;
+
+        // Check 3: Score threshold
         // converged_param_type: 0 = transform_probability, 1 = NVTL
         let (score_for_check, threshold, score_name) = if params.score.converged_param_type == 0 {
             (
@@ -720,14 +727,36 @@ impl NdtScanMatcherNode {
                 "NVTL",
             )
         };
+        let is_ok_score = score_for_check >= threshold;
 
-        // Track consecutive skips for diagnostics
-        let skipping_publish_num = if score_for_check < threshold {
+        // Combined convergence check (all three must pass)
+        let is_converged = is_ok_iteration_num && is_ok_oscillation && is_ok_score;
+
+        // Track consecutive skips for diagnostics and log reasons
+        let skipping_publish_num = if !is_converged {
             let skips = skip_counter.fetch_add(1, Ordering::SeqCst) + 1;
-            log_warn!(
-                NODE_NAME,
-                "Score below threshold: {score_name}={score_for_check:.3} < {threshold:.3}, skip_count={skips}"
-            );
+
+            // Log specific reason(s) for skipping
+            if !is_ok_iteration_num {
+                log_warn!(
+                    NODE_NAME,
+                    "Max iterations reached: iter={}, skip_count={skips}",
+                    result.iterations
+                );
+            }
+            if !is_ok_oscillation {
+                log_warn!(
+                    NODE_NAME,
+                    "Oscillation detected: count={} > {OSCILLATION_THRESHOLD}, skip_count={skips}",
+                    result.oscillation_count
+                );
+            }
+            if !is_ok_score {
+                log_warn!(
+                    NODE_NAME,
+                    "Score below threshold: {score_name}={score_for_check:.3} < {threshold:.3}, skip_count={skips}"
+                );
+            }
             skips
         } else {
             skip_counter.store(0, Ordering::SeqCst);
@@ -740,8 +769,8 @@ impl NdtScanMatcherNode {
             frame_id: params.frame.map_frame.clone(),
         };
 
-        // Only publish pose if score is above threshold
-        if score_for_check >= threshold {
+        // Only publish pose if all convergence conditions pass
+        if is_converged {
             // Estimate covariance based on configured mode
             // For MULTI_NDT modes, we use parallel batch evaluation (Rayon)
             // NOTE: We reuse the manager lock from the alignment - don't try to lock again!
