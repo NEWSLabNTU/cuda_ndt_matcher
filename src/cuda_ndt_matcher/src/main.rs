@@ -645,6 +645,15 @@ impl NdtScanMatcherNode {
 
         // Get lock on active NDT manager (also checks for pending swap from background update)
         let mut manager = ndt_manager.lock();
+
+        // Compute "before" scores at initial pose (for diagnostics comparison)
+        let transform_prob_before = manager
+            .evaluate_transform_probability(&sensor_points, &initial_pose.pose.pose)
+            .unwrap_or(0.0);
+        let nvtl_before = manager
+            .evaluate_nvtl(&sensor_points, map, &initial_pose.pose.pose, 0.55)
+            .unwrap_or(0.0);
+
         let result = if debug_enabled {
             // Use debug variant and write to file
             match manager.align_with_debug(
@@ -1038,6 +1047,8 @@ impl NdtScanMatcherNode {
             oscillation_count: result.oscillation_count,
             transform_probability: transform_prob,
             nearest_voxel_transformation_likelihood: nvtl_score,
+            transform_probability_before: transform_prob_before,
+            nearest_voxel_transformation_likelihood_before: nvtl_before,
             distance_initial_to_result: distance,
             execution_time_ms: exe_time_ms as f64,
             skipping_publish_num,

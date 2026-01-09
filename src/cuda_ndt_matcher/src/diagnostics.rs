@@ -223,6 +223,9 @@ pub struct ScanMatchingDiagnostics {
     pub oscillation_count: usize,
     pub transform_probability: f64,
     pub nearest_voxel_transformation_likelihood: f64,
+    /// Scores at initial pose (before alignment) for comparison
+    pub transform_probability_before: f64,
+    pub nearest_voxel_transformation_likelihood_before: f64,
     pub distance_initial_to_result: f64,
     pub execution_time_ms: f64,
     pub skipping_publish_num: i32,
@@ -264,8 +267,31 @@ impl ScanMatchingDiagnostics {
             format!("{:.6}", self.transform_probability),
         );
         diag.add_key_value(
+            "transform_probability_before",
+            format!("{:.6}", self.transform_probability_before),
+        );
+        diag.add_key_value(
+            "transform_probability_diff",
+            format!(
+                "{:.6}",
+                self.transform_probability - self.transform_probability_before
+            ),
+        );
+        diag.add_key_value(
             "nearest_voxel_transformation_likelihood",
             format!("{:.6}", self.nearest_voxel_transformation_likelihood),
+        );
+        diag.add_key_value(
+            "nearest_voxel_transformation_likelihood_before",
+            format!("{:.6}", self.nearest_voxel_transformation_likelihood_before),
+        );
+        diag.add_key_value(
+            "nearest_voxel_transformation_likelihood_diff",
+            format!(
+                "{:.6}",
+                self.nearest_voxel_transformation_likelihood
+                    - self.nearest_voxel_transformation_likelihood_before
+            ),
         );
         diag.add_key_value(
             "distance_initial_to_result",
@@ -342,6 +368,8 @@ mod tests {
             oscillation_count: 0,
             transform_probability: 3.5,
             nearest_voxel_transformation_likelihood: 2.8,
+            transform_probability_before: 2.0,
+            nearest_voxel_transformation_likelihood_before: 1.5,
             distance_initial_to_result: 0.15,
             execution_time_ms: 45.2,
             skipping_publish_num: 0,
@@ -351,7 +379,8 @@ mod tests {
         diag.apply_to(&mut cat);
 
         assert_eq!(cat.level, DiagnosticLevel::Ok);
-        assert_eq!(cat.key_values.len(), 15);
+        // 15 original + 4 new (before/diff for transform_prob and nvtl)
+        assert_eq!(cat.key_values.len(), 19);
     }
 
     #[test]
