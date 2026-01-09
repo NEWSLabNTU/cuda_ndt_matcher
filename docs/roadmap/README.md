@@ -17,11 +17,11 @@ This document outlines the plan to implement custom CUDA kernels for NDT scan ma
 | Phase 9: Full GPU Acceleration   | ⚠️ Partial     | 9.1 workaround, 9.2 GPU voxel grid complete              |
 | Phase 10: SmartPoseBuffer        | ✅ Complete    | Pose interpolation for timestamp-aligned initial guess   |
 | Phase 11: GPU Zero-Copy Voxel    | ✅ Complete    | CubeCL-cuda_ffi interop, radix sort + segment on GPU     |
-| Phase 12: GPU Derivative Pipeline| 🔲 Planned     | Zero-copy derivatives in optimization loop (2-3x speedup)|
+| Phase 12: GPU Derivative Pipeline| ✅ Complete    | Zero-copy pipeline, solver integration, 1.6x speedup     |
 
 **Core NDT algorithm is fully implemented on CPU and matches Autoware's pclomp.**
 **GPU runtime is implemented with CubeCL for accelerated scoring and voxel grid construction.**
-**358 tests pass (289 ndt_cuda + 56 cuda_ndt_matcher + 13 cuda_ffi). All GPU tests enabled and passing.**
+**366 tests pass (297 ndt_cuda + 56 cuda_ndt_matcher + 13 cuda_ffi). All GPU tests enabled and passing.**
 
 ## Phase Documents
 
@@ -36,7 +36,7 @@ This document outlines the plan to implement custom CUDA kernels for NDT scan ma
 - [Phase 9: Full GPU Acceleration](phase-9-gpu-acceleration.md)
 - [Phase 10: SmartPoseBuffer](phase-10-smart-pose-buffer.md)
 - [Phase 11: GPU Zero-Copy Voxel Pipeline](phase-11-gpu-zero-copy-pipeline.md) ✅
-- [Phase 12: GPU Derivative Pipeline](phase-12-gpu-derivative-pipeline.md) 🔲
+- [Phase 12: GPU Derivative Pipeline](phase-12-gpu-derivative-pipeline.md) ✅
 - [Implementation Notes](implementation-notes.md) - Dependencies, risks, references
 
 ## Background
@@ -117,12 +117,11 @@ cuda_ndt_matcher/
 | Phase 9.4: GPU Memory Pooling        | 3-4 days           | Low          | 🔲 Not started |
 | Phase 9.5: Async GPU Execution       | 1 week             | Low          | 🔲 Not started |
 | Phase 11: GPU Zero-Copy Voxel        | 1-2 weeks          | Medium       | ✅ Complete    |
-| Phase 12: GPU Derivative Pipeline    | 1-2 weeks          | High         | 🔲 Not started |
-| **Total Remaining**                  | **~3-4 weeks**     |              | 6, 9.3-9.5, 12 |
+| Phase 12: GPU Derivative Pipeline    | 1-2 weeks          | High         | ✅ Complete    |
+| **Total Remaining**                  | **~2-3 weeks**     |              | 6, 9.3-9.5     |
 
 ### Priority Order
 
 1. **Phase 6: Validation** - Run rosbag comparison to verify algorithm correctness
-2. **Phase 12: GPU Derivative Pipeline** - Zero-copy derivatives in optimization loop (2-3x speedup)
-3. **Phase 9.3: GPU Derivatives** - Additional GPU kernels for scoring path
-4. **Phase 9.4-9.5: GPU Optimization** - Memory pooling and async execution
+2. **Phase 9.3: GPU Derivatives** - Additional GPU kernels for scoring path
+3. **Phase 9.4-9.5: GPU Optimization** - Memory pooling and async execution
