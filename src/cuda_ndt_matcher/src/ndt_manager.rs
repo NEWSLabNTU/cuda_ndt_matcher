@@ -218,17 +218,33 @@ impl NdtManager {
         self.matcher.evaluate_nvtl_batch(source_points, &isometries)
     }
 
-    /// Align from multiple initial poses in parallel and return all results.
+    /// Align from multiple initial poses and return all results.
     ///
     /// This is useful for multi-NDT covariance estimation where we need
     /// to run alignment from multiple offset poses.
+    ///
+    /// Prefers GPU batch alignment when available (shares voxel data across
+    /// all alignments). Falls back to CPU parallel (Rayon) if GPU fails.
     pub fn align_batch(
         &self,
         source_points: &[[f32; 3]],
         initial_poses: &[Pose],
     ) -> Result<Vec<AlignResult>> {
         let isometries: Vec<Isometry3<f64>> = initial_poses.iter().map(pose_to_isometry).collect();
-        let results = self.matcher.align_batch(source_points, &isometries)?;
+
+        // Try GPU batch alignment first (shares voxel data across alignments)
+        let results = match self.matcher.align_batch_gpu(source_points, &isometries) {
+            Ok(r) => r,
+            Err(e) => {
+                // GPU failed, fall back to CPU parallel path
+                log_debug!(
+                    LOGGER_NAME,
+                    "GPU batch alignment failed ({}), using CPU fallback",
+                    e
+                );
+                self.matcher.align_batch(source_points, &isometries)?
+            }
+        };
 
         Ok(results
             .into_iter()

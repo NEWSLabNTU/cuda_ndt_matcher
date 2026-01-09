@@ -712,6 +712,65 @@ impl NdtScanMatcher {
         Ok(results)
     }
 
+    /// Align source points to target from multiple initial poses using GPU.
+    ///
+    /// This is optimized for MULTI_NDT covariance estimation. The GPU pipeline
+    /// is created once and voxel data is uploaded once, then reused for all poses.
+    /// This provides significant speedup over `align_batch` when GPU is available.
+    ///
+    /// # Arguments
+    /// * `source_points` - Source point cloud to align
+    /// * `initial_poses` - List of initial poses to try
+    ///
+    /// # Returns
+    /// Vector of alignment results, one per pose.
+    ///
+    /// # Errors
+    /// Returns an error if no target is set or GPU initialization fails.
+    pub fn align_batch_gpu(
+        &self,
+        source_points: &[[f32; 3]],
+        initial_poses: &[Isometry3<f64>],
+    ) -> Result<Vec<AlignResult>> {
+        let grid = self
+            .target_grid
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No target set. Call set_target() first."))?;
+
+        if source_points.is_empty() {
+            bail!("Source point cloud is empty");
+        }
+
+        if initial_poses.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Create optimizer with current config
+        let opt_config = self.build_optimizer_config();
+        let optimizer = NdtOptimizer::new(opt_config);
+
+        // Use GPU batch alignment with shared voxel data
+        let ndt_results = optimizer.align_batch_gpu(source_points, grid, initial_poses)?;
+
+        // Convert NdtResult to AlignResult
+        let results = ndt_results
+            .into_iter()
+            .map(|result| AlignResult {
+                pose: result.pose,
+                converged: result.status.is_converged(),
+                score: result.score,
+                transform_probability: result.transform_probability,
+                nvtl: result.nvtl,
+                iterations: result.iterations,
+                hessian: result.hessian,
+                num_correspondences: result.num_correspondences,
+                oscillation_count: result.oscillation_count,
+            })
+            .collect();
+
+        Ok(results)
+    }
+
     /// Check if GPU acceleration is active.
     ///
     /// Returns true if GPU runtime was successfully initialized and is being used.

@@ -475,6 +475,213 @@ impl NdtOptimizer {
         })
     }
 
+    /// Align multiple initial poses using GPU pipeline with shared voxel data.
+    ///
+    /// This is optimized for MULTI_NDT covariance estimation where multiple
+    /// alignments share the same source points and target grid. The GPU pipeline
+    /// is created once and voxel data is uploaded once, then reused for all poses.
+    ///
+    /// # Arguments
+    /// * `source_points` - Source point cloud to align
+    /// * `target_grid` - Target voxel grid (map)
+    /// * `initial_poses` - List of initial pose estimates
+    ///
+    /// # Returns
+    /// Vector of NDT results, one per initial pose.
+    ///
+    /// # Errors
+    /// Returns an error if GPU pipeline initialization fails.
+    pub fn align_batch_gpu(
+        &self,
+        source_points: &[[f32; 3]],
+        target_grid: &VoxelGrid,
+        initial_poses: &[Isometry3<f64>],
+    ) -> Result<Vec<NdtResult>, anyhow::Error> {
+        if initial_poses.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Create GPU pipeline once for all alignments
+        let max_points = source_points.len().max(1);
+        let max_voxels = target_grid.len().max(1);
+        let mut pipeline = GpuDerivativePipeline::new(max_points, max_voxels)?;
+
+        // Upload voxel data once (shared across all alignments)
+        let voxel_data = GpuVoxelData::from_voxel_grid(target_grid);
+        pipeline.upload_alignment_data(
+            source_points,
+            &voxel_data,
+            self.gauss.d1 as f32,
+            self.gauss.d2 as f32,
+            self.config.ndt.resolution as f32,
+        )?;
+
+        // Run alignment for each initial pose, reusing the pipeline
+        let mut results = Vec::with_capacity(initial_poses.len());
+        for initial_guess in initial_poses {
+            let result = self.align_single_with_pipeline(
+                &mut pipeline,
+                source_points,
+                target_grid,
+                *initial_guess,
+            )?;
+            results.push(result);
+        }
+
+        Ok(results)
+    }
+
+    /// Run a single alignment using an existing GPU pipeline.
+    ///
+    /// This is the inner loop for `align_batch_gpu`. The pipeline must already
+    /// have alignment data uploaded via `upload_alignment_data`.
+    fn align_single_with_pipeline(
+        &self,
+        pipeline: &mut GpuDerivativePipeline,
+        source_points: &[[f32; 3]],
+        target_grid: &VoxelGrid,
+        initial_guess: Isometry3<f64>,
+    ) -> Result<NdtResult, anyhow::Error> {
+        // Convert initial guess to pose vector
+        let mut pose = isometry_to_pose_vector(&initial_guess);
+
+        // Track best result
+        let mut best_score = f64::NEG_INFINITY;
+        let mut best_pose = pose;
+        let mut last_hessian = Matrix6::zeros();
+        let mut last_correspondences = 0;
+
+        // Track pose history for oscillation detection
+        let mut pose_history: Vec<Isometry3<f64>> =
+            Vec::with_capacity(self.config.ndt.max_iterations + 1);
+        pose_history.push(initial_guess);
+
+        // Main optimization loop
+        for iteration in 0..self.config.ndt.max_iterations {
+            // Compute derivatives at current pose using GPU pipeline
+            let gpu_result = pipeline.compute_iteration(&pose)?;
+
+            // Convert GPU result to nalgebra types
+            let gradient = Vector6::from_row_slice(&gpu_result.gradient);
+            let hessian = Matrix6::from_fn(|i, j| gpu_result.hessian[i][j]);
+            let score = gpu_result.score;
+            let num_correspondences = gpu_result.num_correspondences;
+
+            // Check for sufficient correspondences
+            if num_correspondences < self.config.min_correspondences {
+                if iteration == 0 {
+                    return Ok(NdtResult::no_correspondences(initial_guess));
+                }
+                break;
+            }
+
+            last_correspondences = num_correspondences;
+
+            // Apply GNSS regularization if enabled
+            let (reg_score, reg_gradient, reg_hessian) = self
+                .regularization
+                .compute_derivatives(&pose, num_correspondences);
+
+            let total_score = score + reg_score;
+            let total_gradient = gradient + reg_gradient;
+            let total_hessian = hessian + reg_hessian;
+
+            last_hessian = total_hessian;
+
+            // Track best score
+            if total_score > best_score {
+                best_score = total_score;
+                best_pose = pose;
+            }
+
+            // Compute Newton step
+            let delta = match newton_step_regularized(
+                &total_gradient,
+                &total_hessian,
+                self.config.ndt.regularization,
+                self.config.svd_tolerance,
+            ) {
+                Some(d) => d,
+                None => {
+                    // Singular Hessian - return current best
+                    let final_pose = pose_vector_to_isometry(&best_pose);
+                    let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
+                    let oscillation = super::oscillation::count_oscillation(
+                        &pose_history,
+                        super::oscillation::DEFAULT_OSCILLATION_THRESHOLD,
+                    );
+                    return Ok(NdtResult {
+                        pose: final_pose,
+                        status: ConvergenceStatus::SingularHessian,
+                        score: best_score,
+                        transform_probability: self.compute_transform_probability(best_score),
+                        nvtl,
+                        iterations: iteration,
+                        hessian: last_hessian,
+                        num_correspondences: last_correspondences,
+                        oscillation_count: oscillation.max_oscillation_count,
+                    });
+                }
+            };
+
+            // Clamp Newton step to maximum step length
+            let delta_norm = delta.norm();
+
+            // Check convergence before clamping
+            if delta_norm < self.config.ndt.trans_epsilon {
+                let final_pose = pose_vector_to_isometry(&pose);
+                let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
+                let oscillation = super::oscillation::count_oscillation(
+                    &pose_history,
+                    super::oscillation::DEFAULT_OSCILLATION_THRESHOLD,
+                );
+                return Ok(NdtResult {
+                    pose: final_pose,
+                    status: ConvergenceStatus::Converged,
+                    score: total_score,
+                    transform_probability: self.compute_transform_probability(total_score),
+                    nvtl,
+                    iterations: iteration + 1,
+                    hessian: total_hessian,
+                    num_correspondences,
+                    oscillation_count: oscillation.max_oscillation_count,
+                });
+            }
+
+            // Check if Newton step is an ascent direction
+            let mut step_dir = delta / delta_norm;
+            let grad_dot_step = total_gradient.dot(&step_dir);
+            if grad_dot_step <= 0.0 {
+                step_dir = -step_dir;
+            }
+
+            // Apply step (no line search for GPU path)
+            let step_length = delta_norm.min(self.config.ndt.step_size);
+
+            pose = apply_pose_delta(&pose, &step_dir, step_length);
+            pose_history.push(pose_vector_to_isometry(&pose));
+        }
+
+        // Reached max iterations
+        let final_pose = pose_vector_to_isometry(&best_pose);
+        let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
+        let oscillation = super::oscillation::count_oscillation(
+            &pose_history,
+            super::oscillation::DEFAULT_OSCILLATION_THRESHOLD,
+        );
+        Ok(NdtResult {
+            pose: final_pose,
+            status: ConvergenceStatus::MaxIterations,
+            score: best_score,
+            transform_probability: self.compute_transform_probability(best_score),
+            nvtl,
+            iterations: self.config.ndt.max_iterations,
+            hessian: last_hessian,
+            num_correspondences: last_correspondences,
+            oscillation_count: oscillation.max_oscillation_count,
+        })
+    }
+
     /// Compute NVTL for a given pose.
     fn compute_nvtl(
         &self,

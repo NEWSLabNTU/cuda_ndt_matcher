@@ -2,7 +2,7 @@
 
 Feature comparison between `cuda_ndt_matcher` and Autoware's `ndt_scan_matcher`.
 
-**Last Updated**: 2026-01-09 (Per-point Score Visualization complete)
+**Last Updated**: 2026-01-09 (GPU Batch Alignment for MULTI_NDT complete)
 
 ---
 
@@ -170,11 +170,34 @@ Larger point clouds (typical 1000+ points) expected to show better speedups.
 |-----------------------|--------|-----|-------------------------|------------------------------------------------------------------|
 | FIXED mode            | ✅     | —   | Same                    | Returns constant matrix                                          |
 | LAPLACE mode          | ✅     | —   | Same (Hessian inverse)  | 6x6 inversion - CPU faster                                       |
-| MULTI_NDT mode        | ✅     | 🔲  | Same algorithm          | Runs batch alignments via Rayon                                  |
+| MULTI_NDT mode        | ✅     | ✅  | Same algorithm          | **GPU batch alignment** (shared voxel data)                      |
 | MULTI_NDT_SCORE mode  | ✅     | ✅  | Same (softmax weighted) | **GPU batch scoring via `GpuScoringPipeline`**                   |
 | Covariance rotation   | ✅     | —   | Same                    | 6x6 rotation - trivial                                           |
 | Temperature parameter | ✅     | —   | Same default            | Single scalar                                                    |
 | Scale factor          | ✅     | —   | Same                    | Single scalar                                                    |
+
+### MULTI_NDT GPU Batch Alignment (✅ Complete)
+
+**Implementation** (`NdtOptimizer::align_batch_gpu` in `optimization/solver.rs`):
+- Creates `GpuDerivativePipeline` once for all M alignments
+- Uploads voxel data once (shared across all poses)
+- Runs M sequential Newton optimizations, each reusing the pipeline
+- Falls back to CPU Rayon path if GPU fails
+
+**Key optimization**: Voxel data upload is expensive; sharing it across M alignments
+provides ~2-3× speedup over M independent `align_gpu()` calls.
+
+**API**:
+```rust
+// NdtOptimizer level
+optimizer.align_batch_gpu(source_points, target_grid, &initial_poses)?;
+
+// NdtScanMatcher level
+matcher.align_batch_gpu(source_points, &initial_poses)?;
+
+// NdtManager level (auto-routes to GPU with CPU fallback)
+manager.align_batch(source_points, &initial_poses)?;
+```
 
 ### MULTI_NDT_SCORE GPU Pipeline (✅ Complete)
 
@@ -331,7 +354,8 @@ All functional features are implemented. Ground point filtering was added in Pha
 | Derivative reduction         | CUB DeviceSegmentedReduce (43 segments → 43)    |
 | Transform probability        | Parallel per-point                              |
 | NVTL scoring                 | Parallel per-point max                          |
-| Batch scoring (MULTI_NDT)    | `GpuScoringPipeline` - M poses × N points       |
+| Batch scoring (MULTI_NDT_SCORE) | `GpuScoringPipeline` - M poses × N points    |
+| Batch alignment (MULTI_NDT)  | `GpuDerivativePipeline` - shared voxel data     |
 | Per-point score visualization| GPU max-score extraction + CPU color mapping    |
 | Sensor point filtering       | GPU if ≥10k points                              |
 
@@ -350,7 +374,7 @@ All functional features are implemented. Ground point filtering was added in Pha
 | Hessian in optimization loop  | ✅ Working    | ✅ Integrated     | (combined)|
 | GPU reduction (sum)           | ✅ Working    | ✅ Integrated     | Minor     |
 | Batch scoring pipeline        | ✅ Working    | ✅ Integrated     | ~15x      |
-| Batch alignment pipeline      | ❌ Missing    | Not started       | 3-5x      |
+| Batch alignment pipeline      | ✅ Working    | ✅ Integrated     | ~2-3x     |
 
 See `docs/roadmap/phase-12-gpu-derivative-pipeline.md` for implementation details.
 
