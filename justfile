@@ -39,19 +39,58 @@ clean:
 format:
     cargo +nightly fmt --manifest-path {{manifest}} --all
 
-# Check formatting and run clippy
+# Check formatting and run clippy on all crates
 lint:
     #!/usr/bin/env bash
     source {{local_setup}}
     cargo +nightly fmt --check --manifest-path {{manifest}} --all
     cargo clippy --manifest-path {{manifest}} --config {{cargo_config}} --all-targets
 
-# Run Rust unit tests only
+# Lint ndt_cuda crate only
+lint-ndt-cuda:
+    #!/usr/bin/env bash
+    source {{local_setup}}
+    cargo +nightly fmt --check --manifest-path {{manifest}} -p ndt_cuda
+    cargo clippy --manifest-path {{manifest}} --config {{cargo_config}} -p ndt_cuda
+
+# Lint cuda_ffi crate only
+lint-cuda-ffi:
+    #!/usr/bin/env bash
+    source {{local_setup}}
+    cargo +nightly fmt --check --manifest-path {{manifest}} -p cuda_ffi
+    cargo clippy --manifest-path {{manifest}} --config {{cargo_config}} -p cuda_ffi
+
+# Lint cuda_ndt_matcher crate only
+lint-cuda-ndt-matcher:
+    #!/usr/bin/env bash
+    source {{local_setup}}
+    cargo +nightly fmt --check --manifest-path {{manifest}} -p cuda_ndt_matcher
+    cargo clippy --manifest-path {{manifest}} --config {{cargo_config}} -p cuda_ndt_matcher
+
+# Run all Rust unit tests
 test-rust:
     #!/usr/bin/env bash
     source {{local_setup}}
     # Note: --test-threads=1 required to avoid CUDA/PCL thread-safety issues in fast-gicp tests
     cargo test --manifest-path {{manifest}} --config {{cargo_config}} --all-targets -- --test-threads=1
+
+# Test ndt_cuda crate only
+test-ndt-cuda:
+    #!/usr/bin/env bash
+    source {{local_setup}}
+    cargo test --manifest-path {{manifest}} --config {{cargo_config}} -p ndt_cuda -- --test-threads=1
+
+# Test cuda_ffi crate only
+test-cuda-ffi:
+    #!/usr/bin/env bash
+    source {{local_setup}}
+    cargo test --manifest-path {{manifest}} --config {{cargo_config}} -p cuda_ffi
+
+# Test cuda_ndt_matcher crate only
+test-cuda-ndt-matcher:
+    #!/usr/bin/env bash
+    source {{local_setup}}
+    cargo test --manifest-path {{manifest}} --config {{cargo_config}} -p cuda_ndt_matcher
 
 # Run all tests (Rust unit tests + Python integration tests)
 test: test-rust test-integration
