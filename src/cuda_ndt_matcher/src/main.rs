@@ -30,7 +30,6 @@ use rclrs::{
     SubscriptionOptions,
 };
 use sensor_msgs::msg::PointCloud2;
-use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -243,6 +242,8 @@ impl NdtScanMatcherNode {
         let diagnostics = Arc::new(Mutex::new(DiagnosticsInterface::new(node)?));
 
         // Points subscription
+        // Uses QoS KeepLast(1) to ensure we only process the latest message,
+        // matching Autoware's approach (no explicit timestamp deduplication needed)
         let points_sub = {
             let ndt_manager = Arc::clone(&ndt_manager);
             let map_module = Arc::clone(&map_module);
@@ -463,27 +464,15 @@ impl NdtScanMatcherNode {
         params: &NdtParams,
         tf_handler: &Arc<tf_handler::TfHandler>,
     ) {
-        // Deduplicate: skip if we've already processed this exact timestamp
-        // This prevents the same pointcloud from being processed multiple times
-        // due to executor issues or duplicate message delivery
+        // Track callback invocation
+        let _cb_num = callback_count.fetch_add(1, Ordering::SeqCst) + 1;
+
+        // Extract timestamp for debug output
         let timestamp_ns =
             msg.header.stamp.sec as u64 * 1_000_000_000 + msg.header.stamp.nanosec as u64;
 
-        // Use HashSet to track all processed timestamps (handles out-of-order delivery)
-        {
-            let mut processed = processed_timestamps.lock();
-            if !processed.insert(timestamp_ns) {
-                // Already in set - this is a duplicate, skip it
-                return;
-            }
-            // Prune old timestamps to prevent unbounded growth
-            // Keep last 1000 timestamps (about 100 seconds at 10Hz)
-            if processed.len() > 1000 {
-                // Remove oldest entries (approximate - just clear and start fresh)
-                processed.clear();
-                processed.insert(timestamp_ns);
-            }
-        }
+        // Note: No explicit deduplication needed - QoS KeepLast(1) ensures we only
+        // process the latest message, matching Autoware's approach.
 
         // Convert sensor points first - needed for align service even before we have initial pose
         let raw_points = match pointcloud::from_pointcloud2(&msg) {
