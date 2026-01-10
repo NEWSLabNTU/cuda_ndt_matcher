@@ -634,3 +634,129 @@ GPU: radix sort
 - Score threshold (gates if below threshold)
 
 **Remaining items**: None - feature parity complete.
+
+---
+
+## Known Performance Issues
+
+**Last Updated**: 2026-01-10
+
+See `docs/profiling-results.md` for detailed profiling data.
+
+### Current Performance Gap
+
+| Metric | Autoware (OpenMP) | CUDA GPU | Ratio |
+|--------|-------------------|----------|-------|
+| Mean execution time | 2.48 ms | 13.07 ms | **5.3x slower** |
+| Convergence rate | ~100% | 51.9% | Issue |
+| Mean iterations | 3-5 | 15.2 | ~3-5x more |
+
+### Root Causes
+
+#### 1. Low Convergence Rate (Primary Issue)
+
+48% of alignments hit the 30-iteration limit instead of converging. This is the main cause of slow execution times.
+
+**Possible causes** (under investigation):
+- Derivative computation differences
+- Step size or line search behavior differences
+- Initial pose quality differences
+- Voxel search radius differences
+
+#### 2. Per-Iteration Memory Transfer Overhead
+
+Each iteration of the Newton optimization involves significant CPU↔GPU transfers:
+
+| Direction | Data | Size (N=756 points) |
+|-----------|------|---------------------|
+| CPU → GPU | Transform matrix | 64 bytes |
+| CPU → GPU | Jacobians | 54 KB |
+| CPU → GPU | Point Hessians | 435 KB |
+| GPU → CPU | Reduced results | 172 bytes |
+
+**Total per iteration**: ~490 KB upload
+
+For 15-30 iterations, that's **7-15 MB of transfers per alignment**.
+
+**Issues in current implementation** (`derivatives/pipeline.rs`):
+1. Jacobians computed on CPU every iteration and uploaded (lines 480-484)
+2. New GPU buffers allocated each iteration via `client.create()` instead of reusing
+
+#### 3. No Batch Processing for Incoming Scans
+
+Current architecture processes each scan independently:
+- `align_gpu()` - Single scan, single initial pose
+- `align_batch_gpu()` - Single scan, multiple initial poses (for MULTI_NDT)
+- **No queue** for batching incoming scans across time
+
+This means per-alignment setup overhead cannot be amortized.
+
+---
+
+## Optimization Opportunities
+
+### P3: GPU Jacobian/Point Hessian Computation (High Priority)
+
+**Problem**: Jacobians (N×18) and point Hessians (N×144) are computed on CPU every iteration and uploaded to GPU.
+
+**Solution**: Compute Jacobians and point Hessians directly on GPU. The formulas only depend on:
+- Source point positions (already on GPU)
+- Current pose (16 floats, already uploaded)
+
+**Expected impact**: Eliminate ~490 KB upload per iteration → ~64 bytes upload per iteration
+
+**Implementation**:
+- Add `compute_jacobians_kernel` and `compute_point_hessians_kernel` to `derivatives/gpu.rs`
+- Modify `compute_iteration_gpu_reduce()` to call these kernels instead of CPU functions
+
+### P4: Reuse Pre-allocated GPU Buffers (Medium Priority)
+
+**Problem**: `client.create()` allocates new GPU memory each iteration for jacobians, point_hessians, etc.
+
+**Solution**: Pre-allocate buffers at pipeline creation, reuse across iterations.
+
+**Expected impact**: Reduce memory allocation overhead, improve cache locality
+
+**Implementation**:
+- Add `jacobians: Handle`, `point_hessians: Handle` to `GpuDerivativePipeline`
+- Pre-allocate in `new()`, reuse in `compute_iteration_gpu_reduce()`
+
+### P5: Full GPU Newton Loop (Low Priority)
+
+**Problem**: Each iteration requires CPU↔GPU synchronization for Newton step computation.
+
+**Solution**: Implement full Newton optimization loop on GPU, only download final result.
+
+**Expected impact**: Eliminate per-iteration synchronization (~30 sync points → 1)
+
+**Challenges**:
+- 6×6 Newton solve is small (may not benefit from GPU)
+- Convergence checking requires conditional logic
+- May need custom CUDA kernel (CubeCL limitations)
+
+### P6: Scan Queue for Batch Processing (Low Priority)
+
+**Problem**: Each incoming scan is processed independently, no amortization of setup costs.
+
+**Solution**: Queue incoming scans and process in batches of 2-3.
+
+**Expected impact**: Amortize voxel data upload and pipeline setup across multiple scans
+
+**Trade-off**: Adds latency (must wait for batch to fill). Only viable if real-time constraints allow ~10ms additional latency.
+
+---
+
+## Optimization Priority Summary
+
+| ID | Optimization | Impact | Effort | Status |
+|----|--------------|--------|--------|--------|
+| P0a | GPU reduction in derivative pipeline | 1000× BW/iter | Trivial | ✅ Complete |
+| P0b | GPU reduction in scoring pipeline | 1000× BW/batch | Trivial | ✅ Complete |
+| P1 | Morton code packing kernel | 3× voxel build | ~50 LOC | ✅ Complete |
+| P2 | Jacobian caching optimization | 12 KB/iter | Simple | ✅ Complete |
+| **P3** | **GPU Jacobian/Hessian computation** | **490 KB/iter → 64 B** | **~200 LOC** | 🔲 Planned |
+| **P4** | **Reuse pre-allocated GPU buffers** | **Reduce alloc overhead** | **~50 LOC** | 🔲 Planned |
+| P5 | Full GPU Newton loop | Eliminate sync | Complex | 🔲 Future |
+| P6 | Scan queue batch processing | Amortize setup | Medium | 🔲 Future |
+
+**Recommended next step**: P3 (GPU Jacobian computation) - highest impact, moderate effort.

@@ -19,6 +19,7 @@ This document outlines the plan to implement custom CUDA kernels for NDT scan ma
 | Phase 11: GPU Zero-Copy Voxel    | ✅ Complete    | CubeCL-cuda_ffi interop, radix sort + segment on GPU     |
 | Phase 12: GPU Derivative Pipeline| ✅ Complete    | All sub-phases complete, CUB GPU reduction implemented   |
 | Phase 13: GPU Scoring Pipeline   | ✅ Complete    | Batched NVTL/TP scoring for MULTI_NDT_SCORE              |
+| Phase 14: Iteration Optimization | 🔲 Planned     | GPU Jacobians, buffer reuse, reduce per-iter transfers   |
 
 **Core NDT algorithm is fully implemented on CPU and matches Autoware's pclomp.**
 **GPU runtime is implemented with CubeCL for accelerated scoring and voxel grid construction.**
@@ -39,6 +40,7 @@ This document outlines the plan to implement custom CUDA kernels for NDT scan ma
 - [Phase 11: GPU Zero-Copy Voxel Pipeline](phase-11-gpu-zero-copy-pipeline.md) ✅
 - [Phase 12: GPU Derivative Pipeline](phase-12-gpu-derivative-pipeline.md) ✅
 - [Phase 13: GPU Scoring Pipeline](phase-13-gpu-scoring-pipeline.md) ✅
+- [Phase 14: Per-Iteration Optimization](phase-14-iteration-optimization.md) 🔲
 - [Implementation Notes](implementation-notes.md) - Dependencies, risks, references
 
 ## Background
@@ -121,10 +123,12 @@ cuda_ndt_matcher/
 | Phase 11: GPU Zero-Copy Voxel        | 1-2 weeks          | Medium       | ✅ Complete    |
 | Phase 12: GPU Derivative Pipeline    | 1-2 weeks          | High         | ✅ Complete    |
 | Phase 13: GPU Scoring Pipeline       | 1 week             | Medium       | ✅ Complete    |
-| **Total Remaining**                  | **~2-3 weeks**     |              | 6, 9.3-9.5     |
+| Phase 14: Iteration Optimization     | 1-2 weeks          | **High**     | 🔲 Planned     |
+| **Total Remaining**                  | **~3-4 weeks**     |              | 6, 9.3-9.5, 14 |
 
 ### Priority Order
 
-1. **Phase 6: Validation** - Run rosbag comparison to verify algorithm correctness
-2. **Phase 9.3: GPU Derivatives** - Additional GPU kernels for scoring path
-3. **Phase 9.4-9.5: GPU Optimization** - Memory pooling and async execution
+1. **Phase 14: Iteration Optimization** - Reduce per-iteration transfers (490KB → 64B)
+2. **Phase 6: Validation** - Run rosbag comparison to verify algorithm correctness
+3. **Phase 9.3: GPU Derivatives** - Additional GPU kernels for scoring path
+4. **Phase 9.4-9.5: GPU Optimization** - Memory pooling and async execution
