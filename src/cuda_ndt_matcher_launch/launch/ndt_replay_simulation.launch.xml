@@ -60,7 +60,7 @@
       <arg name="launch_perception" value="false"/>
       <arg name="launch_planning" value="false"/>
       <arg name="launch_control" value="false"/>
-      <arg name="launch_api" value="false"/>
+      <arg name="launch_api" value="true"/>
       <!-- Logging simulation mode settings -->
       <arg name="use_sim_time" value="true"/>
       <arg name="system_run_mode" value="logging_simulation"/>
@@ -97,7 +97,7 @@
       <arg name="launch_perception" value="false"/>
       <arg name="launch_planning" value="false"/>
       <arg name="launch_control" value="false"/>
-      <arg name="launch_api" value="false"/>
+      <arg name="launch_api" value="true"/>
       <!-- Logging simulation mode settings -->
       <arg name="use_sim_time" value="true"/>
       <arg name="system_run_mode" value="logging_simulation"/>
