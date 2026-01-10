@@ -46,6 +46,11 @@ pub struct NdtManager {
 impl NdtManager {
     /// Create new NDT manager with parameters
     pub fn new(params: &NdtParams) -> Result<Self> {
+        // Check NDT_USE_GPU environment variable (default: true for GPU acceleration)
+        let use_gpu = std::env::var("NDT_USE_GPU")
+            .map(|v| v != "0" && v.to_lowercase() != "false")
+            .unwrap_or(true);
+
         let matcher = NdtScanMatcher::builder()
             .resolution(params.ndt.resolution as f32)
             .max_iterations(params.ndt.max_iterations as usize)
@@ -54,8 +59,10 @@ impl NdtManager {
             .outlier_ratio(0.55) // Autoware default
             .regularization_enabled(params.regularization.enabled)
             .regularization_scale_factor(params.regularization.scale_factor)
-            .use_gpu(true) // Enable CUDA acceleration
+            .use_gpu(use_gpu)
             .build()?;
+
+        log_debug!(LOGGER_NAME, "NDT manager created with use_gpu={use_gpu}");
 
         if params.regularization.enabled {
             log_debug!(
