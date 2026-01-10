@@ -181,3 +181,29 @@ monitor-ndt:
     #!/usr/bin/env bash
     source {{autoware_setup}}
     ros2 topic echo /localization/pose_estimator/pose_with_covariance
+
+# === Profiling ===
+
+# Profile all NDT modes (builtin, cuda-cpu, cuda-gpu)
+profile-all:
+    ./scripts/profile_ndt.sh --modes builtin,cuda-cpu,cuda-gpu
+
+# Profile GPU modes only (faster)
+profile-gpu:
+    ./scripts/profile_ndt.sh --modes builtin,cuda-gpu
+
+# Profile with perf CPU sampling (requires sudo)
+profile-perf:
+    ./scripts/profile_ndt.sh --modes builtin,cuda-gpu --perf
+
+# Profile with nsys GPU profiling
+profile-nsys:
+    ./scripts/profile_ndt.sh --modes cuda-gpu --nsys
+
+# Analyze existing profile results
+analyze-profile dir:
+    python3 ./scripts/analyze_profile.py {{dir}}
+
+# Run CUDA NDT in CPU mode (for comparison)
+run-cuda-cpu:
+    NDT_USE_GPU=0 ./scripts/run_demo.sh --cuda "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
