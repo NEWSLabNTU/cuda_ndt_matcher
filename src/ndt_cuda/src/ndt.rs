@@ -445,6 +445,60 @@ impl NdtScanMatcher {
         })
     }
 
+    /// Align source points to target using full GPU Newton iteration.
+    ///
+    /// This method runs the entire Newton optimization loop on GPU, computing
+    /// Jacobians and Point Hessians on GPU instead of uploading them each iteration.
+    /// This provides significant speedup by eliminating ~490KB of CPU→GPU transfers
+    /// per iteration.
+    ///
+    /// # Arguments
+    /// * `source_points` - Source point cloud (sensor scan)
+    /// * `initial_guess` - Initial pose estimate
+    ///
+    /// # Returns
+    /// Alignment result with final pose, score, and convergence status.
+    ///
+    /// # Errors
+    /// Returns an error if GPU initialization fails or no target is set.
+    ///
+    /// # Note
+    /// This method currently does not support:
+    /// - GNSS regularization (use `align()` if regularization is needed)
+    /// - Line search
+    /// - Oscillation detection
+    pub fn align_gpu(
+        &self,
+        source_points: &[[f32; 3]],
+        initial_guess: Isometry3<f64>,
+    ) -> Result<AlignResult> {
+        let grid = self
+            .target_grid
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No target set. Call set_target() first."))?;
+
+        if source_points.is_empty() {
+            bail!("Source point cloud is empty");
+        }
+
+        // Use full GPU path via optimizer
+        let result = self
+            .optimizer
+            .align_full_gpu(source_points, grid, initial_guess)?;
+
+        Ok(AlignResult {
+            pose: result.pose,
+            converged: result.status.is_converged(),
+            score: result.score,
+            transform_probability: result.transform_probability,
+            nvtl: result.nvtl,
+            iterations: result.iterations,
+            hessian: result.hessian,
+            num_correspondences: result.num_correspondences,
+            oscillation_count: result.oscillation_count,
+        })
+    }
+
     /// Align source points to target with debug output.
     ///
     /// This is the same as `align()` but also returns detailed debug information

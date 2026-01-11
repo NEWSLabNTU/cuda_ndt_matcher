@@ -21,6 +21,7 @@
 pub mod angular;
 pub mod cpu;
 pub mod gpu;
+pub mod gpu_jacobian;
 pub mod pipeline;
 pub mod types;
 
@@ -29,6 +30,9 @@ pub use cpu::{compute_derivatives_cpu, compute_derivatives_cpu_with_metric};
 pub use gpu::{
     compute_ndt_hessian_kernel, compute_point_hessians_cpu, compute_point_jacobians_cpu,
     pose_to_transform_matrix, GpuDerivativeResult, GpuDerivatives, GpuVoxelData, MAX_NEIGHBORS,
+};
+pub use gpu_jacobian::{
+    compute_jacobians_kernel, compute_point_hessians_kernel, compute_sin_cos_kernel,
 };
 pub use pipeline::GpuDerivativePipeline;
 pub use types::{

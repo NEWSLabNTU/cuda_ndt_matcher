@@ -9,6 +9,7 @@
 
 use nalgebra::{Isometry3, Matrix6, Vector6};
 
+use super::full_gpu_pipeline::FullGpuPipeline;
 use super::line_search::{directional_derivative, LineSearchConfig};
 use super::more_thuente::{more_thuente_search, MoreThuenteConfig};
 use super::newton::{condition_number, newton_step_regularized};
@@ -473,6 +474,90 @@ impl NdtOptimizer {
             hessian: last_hessian,
             num_correspondences: last_correspondences,
             oscillation_count: oscillation.max_oscillation_count,
+        })
+    }
+
+    /// Align source points to target using full GPU Newton iteration.
+    ///
+    /// This method runs the entire Newton optimization loop on GPU, computing
+    /// Jacobians and Point Hessians on GPU instead of uploading them each iteration.
+    /// This eliminates ~490KB of CPU→GPU transfers per iteration.
+    ///
+    /// # Arguments
+    /// * `source_points` - Source point cloud to align
+    /// * `target_grid` - Target voxel grid (map)
+    /// * `initial_guess` - Initial pose estimate
+    ///
+    /// # Returns
+    /// NDT result with final pose, score, and convergence status.
+    ///
+    /// # Errors
+    /// Returns an error if GPU pipeline initialization or computation fails.
+    ///
+    /// # Note
+    /// This method currently does not support:
+    /// - GNSS regularization (regularization terms are ignored)
+    /// - Line search (uses fixed step size)
+    /// - Oscillation detection
+    ///
+    /// These features require per-iteration CPU involvement and will be added in future.
+    pub fn align_full_gpu(
+        &self,
+        source_points: &[[f32; 3]],
+        target_grid: &VoxelGrid,
+        initial_guess: Isometry3<f64>,
+    ) -> Result<NdtResult, anyhow::Error> {
+        // Create full GPU pipeline
+        let max_points = source_points.len().max(1);
+        let max_voxels = target_grid.len().max(1);
+        let mut pipeline = FullGpuPipeline::new(max_points, max_voxels)?;
+
+        // Upload alignment data once
+        let voxel_data = GpuVoxelData::from_voxel_grid(target_grid);
+        pipeline.upload_alignment_data(
+            source_points,
+            &voxel_data,
+            self.gauss.d1 as f32,
+            self.gauss.d2 as f32,
+            self.config.ndt.resolution as f32,
+        )?;
+
+        // Convert initial guess to pose vector
+        let initial_pose = isometry_to_pose_vector(&initial_guess);
+
+        // Run full GPU optimization
+        let gpu_result = pipeline.optimize(
+            &initial_pose,
+            self.config.ndt.max_iterations as u32,
+            self.config.ndt.trans_epsilon,
+        )?;
+
+        // Convert result
+        let final_pose = pose_vector_to_isometry(&gpu_result.pose);
+
+        // Compute NVTL on CPU (requires final pose)
+        let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
+
+        // Convert Hessian to nalgebra
+        let hessian = Matrix6::from_fn(|i, j| gpu_result.hessian[i][j]);
+
+        // Determine convergence status
+        let status = if gpu_result.converged {
+            ConvergenceStatus::Converged
+        } else {
+            ConvergenceStatus::MaxIterations
+        };
+
+        Ok(NdtResult {
+            pose: final_pose,
+            status,
+            score: gpu_result.score,
+            transform_probability: self.compute_transform_probability(gpu_result.score),
+            nvtl,
+            iterations: gpu_result.iterations as usize,
+            hessian,
+            num_correspondences: gpu_result.num_correspondences,
+            oscillation_count: 0, // Not tracked in full GPU mode yet
         })
     }
 
