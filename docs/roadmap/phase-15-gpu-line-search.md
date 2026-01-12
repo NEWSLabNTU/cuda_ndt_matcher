@@ -1,5 +1,11 @@
 # Phase 15: True Full GPU Newton Pipeline with Line Search
 
+**Status**: ✅ Complete (2026-01-12)
+
+**Implementation**: `src/ndt_cuda/src/optimization/full_gpu_pipeline_v2.rs`
+
+**Actual per-iteration transfer**: ~200 bytes (not 4 bytes as originally designed - Newton solve requires f64 precision)
+
 ## Overview
 
 This phase implements a complete GPU Newton optimization pipeline with **zero CPU-GPU data transfers** during iterations. The design integrates:
@@ -769,22 +775,22 @@ impl FullGpuPipelineV2 {
 
 ### Comparison
 
-| Phase | Per-Iteration Transfer | 30 Iterations | Notes |
-|-------|------------------------|---------------|-------|
-| Phase 14 (current) | ~490 KB | ~15 MB | J/PH combine roundtrip |
-| Phase 15 (new) | 4 bytes | 120 bytes | Convergence flag only |
-| **Improvement** | **122,500×** | **125,000×** | |
+| Phase              | Per-Iteration Transfer | 30 Iterations | Notes                  |
+|--------------------|------------------------|---------------|------------------------|
+| Phase 14 (current) | ~490 KB                | ~15 MB        | J/PH combine roundtrip |
+| Phase 15 (new)     | 4 bytes                | 120 bytes     | Convergence flag only  |
+| **Improvement**    | **122,500×**           | **125,000×**  |                        |
 
 ### Memory Overhead
 
-| Buffer | Size (N=756, K=8) | Notes |
-|--------|-------------------|-------|
-| batch_transformed | K×N×3×4 = 72.6 KB | Line search transforms |
-| batch_scores | K×N×4 = 24.2 KB | Line search scores |
-| batch_dir_derivs | K×N×4 = 24.2 KB | Line search derivatives |
-| phi_cache, dphi_cache | K×4×2 = 64 B | Reduced values |
-| candidates | K×4 = 32 B | Step sizes |
-| **Total overhead** | ~121 KB | Acceptable |
+| Buffer                | Size (N=756, K=8) | Notes                   |
+|-----------------------|-------------------|-------------------------|
+| batch_transformed     | K×N×3×4 = 72.6 KB | Line search transforms  |
+| batch_scores          | K×N×4 = 24.2 KB   | Line search scores      |
+| batch_dir_derivs      | K×N×4 = 24.2 KB   | Line search derivatives |
+| phi_cache, dphi_cache | K×4×2 = 64 B      | Reduced values          |
+| candidates            | K×4 = 32 B        | Step sizes              |
+| **Total overhead**    | ~121 KB           | Acceptable              |
 
 ## Testing
 
@@ -830,17 +836,32 @@ impl FullGpuPipelineV2 {
 
 ## Status
 
-- [ ] 15.1: GPU transform kernel
-- [ ] 15.2: Hessian kernel v2 (separate buffers)
-- [ ] 15.3: GPU Newton solve (result on GPU)
-- [ ] 15.4: Directional derivative kernel
-- [ ] 15.5: Candidate generation kernel
-- [ ] 15.6: Batch transform kernel
-- [ ] 15.7: Batch score/gradient kernel
-- [ ] 15.8: More-Thuente logic kernel
-- [ ] 15.9: Pose update kernel
-- [ ] 15.10: Convergence check kernel
-- [ ] 15.11: Integrated pipeline
-- [ ] Unit tests
-- [ ] Integration tests
+- [x] 15.1: GPU transform kernel (`compute_transform_from_sincos_kernel`)
+- [x] 15.2: Hessian kernel v2 (separate buffers) (`compute_ndt_hessian_kernel_v2`)
+- [x] 15.3: GPU Newton solve (result on GPU) (`GpuNewtonSolver::solve_inplace`)
+- [x] 15.4: Directional derivative kernel (`dot_product_6_kernel`)
+- [x] 15.5: Candidate generation kernel (`generate_candidates_kernel`)
+- [x] 15.6: Batch transform kernel (`batch_transform_kernel`)
+- [x] 15.7: Batch score/gradient kernel (`batch_score_gradient_kernel`)
+- [x] 15.8: More-Thuente logic kernel (`more_thuente_kernel`)
+- [x] 15.9: Pose update kernel (`update_pose_kernel`)
+- [x] 15.10: Convergence check kernel (`check_convergence_kernel`)
+- [x] 15.11: Integrated pipeline (`FullGpuPipelineV2`)
+- [x] Unit tests (25 tests passing: 13 gpu_pipeline_kernels + 6 gpu_newton + 6 full_gpu_pipeline_v2)
+- [ ] Integration tests with real rosbag data
 - [ ] Performance benchmarks
+
+### Implementation Notes
+
+The `FullGpuPipelineV2` achieves **~200 bytes/iteration** instead of ~490 KB:
+
+| Transfer | Size | Notes |
+|----------|------|-------|
+| Newton solve download | 172 bytes | 43 floats (score+grad+hess) for f64 cuSOLVER |
+| Newton solve upload | 24 bytes | 6 floats (delta) |
+| Convergence flag | 4 bytes | u32 |
+| Alpha (line search) | 4 bytes | f32 (for stats) |
+| **Total** | **~200 bytes** | **2450x reduction from 490 KB** |
+
+The Newton solve requires f64 precision for numerical stability, necessitating f32→f64
+conversion on CPU. A future optimization could use a custom f32 6x6 solver kernel.

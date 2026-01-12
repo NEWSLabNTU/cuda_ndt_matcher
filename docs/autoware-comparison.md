@@ -2,7 +2,7 @@
 
 Feature comparison between `cuda_ndt_matcher` and Autoware's `ndt_scan_matcher`.
 
-**Last Updated**: 2026-01-12 (Phase 15 GPU Line Search designed)
+**Last Updated**: 2026-01-12 (Phase 15 GPU Line Search complete)
 
 ---
 
@@ -33,14 +33,14 @@ Feature comparison between `cuda_ndt_matcher` and Autoware's `ndt_scan_matcher`.
 
 | Feature                       | Status | GPU | Autoware Diff             | GPU Rationale                                                                                                 |
 |-------------------------------|--------|-----|---------------------------|---------------------------------------------------------------------------------------------------------------|
-| Newton-Raphson optimization   | ✅     | ✅  | Same algorithm            | Full GPU via cuSOLVER (Phase 14) - 6×6 Cholesky solve                                                         |
-| More-Thuente line search      | ✅     | 🔲  | Same, disabled by default | Phase 15: Batched speculative evaluation                                                                      |
+| Newton-Raphson optimization   | ✅     | ✅  | Same algorithm            | Full GPU via cuSOLVER (Phase 14/15) - 6×6 Cholesky solve                                                      |
+| More-Thuente line search      | ✅     | ✅  | Same, disabled by default | Phase 15: Batched speculative evaluation (K=8 candidates)                                                     |
 | Voxel grid construction       | ✅     | ✅  | Same output               | **Zero-copy pipeline**: GPU radix sort + segment detect via CUB |
 | Gaussian covariance per voxel | ✅     | —   | Same formulas             | Per-voxel eigendecomposition better on CPU                                                                    |
 | Multi-voxel radius search     | ✅     | ✅  | Same (KDTREE)             | GPU for scoring path; ~2.4 voxels/point                                                                       |
-| Convergence detection         | ✅     | —   | Same epsilon check        | Single comparison, no parallelism                                                                             |
-| Oscillation detection         | ✅     | —   | Same (gated at count > 10) | Sequential history tracking                                                                                   |
-| Step size clamping            | ✅     | —   | Same limits               | Single operation                                                                                              |
+| Convergence detection         | ✅     | ✅  | Same epsilon check        | GPU kernel checks ||α×δ|| < ε                                                                                 |
+| Oscillation detection         | ⚠️     | —   | Same (gated at count > 10) | CPU path only; GPU path returns 0                                                                             |
+| Step size clamping            | ✅     | ✅  | Same limits               | GPU kernel applies max step                                                                                   |
 
 ### 1.1 Search Methods
 
@@ -101,14 +101,12 @@ All kernels exist in `derivatives/gpu.rs` and are functional:
 **Legacy path** (`NdtCudaRuntime::compute_derivatives()` in `runtime.rs:345`):
 - Chains all kernels but has excessive CPU-GPU transfers per call
 
-**Full GPU path** (`NdtOptimizer::align_full_gpu()` via `FullGpuPipeline`):
+**Full GPU path** (`NdtOptimizer::align_full_gpu()` via `FullGpuPipelineV2`):
 1. Upload alignment data once (source points, voxel data, Gaussian params)
-2. Per iteration (all on GPU, no transfers):
-   - Compute sin/cos from pose angles
-   - Compute Jacobians (N×18) and Point Hessians (N×144) on GPU
-   - Transform points, radius search, score, gradient, Hessian kernels
-   - GPU reduction via CUB DeviceSegmentedReduce
-   - Newton solve via cuSOLVER (6×6 Cholesky)
+2. Per iteration (~200 bytes transfer for Newton solve):
+   - **Phase A - Newton Direction**: sin/cos → transform → J/PH → score/gradient/Hessian → CUB reduce → cuSOLVER (download 172B, upload 24B)
+   - **Phase B - Line Search** (if enabled): Generate K=8 candidates → batch transform → batch score/gradient → CUB reduce → More-Thuente selection
+   - **Phase C - Update State**: pose += α×δ → convergence check → download 4-byte flag
 3. Download final pose after convergence
 
 ### Optimization Loop Status
@@ -124,13 +122,12 @@ All kernels exist in `derivatives/gpu.rs` and are functional:
 | Reduction            | N/A                | GPU ✅                 | CUB DeviceSegmentedReduce (43 out) |
 | Newton solve         | CPU                | GPU ✅                 | cuSOLVER Cholesky (6×6)            |
 
-**Full GPU path (Phase 14)**: When `NDT_USE_GPU=1` (default), the entire Newton optimization runs on GPU with zero per-iteration CPU↔GPU transfers. Only the final pose is downloaded after convergence.
+**Full GPU path (Phase 15)**: When `NDT_USE_GPU=1` (default), the entire Newton optimization with line search runs on GPU. Per-iteration transfer is ~200 bytes (Newton solve requires f64 precision).
 
-**GPU path limitations** (falls back to CPU path):
+**GPU path limitations** (falls back to CPU path or missing features):
 - GNSS regularization not supported (requires per-iteration CPU involvement)
 - Debug output not supported (`align_with_debug()` uses CPU path)
-- Line search uses fixed step size (Phase 15 will add GPU line search)
-- Oscillation detection not available (Phase 15 will add GPU oscillation detection)
+- Oscillation detection not tracked (returns 0 in GPU path)
 
 ---
 
@@ -256,16 +253,16 @@ See `docs/roadmap/phase-13-gpu-scoring-pipeline.md` for implementation details.
 
 ## 7. Regularization
 
-| Feature               | Status | GPU | Autoware Diff        | GPU Rationale               |
-|-----------------------|--------|-----|----------------------|-----------------------------|
-| GNSS subscription     | ✅     | —   | Same topic           | ROS subscription            |
-| Regularization buffer | ✅     | —   | Same SmartPoseBuffer | Same as initial pose        |
-| Scale factor          | ✅     | —   | Same default (0.01)  | Single scalar               |
-| Enable/disable flag   | ✅     | —   | Same parameter       | Config only                 |
-| Gradient penalty      | ✅     | —   | Same formula         | Added to 6-element gradient |
-| Hessian contribution  | ✅     | —   | Same formula         | Added to 6x6 Hessian        |
+| Feature               | Status | GPU | Autoware Diff        | GPU Rationale        |
+|-----------------------|--------|-----|----------------------|----------------------|
+| GNSS subscription     | ✅     | —   | Same topic           | ROS subscription     |
+| Regularization buffer | ✅     | —   | Same SmartPoseBuffer | Same as initial pose |
+| Scale factor          | ✅     | —   | Same default (0.01)  | Single scalar        |
+| Enable/disable flag   | ✅     | —   | Same parameter       | Config only          |
+| Gradient penalty      | ⚠️      | —   | Same formula         | CPU path only        |
+| Hessian contribution  | ⚠️      | —   | Same formula         | CPU path only        |
 
-**GPU consideration**: Regularization adds to gradient/Hessian - would be GPU if main derivatives were GPU.
+**GPU consideration**: GNSS regularization is only available in CPU path (`align()`, `align_gpu()`). The full GPU path (`align_full_gpu()`) does not support regularization as it requires per-iteration CPU state modification.
 
 ---
 
@@ -393,29 +390,32 @@ None - all debug publishers are implemented.
 
 ### Currently on GPU (✅)
 
-| Component                    | Notes                                           |
-|------------------------------|-------------------------------------------------|
-| Morton code computation      | `compute_morton_codes_kernel` (voxel grid)      |
-| Morton code packing          | `pack_morton_codes_kernel` (voxel grid)         |
-| Radix sort                   | CUB DeviceRadixSort via `cuda_ffi`              |
-| Segment detection            | CUB DeviceScan + DeviceSelect via `cuda_ffi`    |
-| Segmented reduce             | CUB DeviceSegmentedReduce via `cuda_ffi`        |
-| Segment statistics           | Position sums, means, covariances (voxel grid)  |
-| Point transformation         | Full GPU (in `align_gpu` path)                  |
-| Radius search (optimization) | GPU kernel via `FullGpuPipeline`                |
-| Radius search (scoring)      | GPU kernel                                      |
-| Jacobian computation         | `compute_jacobians_kernel` (Phase 14)           |
-| Point Hessian computation    | `compute_point_hessians_kernel` (Phase 14)      |
-| Gradient computation         | GPU kernel via `FullGpuPipeline`                |
-| Hessian computation          | GPU kernel via `FullGpuPipeline`                |
-| Derivative reduction         | CUB DeviceSegmentedReduce (43 segments → 43)    |
-| Newton solve (6×6)           | cuSOLVER Cholesky via `GpuNewtonSolver`         |
-| Transform probability        | Parallel per-point                              |
-| NVTL scoring                 | Parallel per-point max                          |
-| Batch scoring (MULTI_NDT_SCORE) | `GpuScoringPipeline` - M poses × N points    |
-| Batch alignment (MULTI_NDT)  | `GpuDerivativePipeline` - shared voxel data     |
-| Per-point score visualization| GPU max-score extraction + CPU color mapping    |
-| Sensor point filtering       | GPU if ≥10k points                              |
+| Component                       | Notes                                             |
+|---------------------------------|---------------------------------------------------|
+| Morton code computation         | `compute_morton_codes_kernel` (voxel grid)        |
+| Morton code packing             | `pack_morton_codes_kernel` (voxel grid)           |
+| Radix sort                      | CUB DeviceRadixSort via `cuda_ffi`                |
+| Segment detection               | CUB DeviceScan + DeviceSelect via `cuda_ffi`      |
+| Segmented reduce                | CUB DeviceSegmentedReduce via `cuda_ffi`          |
+| Segment statistics              | Position sums, means, covariances (voxel grid)    |
+| Point transformation            | Full GPU (in `align_full_gpu` path)               |
+| Radius search (optimization)    | GPU kernel via `FullGpuPipelineV2`                |
+| Radius search (scoring)         | GPU kernel                                        |
+| Jacobian computation            | `compute_jacobians_kernel` (Phase 14)             |
+| Point Hessian computation       | `compute_point_hessians_kernel` (Phase 14)        |
+| Gradient computation            | GPU kernel via `FullGpuPipelineV2`                |
+| Hessian computation             | GPU kernel via `FullGpuPipelineV2`                |
+| Derivative reduction            | CUB DeviceSegmentedReduce (43 segments → 43)      |
+| Newton solve (6×6)              | cuSOLVER Cholesky via `GpuNewtonSolver`           |
+| Line search                     | Batched speculative (K=8) via `FullGpuPipelineV2` |
+| Convergence check               | GPU kernel `check_convergence_kernel`             |
+| Pose update                     | GPU kernel `update_pose_kernel`                   |
+| Transform probability           | Parallel per-point                                |
+| NVTL scoring                    | Parallel per-point max                            |
+| Batch scoring (MULTI_NDT_SCORE) | `GpuScoringPipeline` - M poses × N points         |
+| Batch alignment (MULTI_NDT)     | `GpuDerivativePipeline` - shared voxel data       |
+| Per-point score visualization   | GPU max-score extraction + CPU color mapping      |
+| Sensor point filtering          | GPU if ≥10k points                                |
 
 ### Hybrid GPU/CPU (⚠️)
 
@@ -424,35 +424,33 @@ None - all debug publishers are implemented.
 | Voxel grid construction | Morton, pack, sort, segments, statistics (7/8) | Eigendecomposition (1/8)     |
 | Derivative reduction    | CUB DeviceSegmentedReduce (43 segments)         | Correspondences count (u32)  |
 
-### Integrated via `align_gpu()` (✅)
+### Integrated via `align_full_gpu()` (✅)
 
-| Component                     | Kernel Status | Integration Status | Speedup   |
-|-------------------------------|---------------|-------------------|-----------|
-| Gradient in optimization loop | ✅ Working    | ✅ Integrated     | 1.58x     |
-| Hessian in optimization loop  | ✅ Working    | ✅ Integrated     | (combined)|
-| GPU reduction (sum)           | ✅ Working    | ✅ Integrated     | Minor     |
-| Batch scoring pipeline        | ✅ Working    | ✅ Integrated     | ~15x      |
-| Batch alignment pipeline      | ✅ Working    | ✅ Integrated     | ~2-3x     |
+| Component                     | Kernel Status | Integration Status | Notes                    |
+|-------------------------------|---------------|-------------------|--------------------------|
+| Newton iteration loop         | ✅ Working    | ✅ Integrated     | ~200 bytes/iter transfer |
+| Line search (More-Thuente)    | ✅ Working    | ✅ Integrated     | K=8 batched candidates   |
+| GPU reduction (sum)           | ✅ Working    | ✅ Integrated     | CUB DeviceSegmentedReduce|
+| Batch scoring pipeline        | ✅ Working    | ✅ Integrated     | ~15x speedup             |
+| Batch alignment pipeline      | ✅ Working    | ✅ Integrated     | ~2-3x speedup            |
 
-See `docs/roadmap/phase-12-gpu-derivative-pipeline.md` for implementation details.
+See `docs/roadmap/phase-15-gpu-line-search.md` for implementation details.
 
 ### CPU by Design (—)
 
-| Component             | Reason                           |
-|-----------------------|----------------------------------|
-| Covariance matrix ops | 6x6 matrices too small           |
-| TPE optimization      | Sequential Bayesian method       |
-| Oscillation detection | Sequential history               |
-| GNSS regularization   | Per-iteration CPU state needed   |
-| All diagnostics       | Metrics publication, not compute |
-| All ROS interface     | Message handling, not compute    |
-| Map management        | I/O bound, not compute bound     |
+| Component             | Reason                                              |
+|-----------------------|-----------------------------------------------------|
+| Covariance matrix ops | 6x6 matrices too small                              |
+| TPE optimization      | Sequential Bayesian method                          |
+| Oscillation detection | Sequential history (GPU path returns 0)             |
+| GNSS regularization   | Per-iteration CPU state (GPU path doesn't support)  |
+| All diagnostics       | Metrics publication, not compute                    |
+| All ROS interface     | Message handling, not compute                       |
+| Map management        | I/O bound, not compute bound                        |
 
 ### Planned for GPU (🔲)
 
-| Component    | Status | Design                                 |
-|--------------|--------|----------------------------------------|
-| Line search  | 🔲 P15 | Batched speculative evaluation on GPU  |
+All major compute operations are now on GPU. No further GPU migration planned.
 
 ---
 
@@ -475,13 +473,15 @@ See `docs/roadmap/phase-12-gpu-derivative-pipeline.md` for implementation detail
 - Finalization: ~15ms (CPU eigendecomp)
 - **CPU-GPU transfers**: 2 only (upload points, download stats)
 
-**Derivative pipeline breakdown** (`align_gpu` per iteration):
-- Jacobian/point Hessian: ~0.5ms (CPU, uploaded once)
-- Point transformation: <0.1ms (GPU)
-- Radius search: ~0.3ms (GPU, brute-force O(N×V))
-- Score/gradient/Hessian: ~0.5ms (GPU)
-- Reduction: ~0.1ms (GPU via CUB DeviceSegmentedReduce)
-- **CPU-GPU transfers per iteration**: Upload pose (16 floats), download 43 floats only
+**Full GPU pipeline breakdown** (`align_full_gpu` per iteration via `FullGpuPipelineV2`):
+- Sin/cos + Jacobians + Point Hessians: GPU kernel
+- Point transformation: GPU kernel
+- Radius search: GPU kernel (brute-force O(N×V))
+- Score/gradient/Hessian: GPU kernel
+- CUB reduction: 43 floats
+- Newton solve: cuSOLVER (requires f64 precision)
+- Line search (if enabled): K=8 batched candidates
+- **CPU-GPU transfers per iteration**: ~200 bytes total
 
 ---
 
@@ -489,11 +489,11 @@ See `docs/roadmap/phase-12-gpu-derivative-pipeline.md` for implementation detail
 
 ### Three Major Pipelines
 
-| Pipeline | Purpose | Location |
-|----------|---------|----------|
-| **Voxel Grid** | Build NDT map from points | `voxel_grid/gpu/pipeline.rs` |
-| **Derivative** | Compute gradient/Hessian per iteration | `derivatives/pipeline.rs` |
-| **Scoring** | Batch NVTL evaluation for covariance | `scoring/pipeline.rs` |
+| Pipeline       | Purpose                                | Location                     |
+|----------------|----------------------------------------|------------------------------|
+| **Voxel Grid** | Build NDT map from points              | `voxel_grid/gpu/pipeline.rs` |
+| **Derivative** | Compute gradient/Hessian per iteration | `derivatives/pipeline.rs`    |
+| **Scoring**    | Batch NVTL evaluation for covariance   | `scoring/pipeline.rs`        |
 
 ### 1. Voxel Grid Construction Pipeline
 
@@ -520,18 +520,29 @@ Per iteration:
   Download: reduced results [43 floats]
 ```
 
-**Current: `FullGpuPipeline`** (zero per-iteration transfers, Phase 14):
+**Current: `FullGpuPipelineV2`** (~200 bytes per-iteration, Phase 15):
 ```
 Once per alignment:
   Upload: source_points [N×3], voxel_means [V×3], voxel_inv_covs [V×9]
 
-Per iteration (ALL ON GPU):
-  GPU: sin_cos → jacobians → point_hessians → transform →
-       radius_search → score → gradient → hessian →
-       reduction → Newton solve (cuSOLVER)
+Per iteration:
+  Phase A - Newton Direction (GPU):
+    sin_cos → transform → jacobians → point_hessians →
+    radius_search → score → gradient → hessian → CUB reduce
+    Download: 172 bytes (for f64 Newton solve)
+    CPU: cuSOLVER 6×6 Cholesky
+    Upload: 24 bytes (delta)
+
+  Phase B - Line Search (GPU, if enabled):
+    Generate K=8 candidates → batch transform K×N points →
+    batch score/gradient → CUB reduce → More-Thuente selection
+
+  Phase C - Update State (GPU):
+    pose += α×δ → convergence check
+    Download: 4 bytes (converged flag)
 
 After convergence:
-  Download: final pose [6 floats]
+  Download: final pose [24 bytes]
 ```
 
 ### 3. Scoring Pipeline (`GpuScoringPipeline`)
@@ -552,133 +563,39 @@ Per batch (M poses):
 
 ---
 
-## Pipeline Optimization Opportunities
-
-### P0: Enable GPU Reduction ✅ Complete
-
-GPU reduction is now the **default path**:
-
-| Location | Method | Status |
-|----------|--------|--------|
-| `solver.rs:355,564` | `compute_iteration_gpu_reduce()` | ✅ Enabled |
-| `ndt.rs:639` | `compute_scores_batch_gpu_reduce()` | ✅ Enabled |
-
-**Impact** (N=1000 points, M=25 poses):
-
-| Pipeline | Before | After | Improvement |
-|----------|--------|-------|-------------|
-| Derivative (per iter) | 172 KB | 172 B | **1000×** |
-| Scoring (per batch) | 400 KB | 400 B | **1000×** |
-
-### P1: Morton Code Packing Kernel ✅ Complete
-
-**Location**: `voxel_grid/gpu/morton.rs:110-126`, `voxel_grid/gpu/pipeline.rs:244-270`
-
-**Implementation**: Added `pack_morton_codes_kernel` in CubeCL to pack split Morton codes (u32 low + u32 high) into u64 format on GPU.
-
-**New flow** (true zero-copy):
-```
-GPU: compute morton_low[N], morton_high[N]
-GPU: pack_morton_codes_kernel → packed[N×2] (u64 as 2×u32)
-GPU: radix sort
-```
-
-**Impact** (N=100K points): Eliminated 2.4 MB round-trip transfer
-
-**Key changes**:
-- Added `pack_morton_codes_kernel` in `morton.rs` (~20 lines)
-- Added `packed_codes: Handle` buffer to `GpuPipelineBuffers`
-- Updated `radix_sort_inplace()` to use GPU kernel instead of CPU packing
-
-### P2: Jacobian Computation Optimization ✅ Complete
-
-**Location**: `derivatives/pipeline.rs`
-
-**Implementation**: Cache source points and Gaussian parameters on CPU side to avoid GPU downloads every iteration.
-
-**Changes**:
-- Added `cached_source_points: Vec<[f32; 3]>` field to `GpuDerivativePipeline`
-- Added `cached_gauss_d1: f32` and `cached_gauss_d2: f32` fields
-- `upload_alignment_data()` now caches source points and Gaussian params
-- `compute_iteration()` and `compute_iteration_gpu_reduce()` use cached data
-
-**Impact** (N=1000 points):
-- Eliminated source point download: 12 KB per iteration
-- Eliminated Gaussian param download: 8 bytes per iteration
-- Jacobians still computed on CPU (simple trig × point coords) and uploaded
-
-**Note**: Full GPU Jacobian kernel was considered but deferred - the bandwidth savings (~12 KB) are minor compared to Jacobian upload (~720 KB) which would remain anyway.
-
----
-
-## Optimization Status Summary
-
-| ID  | Optimization                         | Impact         | Effort   | Status     |
-|-----|--------------------------------------|----------------|----------|------------|
-| P0a | GPU reduction in derivative pipeline | 1000× BW/iter  | Trivial  | ✅ Complete |
-| P0b | GPU reduction in scoring pipeline    | 1000× BW/batch | Trivial  | ✅ Complete |
-| P1  | Morton code packing kernel           | 3× voxel build | ~50 LOC  | ✅ Complete |
-| P2  | Jacobian caching optimization        | 12 KB/iter     | Simple   | ✅ Complete |
-
-**All pipeline optimizations complete!**
-
----
-
-## Recommendations
-
-### High Priority (Functional - All Complete)
-
-1. ~~**GPU optimization loop derivatives**~~ ✅ Complete - 1.58x speedup via `align_gpu()`
-2. ~~**GPU reduction kernel**~~ ✅ Complete - CUB DeviceSegmentedReduce, downloads only 43 floats
-3. ~~**GPU batch scoring (Phase 13)**~~ ✅ Complete - GPU batch scoring for MULTI_NDT_SCORE
-4. ~~**Ground point filtering**~~ ✅ Complete - No-ground scoring for flat road robustness
-
-### Medium Priority (Functional - All Complete)
-
-5. ~~**GPU batch alignment**~~ ✅ Complete - `align_batch_gpu()` with shared voxel data (~2-3x speedup)
-6. ~~**Debug visualization features**~~ ✅ Complete - Per-point scores, multi_ndt_pose, multi_initial_pose PoseArrays, debug map publisher all done.
-
-### Performance Optimizations (All Complete)
-
-7. ~~**P0: Enable GPU reduction paths**~~ ✅ Complete - 1000× bandwidth reduction
-8. ~~**P1: Morton code packing kernel**~~ ✅ Complete - True zero-copy voxel pipeline
-9. ~~**P2: Jacobian caching optimization**~~ ✅ Complete - 12 KB/iter download eliminated
-
----
-
 ## Completion Summary
 
-**Feature parity**: Complete. The CUDA implementation is a drop-in replacement for Autoware's `ndt_scan_matcher`.
+**Feature parity**: Near-complete. The CUDA implementation is a drop-in replacement for Autoware's `ndt_scan_matcher` with the following limitations in GPU path:
+- GNSS regularization not supported (use CPU path)
+- Oscillation detection not tracked (returns 0)
 
 **GPU acceleration**: All compute-heavy operations run on GPU:
 - Voxel grid construction (zero-copy pipeline)
-- NDT alignment (full GPU Newton via `FullGpuPipeline`)
+- NDT alignment with line search (full GPU Newton via `FullGpuPipelineV2`)
 - Batch scoring (`GpuScoringPipeline`)
 - Batch alignment (`align_batch_gpu()`)
 
-**Full GPU Newton (Phase 14)**: The default path (`NDT_USE_GPU=1`) runs the entire Newton optimization on GPU with zero per-iteration CPU↔GPU transfers:
+**Full GPU Newton with Line Search (Phase 15)**: The default path (`NDT_USE_GPU=1`) runs the entire Newton optimization on GPU with ~200 bytes per-iteration transfer:
 - Jacobians and Point Hessians computed on GPU
-- Newton solve via cuSOLVER (6×6 Cholesky)
-- Only final pose downloaded after convergence
+- Newton solve via cuSOLVER (6×6 Cholesky) - requires f64, hence ~200 bytes download/upload
+- More-Thuente line search with K=8 batched candidates (GPU)
+- Convergence check on GPU
 
-**GPU path current limitations** (automatically falls back to CPU):
-- GNSS regularization enabled → CPU path
-- Debug output requested → CPU path
-- Line search enabled → CPU path (Phase 15 will enable GPU line search)
+**GPU path current limitations**:
+- GNSS regularization enabled → use CPU path (`align()` or `align_gpu()`)
+- Debug output requested → use CPU path (`align_with_debug()`)
+- Oscillation count always returns 0 in GPU path
 
 **Behavioral compatibility**: Convergence gating matches Autoware:
 - Max iterations check (gates if hit max iterations)
-- Oscillation count > 10 (gates if oscillating)
+- Oscillation count > 10 (gates if oscillating) - **CPU path only**
 - Score threshold (gates if below threshold)
-
-**Next steps**:
-- Phase 15: GPU Line Search (designed, see `docs/roadmap/phase-15-gpu-line-search.md`)
 
 ---
 
 ## Known Performance Issues
 
-**Last Updated**: 2026-01-10
+**Last Updated**: 2026-01-12
 
 See `docs/profiling-results.md` for detailed profiling data.
 
@@ -698,38 +615,27 @@ See `docs/profiling-results.md` for detailed profiling data.
 
 **Possible causes** (under investigation):
 - Derivative computation differences
-- Step size or line search behavior differences
 - Initial pose quality differences
 - Voxel search radius differences
 
-#### 2. Per-Iteration Memory Transfer Overhead
+#### 2. Per-Iteration Memory Transfer (~200 bytes)
 
-Despite Phase 14 "Full GPU Newton", significant CPU↔GPU transfers remain per iteration:
+Phase 15 reduced per-iteration transfer from ~490 KB to ~200 bytes:
 
-| Direction | Data | Size (N=756 points) |
-|-----------|------|---------------------|
-| GPU → CPU | Jacobians | 54 KB |
-| GPU → CPU | Point Hessians | 435 KB |
-| CPU → GPU | Combined (J+PH) | 489 KB |
-| GPU → CPU | Reduced results | 172 bytes |
-| CPU → GPU | Transform matrix | 64 bytes |
+| Direction | Data             | Size          |
+|-----------|------------------|---------------|
+| GPU → CPU | Reduced results  | 172 bytes     |
+| CPU → GPU | Newton delta     | 24 bytes      |
+| GPU → CPU | Converged flag   | 4 bytes       |
 
-**Total per iteration**: ~490 KB (mostly J/PH combine roundtrip)
+**Total per iteration**: ~200 bytes
 
-For 15-30 iterations, that's **7-15 MB of transfers per alignment**.
-
-**Issues in current implementation** (`optimization/full_gpu_pipeline.rs`):
-1. Hessian kernel requires combined J+PH buffer (lines 433-443: download, combine on CPU, re-upload)
-2. Transform matrix computed on CPU (line 344-345)
-3. Newton solve result downloaded to CPU (line 534-555)
-4. Pose update done on CPU (lines 558-560)
-
-**Solution**: Phase 15 True Full GPU Pipeline - see design document.
+The Newton solve requires f64 precision (cuSOLVER), which necessitates downloading the f32 reduce output, converting to f64, solving, and uploading the f32 delta back. This is the minimum transfer possible given the precision requirement.
 
 #### 3. No Batch Processing for Incoming Scans
 
 Current architecture processes each scan independently:
-- `align_gpu()` - Single scan, single initial pose
+- `align_full_gpu()` - Single scan, single initial pose (full GPU with line search)
 - `align_batch_gpu()` - Single scan, multiple initial poses (for MULTI_NDT)
 - **No queue** for batching incoming scans across time
 
@@ -737,93 +643,12 @@ This means per-alignment setup overhead cannot be amortized.
 
 ---
 
-## Optimization Opportunities
+## Future Optimization Opportunities
 
-### Phase 14: Full GPU Newton Iteration (P3+P4+P5 Combined) ✅ Complete
-
-See `docs/roadmap/phase-14-iteration-optimization.md` for implementation details.
-
-**Goal**: Run entire Newton optimization on GPU, eliminating all per-iteration CPU↔GPU transfers.
-
-**Achieved**:
-- Per-iteration upload: 490 KB → 0 bytes ✅
-- Per-iteration download: 172 bytes → 0 bytes ✅
-- Only download final pose after convergence ✅
-
-**Implemented components**:
-- `compute_sin_cos_kernel` - Compute sin/cos from pose angles on GPU
-- `compute_jacobians_kernel` - Compute N×18 Jacobians from sin/cos + point coords
-- `compute_point_hessians_kernel` - Compute N×144 Point Hessians from sin/cos + point coords
-- `GpuNewtonSolver` - cuSOLVER wrapper for 6×6 Cholesky solve (with LU fallback)
-- `FullGpuPipeline` - Orchestrates all GPU operations
-
-**Location**:
-- `derivatives/gpu_jacobian.rs` - GPU Jacobian/Point Hessian kernels
-- `optimization/gpu_newton.rs` - cuSOLVER wrapper
-- `optimization/full_gpu_pipeline.rs` - Full GPU optimization loop
-
-**Limitations** (falls back to CPU path when needed):
-- GNSS regularization requires per-iteration CPU state
-- Debug output (`align_with_debug`) not supported
-- Line search uses fixed step size (Phase 15 adds this)
-- Oscillation detection not available (Phase 15 adds this)
-
-### Phase 15: True Full GPU Newton Pipeline with Line Search (Designed)
-
-See `docs/roadmap/phase-15-gpu-line-search.md` for complete design.
-
-**Goal**: Complete GPU Newton optimization with integrated More-Thuente line search. Zero CPU-GPU data transfers during iterations - CPU only launches kernels.
-
-**Current problem**: Despite Phase 14, ~490 KB transferred per iteration:
-- Jacobians/Point Hessians: Downloaded, combined on CPU, re-uploaded (~480 KB)
-- Reduce output: Downloaded for CPU Newton solve (~172 bytes)
-- Pose/Transform: Uploaded each iteration (~88 bytes)
-- No line search: Fixed step can overshoot/undershoot
-
-**Design**: Three-phase GPU iteration
-1. **Phase A - Newton Direction**: sin/cos → transform → J/PH → derivatives → reduce → cuSOLVER
-2. **Phase B - Batched Line Search**: Generate K=8 candidates → batch transform K×N points → batch score/gradient → reduce → More-Thuente logic
-3. **Phase C - Update State**: pose += α×δ → convergence check → download 4-byte flag
-
-**New kernels** (11 total):
-- `compute_transform_from_sincos_kernel` - Build 4×4 transform on GPU
-- `compute_ndt_hessian_kernel_v2` - Takes separate J, PH buffers (no CPU combine)
-- `dot_product_6_kernel` - Compute φ'(0) = g·δ
-- `generate_candidates_kernel` - Generate K step sizes
-- `batch_transform_kernel` - Transform K×N points in parallel
-- `batch_score_gradient_kernel` - Score/gradient for K candidates
-- `more_thuente_kernel` - Line search logic using cached evaluations
-- `update_pose_kernel` - pose += α×δ on GPU
-- `check_convergence_kernel` - ||α×δ|| < ε check on GPU
-
-**Expected impact**:
-- Per-iteration transfer: 490 KB → 4 bytes (**122,500× reduction**)
-- Line search: Better convergence with Strong Wolfe conditions
-- Memory overhead: ~121 KB for line search buffers (acceptable)
-
-### P6: Scan Queue for Batch Processing (Future)
+### Scan Queue for Batch Processing
 
 **Problem**: Each incoming scan is processed independently, no amortization of setup costs.
 
 **Solution**: Queue incoming scans and process in batches of 2-3.
 
-**Expected impact**: Amortize voxel data upload and pipeline setup across multiple scans
-
 **Trade-off**: Adds latency (must wait for batch to fill). Only viable if real-time constraints allow ~10ms additional latency.
-
----
-
-## Optimization Priority Summary
-
-| ID           | Optimization                         | Impact              | Effort       | Status      |
-|--------------|--------------------------------------|---------------------|--------------|-------------|
-| P0a          | GPU reduction in derivative pipeline | 1000× BW/iter       | Trivial      | ✅ Complete |
-| P0b          | GPU reduction in scoring pipeline    | 1000× BW/batch      | Trivial      | ✅ Complete |
-| P1           | Morton code packing kernel           | 3× voxel build      | ~50 LOC      | ✅ Complete |
-| P2           | Jacobian caching optimization        | 12 KB/iter          | Simple       | ✅ Complete |
-| **Phase 14** | **Full GPU Newton (P3+P4+P5)**       | **490 KB/iter → 0** | **~500 LOC** | ✅ Complete |
-| **Phase 15** | **True Full GPU + Line Search**      | **122,500× transfer**| **~600 LOC** | 🔲 Designed |
-| P6           | Scan queue batch processing          | Amortize setup      | Medium       | 🔲 Future   |
-
-**Phase 14 complete!** The full GPU Newton path is now the default when `NDT_USE_GPU=1`.
-**Phase 15 designed** - see `docs/roadmap/phase-15-gpu-line-search.md` for true zero-transfer GPU Newton pipeline design.
