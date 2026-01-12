@@ -2,7 +2,7 @@
 
 Feature comparison between `cuda_ndt_matcher` and Autoware's `ndt_scan_matcher`.
 
-**Last Updated**: 2026-01-11 (Phase 14 Full GPU Newton complete)
+**Last Updated**: 2026-01-12 (Phase 15 GPU Line Search designed)
 
 ---
 
@@ -34,7 +34,7 @@ Feature comparison between `cuda_ndt_matcher` and Autoware's `ndt_scan_matcher`.
 | Feature                       | Status | GPU | Autoware Diff             | GPU Rationale                                                                                                 |
 |-------------------------------|--------|-----|---------------------------|---------------------------------------------------------------------------------------------------------------|
 | Newton-Raphson optimization   | ✅     | ✅  | Same algorithm            | Full GPU via cuSOLVER (Phase 14) - 6×6 Cholesky solve                                                         |
-| More-Thuente line search      | ✅     | —   | Same, disabled by default | Sequential algorithm, not parallelizable                                                                      |
+| More-Thuente line search      | ✅     | 🔲  | Same, disabled by default | Phase 15: Batched speculative evaluation                                                                      |
 | Voxel grid construction       | ✅     | ✅  | Same output               | **Zero-copy pipeline**: GPU radix sort + segment detect via CUB |
 | Gaussian covariance per voxel | ✅     | —   | Same formulas             | Per-voxel eigendecomposition better on CPU                                                                    |
 | Multi-voxel radius search     | ✅     | ✅  | Same (KDTREE)             | GPU for scoring path; ~2.4 voxels/point                                                                       |
@@ -129,8 +129,8 @@ All kernels exist in `derivatives/gpu.rs` and are functional:
 **GPU path limitations** (falls back to CPU path):
 - GNSS regularization not supported (requires per-iteration CPU involvement)
 - Debug output not supported (`align_with_debug()` uses CPU path)
-- Line search uses fixed step size (no More-Thuente on GPU)
-- Oscillation detection not available (sequential history tracking)
+- Line search uses fixed step size (Phase 15 will add GPU line search)
+- Oscillation detection not available (Phase 15 will add GPU oscillation detection)
 
 ---
 
@@ -440,7 +440,6 @@ See `docs/roadmap/phase-12-gpu-derivative-pipeline.md` for implementation detail
 
 | Component             | Reason                           |
 |-----------------------|----------------------------------|
-| Line search           | Sequential algorithm             |
 | Covariance matrix ops | 6x6 matrices too small           |
 | TPE optimization      | Sequential Bayesian method       |
 | Oscillation detection | Sequential history               |
@@ -448,6 +447,12 @@ See `docs/roadmap/phase-12-gpu-derivative-pipeline.md` for implementation detail
 | All diagnostics       | Metrics publication, not compute |
 | All ROS interface     | Message handling, not compute    |
 | Map management        | I/O bound, not compute bound     |
+
+### Planned for GPU (🔲)
+
+| Component    | Status | Design                                 |
+|--------------|--------|----------------------------------------|
+| Line search  | 🔲 P15 | Batched speculative evaluation on GPU  |
 
 ---
 
@@ -656,16 +661,18 @@ GPU: radix sort
 - Newton solve via cuSOLVER (6×6 Cholesky)
 - Only final pose downloaded after convergence
 
-**GPU path limitations** (automatically falls back to CPU):
+**GPU path current limitations** (automatically falls back to CPU):
 - GNSS regularization enabled → CPU path
 - Debug output requested → CPU path
+- Line search enabled → CPU path (Phase 15 will enable GPU line search)
 
 **Behavioral compatibility**: Convergence gating matches Autoware:
 - Max iterations check (gates if hit max iterations)
 - Oscillation count > 10 (gates if oscillating)
 - Score threshold (gates if below threshold)
 
-**Remaining items**: None - feature parity and GPU optimization complete.
+**Next steps**:
+- Phase 15: GPU Line Search (designed, see `docs/roadmap/phase-15-gpu-line-search.md`)
 
 ---
 
@@ -753,8 +760,32 @@ See `docs/roadmap/phase-14-iteration-optimization.md` for implementation details
 **Limitations** (falls back to CPU path when needed):
 - GNSS regularization requires per-iteration CPU state
 - Debug output (`align_with_debug`) not supported
-- Line search uses fixed step size
-- Oscillation detection not available
+- Line search uses fixed step size (Phase 15 adds this)
+- Oscillation detection not available (Phase 15 adds this)
+
+### Phase 15: GPU Line Search (Designed)
+
+See `docs/roadmap/phase-15-gpu-line-search.md` for complete design.
+
+**Goal**: Run More-Thuente line search and oscillation detection on GPU, eliminating all remaining CPU involvement in the Newton iteration loop.
+
+**Design**: Batched speculative evaluation
+1. Pre-compute K=8 candidate step sizes (geometric progression)
+2. Evaluate ALL K candidates in parallel on GPU (score + directional derivative)
+3. Run More-Thuente logic using cached GPU results
+4. Only generate new batch if all candidates exhausted (~5% cases)
+
+**Key insight**: More-Thuente is sequential but each trial only needs score and directional derivative - both computable in parallel on GPU for multiple candidates.
+
+**New kernels**:
+- `compute_candidates_batch_kernel` - Evaluate K step sizes in parallel
+- `check_wolfe_conditions_kernel` - Check Strong Wolfe conditions on GPU
+- `oscillation_update_kernel` - Track direction history on GPU
+
+**Expected impact**:
+- Zero per-iteration CPU↔GPU transfers when line search enabled
+- Maintains mathematical correctness of More-Thuente algorithm
+- Overhead: ~100-200 bytes/iteration for oscillation state
 
 ### P6: Scan Queue for Batch Processing (Future)
 
@@ -777,6 +808,8 @@ See `docs/roadmap/phase-14-iteration-optimization.md` for implementation details
 | P1           | Morton code packing kernel           | 3× voxel build      | ~50 LOC      | ✅ Complete |
 | P2           | Jacobian caching optimization        | 12 KB/iter          | Simple       | ✅ Complete |
 | **Phase 14** | **Full GPU Newton (P3+P4+P5)**       | **490 KB/iter → 0** | **~500 LOC** | ✅ Complete |
+| **Phase 15** | **GPU Line Search**                  | **Zero transfers**  | **~400 LOC** | 🔲 Designed |
 | P6           | Scan queue batch processing          | Amortize setup      | Medium       | 🔲 Future   |
 
-**All major optimizations complete!** The full GPU Newton path is now the default when `NDT_USE_GPU=1`.
+**Phase 14 complete!** The full GPU Newton path is now the default when `NDT_USE_GPU=1`.
+**Phase 15 designed** - see `docs/roadmap/phase-15-gpu-line-search.md` for GPU More-Thuente line search design.
