@@ -1,0 +1,622 @@
+#+TITLE: Understanding Autoware NDT Scan Matching
+#+AUTHOR: CUDA NDT Matcher Project
+#+DATE: 2026-01-12
+#+SETUPFILE: github.theme
+
+* Introduction
+
+This tutorial explains how Autoware's NDT (Normal Distributions Transform) scan matcher works. NDT is a probabilistic point cloud registration algorithm used for localization in autonomous driving.
+
+The Autoware implementation is based on *Magnusson's 2009 PhD thesis*: "The Three-Dimensional Normal-Distributions Transform -- an Efficient Representation for Registration, Surface Analysis, and Loop Detection."
+
+** What Does NDT Do?
+
+NDT estimates the vehicle's pose (position + orientation) by matching a LiDAR scan against a pre-built 3D point cloud map. Given:
+
+- *Map*: A 3D point cloud of the environment (stored as a voxel grid)
+- *Scan*: Current LiDAR point cloud from the vehicle's sensors
+- *Initial guess*: Approximate pose from odometry/IMU
+
+NDT finds the optimal transformation that best aligns the scan to the map.
+
+** Why NDT Over ICP?
+
+| Feature        | ICP (Iterative Closest Point) | NDT                              |
+|----------------+-------------------------------+----------------------------------|
+| Representation | Raw points                    | Gaussian distributions per voxel |
+| Smoothness     | Discrete, non-differentiable  | Smooth, differentiable score     |
+| Speed          | O(N log M) per iteration      | O(N) per iteration               |
+| Robustness     | Sensitive to outliers         | Inherently robust                |
+
+NDT models the map as a collection of Gaussian distributions, providing a smooth cost function suitable for Newton optimization.
+
+* Algorithm Overview
+
+#+begin_src mermaid
+flowchart TD
+    A[Input: Scan + Initial Guess] --> B[Transform Scan Points]
+    B --> C[Find Nearby Voxels]
+    C --> D[Compute Score, Gradient, Hessian]
+    D --> E[Newton Step: delta = -H^-1 * g]
+    E --> F[Line Search]
+    F --> G{Converged?}
+    G -->|No| B
+    G -->|Yes| H[Output: Final Pose]
+#+end_src
+
+The algorithm iterates until convergence:
+1. Transform source points using current pose estimate
+2. For each transformed point, find nearby voxels in the map
+3. Compute the NDT score (negative log-likelihood) and its derivatives
+4. Solve Newton step to get pose update direction
+5. Apply line search to find optimal step length
+6. Update pose and check convergence
+
+* Voxel Grid Construction
+
+The map is preprocessed into a voxel grid where each voxel stores a Gaussian distribution.
+
+** Voxel Structure
+
+Each voxel contains:
+
+| Field        | Type      | Description                      |
+|--------------+-----------+----------------------------------|
+| =mean_=      | Vector3   | Centroid of points in voxel      |
+| =cov_=       | Matrix3x3 | Covariance matrix                |
+| =icov_=      | Matrix3x3 | Inverse covariance (precomputed) |
+| =nr_points_= | int       | Number of points in voxel        |
+
+** Building the Voxel Grid
+
+#+begin_src cpp
+// Pseudocode for voxel grid construction
+void build_voxel_grid(PointCloud& map, float resolution) {
+    // 1. Assign points to voxels
+    for (auto& point : map) {
+        int voxel_id = floor(point / resolution);
+        voxels[voxel_id].points.push_back(point);
+    }
+
+    // 2. Compute statistics for each voxel
+    for (auto& [id, voxel] : voxels) {
+        if (voxel.points.size() < min_points_per_voxel)
+            continue;  // Skip sparse voxels
+
+        // Compute mean
+        voxel.mean = sum(voxel.points) / voxel.points.size();
+
+        // Compute covariance
+        for (auto& p : voxel.points) {
+            Vector3 d = p - voxel.mean;
+            voxel.cov += d * d.transpose();
+        }
+        voxel.cov /= (voxel.points.size() - 1);
+
+        // Regularize and invert covariance
+        regularize(voxel.cov);  // Ensure positive definite
+        voxel.icov = voxel.cov.inverse();
+    }
+
+    // 3. Build KD-tree on voxel centroids for fast lookup
+    kdtree.build(voxel_centroids);
+}
+#+end_src
+
+** Covariance Regularization
+
+To ensure numerical stability, eigenvalue decomposition is used:
+
+$$\Sigma = V \Lambda V^T$$
+
+Small eigenvalues are clamped: $\lambda_i = \max(\lambda_i, 0.01 \cdot \lambda_{max})$
+
+This prevents singular covariance matrices while preserving the principal directions.
+
+#+begin_NOTE
+*Performance Impact*: Voxel grid construction is expensive but done only once per map load. The KD-tree enables fast $O(\log V)$ voxel lookup during alignment.
+#+end_NOTE
+
+* NDT Score Function
+
+The NDT score measures how well the scan aligns with the map. It's based on the probability of a point belonging to a voxel's Gaussian distribution.
+
+** Probability Density
+
+For a point $\mathbf{x}$ and voxel with mean $\boldsymbol{\mu}$ and covariance $\Sigma$:
+
+$$p(\mathbf{x}) = -d_1 \cdot \exp\left(-\frac{d_2}{2} (\mathbf{x} - \boldsymbol{\mu})^T \Sigma^{-1} (\mathbf{x} - \boldsymbol{\mu})\right)$$
+
+Where:
+- $d_1, d_2$ are constants derived from the outlier ratio (typically 0.55)
+- The negative sign makes this a cost to minimize
+
+** Gaussian Fitting Constants
+
+The constants $d_1$, $d_2$, $d_3$ are computed from the outlier ratio $p$:
+
+#+begin_src cpp
+// From multigrid_ndt_omp_impl.hpp lines 236-243
+double p = outlier_ratio_;  // typically 0.55
+gauss_d1_ = -log(p);
+gauss_d2_ = -2 * log((-log(p * gauss_c2_)) / (-log(p)));
+gauss_d3_ = gauss_d1_ + gauss_d2_ / 2.0;
+#+end_src
+
+These constants control the shape of the score function:
+- Higher $d_1$ increases penalty for misalignment
+- Higher $d_2$ sharpens the Gaussian peak
+
+** Total Score
+
+The total score is the sum over all source points and their nearby voxels:
+
+$$S = \sum_{i=1}^{N} \sum_{j \in \text{nearby}(i)} p(\mathbf{T}(\mathbf{x}_i))$$
+
+Where $\mathbf{T}$ is the current transformation and nearby($i$) returns voxels within search radius.
+
+* Transformation Representation
+
+Autoware uses a 6-parameter pose representation:
+
+$$\mathbf{p} = [x, y, z, \text{roll}, \text{pitch}, \text{yaw}]^T$$
+
+** Transformation Matrix
+
+The pose is converted to a 4x4 homogeneous transformation matrix:
+
+$$\mathbf{T} = \begin{bmatrix} \mathbf{R} & \mathbf{t} \\ \mathbf{0} & 1 \end{bmatrix}$$
+
+Where $\mathbf{R}$ is the rotation matrix (X-Y-Z Euler angles) and $\mathbf{t}$ is the translation.
+
+** Euler Angle Convention
+
+Autoware uses X-Y-Z extrinsic rotation order:
+
+$$\mathbf{R} = \mathbf{R}_z(\text{yaw}) \cdot \mathbf{R}_y(\text{pitch}) \cdot \mathbf{R}_x(\text{roll})$$
+
+#+begin_src cpp
+// Rotation matrix construction
+Eigen::Matrix4d pose_to_matrix(const Vector6& p) {
+    double cx = cos(p[3]), sx = sin(p[3]);  // roll
+    double cy = cos(p[4]), sy = sin(p[4]);  // pitch
+    double cz = cos(p[5]), sz = sin(p[5]);  // yaw
+
+    Matrix4d T = Matrix4d::Identity();
+    T(0,0) = cy*cz;
+    T(0,1) = cz*sx*sy - cx*sz;
+    T(0,2) = sx*sz + cx*cz*sy;
+    T(1,0) = cy*sz;
+    T(1,1) = cx*cz + sx*sy*sz;
+    T(1,2) = cx*sy*sz - cz*sx;
+    T(2,0) = -sy;
+    T(2,1) = cy*sx;
+    T(2,2) = cx*cy;
+    T.block<3,1>(0,3) = p.head<3>();  // translation
+    return T;
+}
+#+end_src
+
+* Derivative Computation
+
+The Newton optimization requires the gradient (6x1) and Hessian (6x6) of the score function.
+
+** Angular Derivatives (Precomputed)
+
+To avoid redundant computation, angular derivatives are precomputed once per iteration:
+
+#+begin_src cpp
+// From computeAngleDerivatives() - lines 576-650
+void computeAngleDerivatives(const Vector6& p) {
+    double cx = cos(p[3]), sx = sin(p[3]);
+    double cy = cos(p[4]), sy = sin(p[4]);
+    double cz = cos(p[5]), sz = sin(p[5]);
+
+    // Jacobian terms (8 entries) - dR/d(roll,pitch,yaw)
+    j_ang_(0,0) = -sx*sz + cx*cz*sy;    // d/droll of R[0,2]
+    j_ang_(0,1) = -cx*sz - cz*sx*sy;    // d/droll of R[0,1]
+    j_ang_(0,2) = cz*cy;                 // d/dpitch of R[0,0]
+    // ... 5 more Jacobian terms
+
+    // Hessian terms (15 entries) - d²R/d(pose)²
+    h_ang_(0,0) = -cx*sz - cz*sx*sy;    // a2
+    h_ang_(0,1) = -cz*sx - cx*sy*sz;    // a3
+    h_ang_(0,2) = sx*sy*sz - cx*cz;     // b2
+    // ... 12 more Hessian terms
+}
+#+end_src
+
+These precomputed terms are reused for all points, avoiding $O(N)$ trigonometric evaluations.
+
+** Per-Point Gradient
+
+For each point $\mathbf{x}_i$ in voxel with mean $\boldsymbol{\mu}$ and inverse covariance $\Sigma^{-1}$:
+
+$$\frac{\partial S}{\partial \mathbf{p}} = \sum_i d_1 d_2 \cdot e_i \cdot (\mathbf{x}_i - \boldsymbol{\mu})^T \Sigma^{-1} \frac{\partial \mathbf{x}_i}{\partial \mathbf{p}}$$
+
+Where:
+- $e_i = \exp\left(-\frac{d_2}{2}(\mathbf{x}_i - \boldsymbol{\mu})^T \Sigma^{-1} (\mathbf{x}_i - \boldsymbol{\mu})\right)$
+- $\frac{\partial \mathbf{x}_i}{\partial \mathbf{p}}$ is the 3x6 Jacobian of the transformed point
+
+** Per-Point Hessian
+
+The Hessian includes both first and second-order terms:
+
+$$\frac{\partial^2 S}{\partial \mathbf{p}^2} = \sum_i d_1 d_2 \cdot e_i \left[ -d_2 \cdot \mathbf{c}_i \mathbf{c}_i^T + \frac{\partial \mathbf{x}_i}{\partial \mathbf{p}}^T \Sigma^{-1} \frac{\partial \mathbf{x}_i}{\partial \mathbf{p}} + \mathbf{c}_i^T \frac{\partial^2 \mathbf{x}_i}{\partial \mathbf{p}^2} \right]$$
+
+Where $\mathbf{c}_i = \frac{\partial \mathbf{x}_i}{\partial \mathbf{p}}^T \Sigma^{-1} (\mathbf{x}_i - \boldsymbol{\mu})$.
+
+#+begin_NOTE
+*Performance Impact*: Derivative computation is the most expensive operation per iteration. It's $O(N \times V)$ where $N$ is point count and $V$ is average voxels per point. Autoware uses OpenMP parallelization with per-thread accumulation.
+#+end_NOTE
+
+* Newton Optimization
+
+Once we have the gradient $\mathbf{g}$ and Hessian $\mathbf{H}$, we solve for the Newton step:
+
+$$\Delta \mathbf{p} = -\mathbf{H}^{-1} \mathbf{g}$$
+
+** SVD Solution
+
+Autoware uses SVD for robust inversion:
+
+#+begin_src cpp
+// From computeTransformation() lines 315-318
+Eigen::JacobiSVD<Eigen::Matrix<double, 6, 6>> sv(
+    hessian, Eigen::ComputeFullU | Eigen::ComputeFullV);
+delta_p = sv.solve(-score_gradient);
+#+end_src
+
+SVD handles near-singular Hessians gracefully, preventing numerical instability.
+
+** Direction Validation
+
+The Newton direction must be a descent direction:
+
+#+begin_src cpp
+// Check descent condition
+double d_phi_0 = -score_gradient.dot(delta_p);
+if (d_phi_0 >= 0) {
+    // Not descending, reverse direction
+    delta_p *= -1.0;
+    d_phi_0 *= -1.0;
+}
+
+// Normalize step if too large
+double delta_p_norm = delta_p.norm();
+if (delta_p_norm > 1.0) {
+    delta_p /= delta_p_norm;
+}
+#+end_src
+
+** Convergence Criteria
+
+The algorithm converges when:
+
+1. *Transformation epsilon*: $\|\Delta \mathbf{p}\| < \epsilon_{trans}$ (default: 0.01)
+2. *Max iterations*: Iterations $\geq$ max_iterations (default: 30)
+
+#+begin_src cpp
+// Convergence check
+nr_iterations_++;
+if (nr_iterations_ >= max_iterations_ ||
+    delta_p.norm() < transformation_epsilon_) {
+    converged_ = true;
+}
+#+end_src
+
+* Line Search (More-Thuente)
+
+The More-Thuente line search finds an optimal step length $\alpha$ along the Newton direction.
+
+** Why Line Search?
+
+Newton's method can overshoot, especially early in optimization. Line search ensures sufficient decrease in the objective function while maintaining curvature.
+
+** Strong Wolfe Conditions
+
+The line search finds $\alpha$ satisfying:
+
+1. *Armijo (sufficient decrease)*: $f(\mathbf{p} + \alpha \Delta\mathbf{p}) \leq f(\mathbf{p}) + \mu \alpha \nabla f^T \Delta\mathbf{p}$
+2. *Curvature*: $|\nabla f(\mathbf{p} + \alpha \Delta\mathbf{p})^T \Delta\mathbf{p}| \leq \nu |\nabla f^T \Delta\mathbf{p}|$
+
+Where $\mu = 10^{-4}$ and $\nu = 0.9$ (typical values).
+
+** Algorithm Sketch
+
+#+begin_src cpp
+double computeStepLengthMT(Vector6& p, Vector6& delta_p,
+                           double d_phi_0, double phi_0) {
+    double alpha = step_size;  // Initial step (default: 0.1)
+    double alpha_l = 0, alpha_u = step_max;
+
+    for (int iter = 0; iter < 10; iter++) {
+        // Evaluate function at trial step
+        Vector6 trial_p = p + alpha * delta_p;
+        double phi_a = computeScore(trial_p);
+        double d_phi_a = computeDirectionalDerivative(trial_p, delta_p);
+
+        // Check Wolfe conditions
+        if (satisfies_armijo(phi_a) && satisfies_curvature(d_phi_a)) {
+            return alpha;
+        }
+
+        // Update bracket and pick new trial
+        updateInterval(alpha_l, alpha_u, alpha, phi_a, d_phi_a);
+        alpha = selectTrialValue(alpha_l, alpha_u);
+    }
+    return alpha;
+}
+#+end_src
+
+#+begin_WARNING
+*Default Disabled*: Autoware disables line search by default (=use_line_search=false=) because the overhead often exceeds the benefit. The fixed step size of 0.1 works well in practice.
+#+end_WARNING
+
+** Trial Value Selection
+
+The algorithm uses cubic/quadratic interpolation to pick trial step lengths:
+
+#+begin_src cpp
+// From trialValueSelectionMT() - simplified
+double selectTrial(double a_l, double a_u, double a_t,
+                   double f_l, double f_u, double f_t,
+                   double g_l, double g_u, double g_t) {
+    // Case 1: f_t > f_l -> Minimum between a_l and a_t
+    //         Use cubic interpolation
+    // Case 2: g_t * g_l < 0 -> Minimum between a_t and a_u
+    //         Sign change indicates minimum exists
+    // Case 3: |g_t| <= |g_l| -> Extrapolate beyond a_t
+    // Case 4: Otherwise -> Safeguard interpolation
+}
+#+end_src
+
+* Voxel Search Methods
+
+How we find voxels for each point significantly affects accuracy and speed.
+
+** KDTREE (Recommended)
+
+Uses a KD-tree built on voxel centroids:
+
+#+begin_src cpp
+// Radius search for nearby voxels
+std::vector<int> nearby;
+std::vector<float> distances;
+kdtree.radiusSearch(query_point, resolution, nearby, distances);
+
+for (int voxel_idx : nearby) {
+    // Accumulate score/gradient/Hessian from this voxel
+}
+#+end_src
+
+*Complexity*: $O(\log V)$ per point
+
+** DIRECT Methods (Legacy)
+
+Directly compute neighboring voxel indices without KD-tree:
+
+| Method | Description | Voxels Checked |
+|--------+-------------+----------------|
+| DIRECT1 | Only containing voxel | 1 |
+| DIRECT7 | Face-adjacent neighbors | 7 |
+| DIRECT26 | All neighbors including diagonals | 27 |
+
+*Not recommended*: DIRECT methods can miss voxels near boundaries and provide less smooth gradients.
+
+#+begin_NOTE
+*Performance Impact*: KDTREE is slightly slower per query but provides smoother gradients and better convergence. Autoware defaults to KDTREE.
+#+end_NOTE
+
+* Scoring Metrics
+
+Autoware computes two scoring metrics for quality assessment:
+
+** Transform Probability (TP)
+
+Average negative log-likelihood per point:
+
+$$TP = \frac{1}{N} \sum_{i=1}^{N} \max_j\left(-d_1 \exp\left(-\frac{d_2}{2} \|\mathbf{x}_i - \boldsymbol{\mu}_j\|_{\Sigma_j}^2\right)\right)$$
+
+Higher TP indicates better alignment. Typical range: 2.0-5.5.
+
+** Nearest Voxel Transformation Likelihood (NVTL)
+
+Uses only the *highest-scoring voxel* per point:
+
+$$NVTL = \frac{1}{N_{corr}} \sum_{i \in \text{found}} \max_j\left(-d_1 \exp\left(-\frac{d_2}{2} \|\mathbf{x}_i - \boldsymbol{\mu}_j\|_{\Sigma_j}^2\right)\right)$$
+
+NVTL normalizes by found correspondences, making it more robust to partial overlaps.
+
+** Score Thresholds
+
+Autoware uses score thresholds for validation:
+
+#+begin_src cpp
+// Reject alignment if score too low
+if (nvtl < score_threshold) {
+    // Don't publish this pose
+    return false;
+}
+#+end_src
+
+* Map Management
+
+Autoware supports dynamic map loading for large-scale environments.
+
+** Tile-Based Loading
+
+Maps are divided into tiles that are loaded on demand:
+
+#+begin_src cpp
+// Check if position is outside current map
+if (distance_to_map_center > map_radius - lidar_radius) {
+    // Request new map tiles from map server
+    requestDifferentialMap(current_position);
+}
+#+end_src
+
+** Dual-NDT Architecture
+
+To avoid blocking during map updates:
+
+1. *Primary NDT*: Used for active alignment
+2. *Secondary NDT*: Built in background with new tiles
+3. *Atomic swap*: When secondary is ready, swap pointers
+
+#+begin_src cpp
+// Background thread builds new NDT
+void mapUpdateThread() {
+    while (running) {
+        if (map_update_requested) {
+            // Build secondary NDT with new tiles
+            secondary_ndt_->setInputTarget(new_map);
+
+            // Atomic swap
+            std::lock_guard lock(ndt_mutex_);
+            std::swap(primary_ndt_, secondary_ndt_);
+        }
+    }
+}
+#+end_src
+
+* Performance Considerations
+
+** Critical Path Analysis
+
+| Operation | Time (typical) | Complexity |
+|-----------+----------------+------------|
+| Point transformation | ~0.1 ms | O(N) |
+| Voxel search | ~0.5 ms | O(N log V) |
+| Derivative accumulation | ~2.0 ms | O(N * V_avg) |
+| Newton solve | ~0.05 ms | O(1) - 6x6 |
+| Line search (if enabled) | ~2.0 ms | O(iterations * above) |
+
+*Dominant cost*: Derivative computation, especially the nested loops for gradient/Hessian accumulation.
+
+** OpenMP Parallelization
+
+Autoware uses OpenMP to parallelize the derivative loop:
+
+#+begin_src cpp
+#pragma omp parallel for num_threads(threads) schedule(guided, 8) \
+    reduction(+:score)
+for (int i = 0; i < num_points; i++) {
+    // Per-thread gradient/Hessian accumulation
+    Eigen::Matrix<double, 6, 1> local_gradient;
+    Eigen::Matrix<double, 6, 6> local_hessian;
+
+    computePointDerivatives(points[i], local_gradient, local_hessian);
+
+    // Critical section for global accumulation
+    #pragma omp critical
+    {
+        gradient += local_gradient;
+        hessian += local_hessian;
+    }
+}
+#+end_src
+
+#+begin_TIP
+*Optimization*: Using thread-local accumulators with reduction eliminates critical section overhead. Each thread sums locally, then a final reduction combines results.
+#+end_TIP
+
+** Memory Access Patterns
+
+For cache efficiency:
+- Points stored contiguously in memory
+- Voxel data (mean, icov) stored in arrays
+- KD-tree queries access voxels in spatial locality
+
+** Precomputation
+
+| What | When Computed | Benefit |
+|------+---------------+--------|
+| Inverse covariance | Map load | Avoid per-point matrix inversion |
+| Angular derivatives | Per iteration | Reuse across all points |
+| KD-tree | Map load | Fast spatial queries |
+
+* ROS Integration
+
+** Subscriptions
+
+| Topic | Type | Purpose |
+|-------+------+---------|
+| =/ekf_pose_with_covariance= | PoseWithCovarianceStamped | Initial guess from EKF |
+| =/points_raw= | PointCloud2 | LiDAR scan |
+| =/regularization_pose= | PoseWithCovarianceStamped | GNSS for regularization |
+
+** Publications
+
+| Topic                       | Type                      | Purpose                    |
+|-----------------------------+---------------------------+----------------------------|
+| =/ndt_pose=                 | PoseStamped               | Estimated pose             |
+| =/ndt_pose_with_covariance= | PoseWithCovarianceStamped | Pose with uncertainty      |
+| =/tf=                       | TFMessage                 | map -> base_link transform |
+| =/diagnostics=              | DiagnosticArray           | Score, iterations, timing  |
+
+** Processing Flow
+
+#+begin_src mermaid
+sequenceDiagram
+    participant EKF
+    participant NDT
+    participant MapServer
+
+    EKF->>NDT: Initial pose guess
+    Note over NDT: Wait for scan
+    LiDAR->>NDT: Point cloud
+    NDT->>MapServer: Request map (if needed)
+    MapServer-->>NDT: Map tiles
+    Note over NDT: NDT alignment
+    NDT->>EKF: Aligned pose
+    NDT->>TF: Broadcast transform
+#+end_src
+
+* Summary
+
+** Key Takeaways
+
+1. *NDT models the map as Gaussians* - Smooth, differentiable objective function
+2. *Newton optimization* - Fast convergence with proper initialization
+3. *Derivative computation is the bottleneck* - $O(N \times V_{avg})$ per iteration
+4. *Precomputation is crucial* - Angular derivatives, inverse covariances, KD-tree
+5. *Line search typically disabled* - Fixed step works well in practice
+6. *KDTREE search recommended* - Smoother gradients than DIRECT methods
+
+** Typical Performance
+
+| Metric                 |    Value |
+|------------------------+----------|
+| Points per scan        | 500-2000 |
+| Voxels per point       |      1-5 |
+| Iterations to converge |     3-10 |
+| Time per alignment     |   1-5 ms |
+
+** Further Reading
+
+- [[https://www.mrpt.org/downloads/dox/tutorial_ndt_3d.pdf][Magnusson 2009 PhD Thesis]] - Original NDT algorithm
+- [[https://github.com/autowarefoundation/autoware_core][Autoware Core]] - Reference implementation
+- [[https://pointclouds.org/documentation/classpcl_1_1_normal_distributions_transform.html][PCL NDT Documentation]] - PCL implementation details
+
+* Appendix: Code References
+
+** Autoware Files
+
+| File                                | Description                         |
+|-------------------------------------+-------------------------------------|
+| =ndt_scan_matcher_core.cpp=         | ROS node, subscriptions, publishers |
+| =multigrid_ndt_omp_impl.hpp=        | Core NDT algorithm                  |
+| =multi_voxel_grid_covariance_omp.h= | Voxel grid data structure           |
+| =map_update_module.hpp=             | Dynamic map loading                 |
+| =hyper_parameters.hpp=              | Configuration parameters            |
+
+** Key Functions
+
+| Function                    | Location                       | Purpose                      |
+|-----------------------------+--------------------------------+------------------------------|
+| =computeTransformation()=   | multigrid_ndt_omp_impl.hpp:247 | Main optimization loop       |
+| =computeDerivatives()=      | multigrid_ndt_omp_impl.hpp:418 | Gradient/Hessian computation |
+| =computeAngleDerivatives()= | multigrid_ndt_omp_impl.hpp:576 | Precompute angular terms     |
+| =computeStepLengthMT()=     | multigrid_ndt_omp_impl.hpp:971 | More-Thuente line search     |
+| =updateDerivatives()=       | multigrid_ndt_omp_impl.hpp:702 | Per-point accumulation       |

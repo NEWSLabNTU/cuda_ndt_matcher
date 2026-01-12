@@ -1,0 +1,1256 @@
+# ============================================================================
+# GitHub Theme for Org-mode HTML Export
+# ============================================================================
+# Mimics GitHub's page layout and markdown rendering with full LaTeX support
+#
+# Based on:
+#   - GitHub Primer Design System (https://primer.style)
+#   - github-markdown-css (https://github.com/sindresorhus/github-markdown-css)
+#
+# Usage:
+#   #+SETUPFILE: path/to/github.theme
+#
+# ============================================================================
+
+# === Export Options ===
+#+OPTIONS: html-style:nil toc:2 num:nil ^:nil
+
+# === LaTeX Packages (for PDF export) ===
+#+LATEX_HEADER: \usepackage{algorithm}
+#+LATEX_HEADER: \usepackage{algpseudocode}
+#+LATEX_HEADER: \algnewcommand\algorithmicforeach{\textbf{for each}}
+#+LATEX_HEADER: \algdef{S}[FOR]{ForEach}[1]{\algorithmicforeach\ #1\ \algorithmicdo}
+
+# === External Resources ===
+# KaTeX for math rendering
+#+HTML_HEAD: <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+#+HTML_HEAD: <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+#+HTML_HEAD: <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+
+# Pseudocode rendering
+#+HTML_HEAD: <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pseudocode@latest/build/pseudocode.min.css">
+#+HTML_HEAD: <script src="https://cdn.jsdelivr.net/npm/pseudocode@latest/build/pseudocode.min.js"></script>
+
+# Mermaid diagrams
+#+HTML_HEAD: <script type="module">
+#+HTML_HEAD:   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+#+HTML_HEAD:   const isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+#+HTML_HEAD:     (!document.documentElement.hasAttribute('data-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+#+HTML_HEAD:   mermaid.initialize({ startOnLoad: false, theme: isDark ? 'dark' : 'default' });
+#+HTML_HEAD:
+#+HTML_HEAD:   // Convert org-mode src-mermaid blocks to mermaid divs
+#+HTML_HEAD:   document.addEventListener('DOMContentLoaded', async function() {
+#+HTML_HEAD:     document.querySelectorAll('pre.src-mermaid').forEach(function(pre) {
+#+HTML_HEAD:       var div = document.createElement('div');
+#+HTML_HEAD:       div.className = 'mermaid';
+#+HTML_HEAD:       // Decode HTML entities (org escapes < > etc)
+#+HTML_HEAD:       var text = pre.textContent;
+#+HTML_HEAD:       div.textContent = text;
+#+HTML_HEAD:       pre.parentNode.replaceChild(div, pre);
+#+HTML_HEAD:     });
+#+HTML_HEAD:     await mermaid.run();
+#+HTML_HEAD:   });
+#+HTML_HEAD: </script>
+
+# Highlight.js for syntax highlighting (client-side)
+#+HTML_HEAD: <link id="hljs-light" rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css">
+#+HTML_HEAD: <link id="hljs-dark" rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css" disabled>
+#+HTML_HEAD: <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+#+HTML_HEAD: <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/rust.min.js"></script>
+#+HTML_HEAD: <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/python.min.js"></script>
+#+HTML_HEAD: <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/languages/glsl.min.js"></script>
+#+HTML_HEAD: <script>
+#+HTML_HEAD:   // Sync highlight.js theme with page theme
+#+HTML_HEAD:   (function() {
+#+HTML_HEAD:     function updateHljsTheme() {
+#+HTML_HEAD:       var isDark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+#+HTML_HEAD:         (!document.documentElement.hasAttribute('data-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+#+HTML_HEAD:       var lightStyle = document.getElementById('hljs-light');
+#+HTML_HEAD:       var darkStyle = document.getElementById('hljs-dark');
+#+HTML_HEAD:       if (lightStyle && darkStyle) {
+#+HTML_HEAD:         lightStyle.disabled = isDark;
+#+HTML_HEAD:         darkStyle.disabled = !isDark;
+#+HTML_HEAD:       }
+#+HTML_HEAD:     }
+#+HTML_HEAD:     updateHljsTheme();
+#+HTML_HEAD:     // Watch for theme changes
+#+HTML_HEAD:     var observer = new MutationObserver(function(mutations) {
+#+HTML_HEAD:       mutations.forEach(function(m) {
+#+HTML_HEAD:         if (m.attributeName === 'data-theme') updateHljsTheme();
+#+HTML_HEAD:       });
+#+HTML_HEAD:     });
+#+HTML_HEAD:     observer.observe(document.documentElement, { attributes: true });
+#+HTML_HEAD:     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', updateHljsTheme);
+#+HTML_HEAD:   })();
+#+HTML_HEAD: </script>
+
+# === Main Stylesheet ===
+#+HTML_HEAD: <style type="text/css">
+#+HTML_HEAD: /* ============================================================================
+#+HTML_HEAD:    GITHUB THEME - Primer Design System
+#+HTML_HEAD:    ============================================================================ */
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    CSS Custom Properties (Primer Color Tokens)
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD: :root {
+#+HTML_HEAD:   /* Foreground */
+#+HTML_HEAD:   --color-fg-default: #1f2328;
+#+HTML_HEAD:   --color-fg-muted: #59636e;
+#+HTML_HEAD:   --color-fg-subtle: #6e7781;
+#+HTML_HEAD:   --color-fg-on-emphasis: #ffffff;
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Canvas (backgrounds) */
+#+HTML_HEAD:   --color-canvas-default: #ffffff;
+#+HTML_HEAD:   --color-canvas-subtle: #f6f8fa;
+#+HTML_HEAD:   --color-canvas-inset: #f6f8fa;
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Border */
+#+HTML_HEAD:   --color-border-default: #d1d9e0;
+#+HTML_HEAD:   --color-border-muted: rgba(209, 217, 224, 0.7);
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Accent (blue) */
+#+HTML_HEAD:   --color-accent-fg: #0969da;
+#+HTML_HEAD:   --color-accent-emphasis: #0550ae;
+#+HTML_HEAD:   --color-accent-muted: rgba(84, 174, 255, 0.4);
+#+HTML_HEAD:   --color-accent-subtle: #ddf4ff;
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Success (green) */
+#+HTML_HEAD:   --color-success-fg: #1a7f37;
+#+HTML_HEAD:   --color-success-emphasis: #1f883d;
+#+HTML_HEAD:   --color-success-muted: rgba(74, 194, 107, 0.4);
+#+HTML_HEAD:   --color-success-subtle: #dafbe1;
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Attention (yellow/orange) */
+#+HTML_HEAD:   --color-attention-fg: #9a6700;
+#+HTML_HEAD:   --color-attention-emphasis: #bf8700;
+#+HTML_HEAD:   --color-attention-muted: rgba(212, 167, 44, 0.4);
+#+HTML_HEAD:   --color-attention-subtle: #fff8c5;
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Danger (red) */
+#+HTML_HEAD:   --color-danger-fg: #d1242f;
+#+HTML_HEAD:   --color-danger-emphasis: #cf222e;
+#+HTML_HEAD:   --color-danger-muted: rgba(255, 129, 130, 0.4);
+#+HTML_HEAD:   --color-danger-subtle: #ffebe9;
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Done (purple) */
+#+HTML_HEAD:   --color-done-fg: #8250df;
+#+HTML_HEAD:   --color-done-emphasis: #8250df;
+#+HTML_HEAD:   --color-done-muted: rgba(194, 151, 255, 0.4);
+#+HTML_HEAD:   --color-done-subtle: #fbefff;
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Neutral */
+#+HTML_HEAD:   --color-neutral-emphasis: #6e7781;
+#+HTML_HEAD:   --color-neutral-muted: rgba(175, 184, 193, 0.2);
+#+HTML_HEAD:   --color-neutral-subtle: rgba(234, 238, 242, 0.5);
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Typography */
+#+HTML_HEAD:   --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+#+HTML_HEAD:   --font-family-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+#+HTML_HEAD:   --font-size-base: 16px;
+#+HTML_HEAD:   --font-size-small: 0.875rem;
+#+HTML_HEAD:   --font-size-mono: 0.85rem;
+#+HTML_HEAD:   --line-height: 1.5;
+#+HTML_HEAD:   --line-height-tight: 1.25;
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Spacing (4px grid) */
+#+HTML_HEAD:   --space-1: 4px;
+#+HTML_HEAD:   --space-2: 8px;
+#+HTML_HEAD:   --space-3: 16px;
+#+HTML_HEAD:   --space-4: 24px;
+#+HTML_HEAD:   --space-5: 32px;
+#+HTML_HEAD:   --space-6: 40px;
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Layout */
+#+HTML_HEAD:   --content-width: 980px;
+#+HTML_HEAD:   --sidebar-width: 256px;
+#+HTML_HEAD:   --border-radius: 6px;
+#+HTML_HEAD:   --border-radius-small: 3px;
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Breakpoints */
+#+HTML_HEAD:   --breakpoint-sm: 544px;
+#+HTML_HEAD:   --breakpoint-md: 768px;
+#+HTML_HEAD:   --breakpoint-lg: 1012px;
+#+HTML_HEAD:   --breakpoint-xl: 1280px;
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Syntax highlighting (light) */
+#+HTML_HEAD:   --syntax-keyword: #cf222e;
+#+HTML_HEAD:   --syntax-string: #0a3069;
+#+HTML_HEAD:   --syntax-comment: #6e7781;
+#+HTML_HEAD:   --syntax-function: #8250df;
+#+HTML_HEAD:   --syntax-variable: #953800;
+#+HTML_HEAD:   --syntax-type: #0550ae;
+#+HTML_HEAD:   --syntax-constant: #0550ae;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    Dark Theme (GitHub Primer Dark)
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD: [data-theme="dark"] {
+#+HTML_HEAD:   /* Foreground */
+#+HTML_HEAD:   --color-fg-default: #e6edf3;
+#+HTML_HEAD:   --color-fg-muted: #8d96a0;
+#+HTML_HEAD:   --color-fg-subtle: #6e7681;
+#+HTML_HEAD:   --color-fg-on-emphasis: #ffffff;
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Canvas (backgrounds) */
+#+HTML_HEAD:   --color-canvas-default: #0d1117;
+#+HTML_HEAD:   --color-canvas-subtle: #161b22;
+#+HTML_HEAD:   --color-canvas-inset: #010409;
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Border */
+#+HTML_HEAD:   --color-border-default: #30363d;
+#+HTML_HEAD:   --color-border-muted: rgba(48, 54, 61, 0.7);
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Accent (blue) */
+#+HTML_HEAD:   --color-accent-fg: #58a6ff;
+#+HTML_HEAD:   --color-accent-emphasis: #1f6feb;
+#+HTML_HEAD:   --color-accent-muted: rgba(56, 139, 253, 0.4);
+#+HTML_HEAD:   --color-accent-subtle: rgba(56, 139, 253, 0.15);
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Success (green) */
+#+HTML_HEAD:   --color-success-fg: #3fb950;
+#+HTML_HEAD:   --color-success-emphasis: #238636;
+#+HTML_HEAD:   --color-success-muted: rgba(46, 160, 67, 0.4);
+#+HTML_HEAD:   --color-success-subtle: rgba(46, 160, 67, 0.15);
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Attention (yellow/orange) */
+#+HTML_HEAD:   --color-attention-fg: #d29922;
+#+HTML_HEAD:   --color-attention-emphasis: #9e6a03;
+#+HTML_HEAD:   --color-attention-muted: rgba(187, 128, 9, 0.4);
+#+HTML_HEAD:   --color-attention-subtle: rgba(187, 128, 9, 0.15);
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Danger (red) */
+#+HTML_HEAD:   --color-danger-fg: #f85149;
+#+HTML_HEAD:   --color-danger-emphasis: #da3633;
+#+HTML_HEAD:   --color-danger-muted: rgba(248, 81, 73, 0.4);
+#+HTML_HEAD:   --color-danger-subtle: rgba(248, 81, 73, 0.15);
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Done (purple) */
+#+HTML_HEAD:   --color-done-fg: #a371f7;
+#+HTML_HEAD:   --color-done-emphasis: #8957e5;
+#+HTML_HEAD:   --color-done-muted: rgba(163, 113, 247, 0.4);
+#+HTML_HEAD:   --color-done-subtle: rgba(163, 113, 247, 0.15);
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Neutral */
+#+HTML_HEAD:   --color-neutral-emphasis: #6e7681;
+#+HTML_HEAD:   --color-neutral-muted: rgba(110, 118, 129, 0.4);
+#+HTML_HEAD:   --color-neutral-subtle: rgba(110, 118, 129, 0.1);
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Syntax highlighting (dark) */
+#+HTML_HEAD:   --syntax-keyword: #ff7b72;
+#+HTML_HEAD:   --syntax-string: #a5d6ff;
+#+HTML_HEAD:   --syntax-comment: #8b949e;
+#+HTML_HEAD:   --syntax-function: #d2a8ff;
+#+HTML_HEAD:   --syntax-variable: #ffa657;
+#+HTML_HEAD:   --syntax-type: #79c0ff;
+#+HTML_HEAD:   --syntax-constant: #79c0ff;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* System preference: dark mode */
+#+HTML_HEAD: @media (prefers-color-scheme: dark) {
+#+HTML_HEAD:   :root:not([data-theme="light"]) {
+#+HTML_HEAD:     /* Foreground */
+#+HTML_HEAD:     --color-fg-default: #e6edf3;
+#+HTML_HEAD:     --color-fg-muted: #8d96a0;
+#+HTML_HEAD:     --color-fg-subtle: #6e7681;
+#+HTML_HEAD:     --color-fg-on-emphasis: #ffffff;
+#+HTML_HEAD:
+#+HTML_HEAD:     /* Canvas (backgrounds) */
+#+HTML_HEAD:     --color-canvas-default: #0d1117;
+#+HTML_HEAD:     --color-canvas-subtle: #161b22;
+#+HTML_HEAD:     --color-canvas-inset: #010409;
+#+HTML_HEAD:
+#+HTML_HEAD:     /* Border */
+#+HTML_HEAD:     --color-border-default: #30363d;
+#+HTML_HEAD:     --color-border-muted: rgba(48, 54, 61, 0.7);
+#+HTML_HEAD:
+#+HTML_HEAD:     /* Accent (blue) */
+#+HTML_HEAD:     --color-accent-fg: #58a6ff;
+#+HTML_HEAD:     --color-accent-emphasis: #1f6feb;
+#+HTML_HEAD:     --color-accent-muted: rgba(56, 139, 253, 0.4);
+#+HTML_HEAD:     --color-accent-subtle: rgba(56, 139, 253, 0.15);
+#+HTML_HEAD:
+#+HTML_HEAD:     /* Success (green) */
+#+HTML_HEAD:     --color-success-fg: #3fb950;
+#+HTML_HEAD:     --color-success-emphasis: #238636;
+#+HTML_HEAD:     --color-success-muted: rgba(46, 160, 67, 0.4);
+#+HTML_HEAD:     --color-success-subtle: rgba(46, 160, 67, 0.15);
+#+HTML_HEAD:
+#+HTML_HEAD:     /* Attention (yellow/orange) */
+#+HTML_HEAD:     --color-attention-fg: #d29922;
+#+HTML_HEAD:     --color-attention-emphasis: #9e6a03;
+#+HTML_HEAD:     --color-attention-muted: rgba(187, 128, 9, 0.4);
+#+HTML_HEAD:     --color-attention-subtle: rgba(187, 128, 9, 0.15);
+#+HTML_HEAD:
+#+HTML_HEAD:     /* Danger (red) */
+#+HTML_HEAD:     --color-danger-fg: #f85149;
+#+HTML_HEAD:     --color-danger-emphasis: #da3633;
+#+HTML_HEAD:     --color-danger-muted: rgba(248, 81, 73, 0.4);
+#+HTML_HEAD:     --color-danger-subtle: rgba(248, 81, 73, 0.15);
+#+HTML_HEAD:
+#+HTML_HEAD:     /* Done (purple) */
+#+HTML_HEAD:     --color-done-fg: #a371f7;
+#+HTML_HEAD:     --color-done-emphasis: #8957e5;
+#+HTML_HEAD:     --color-done-muted: rgba(163, 113, 247, 0.4);
+#+HTML_HEAD:     --color-done-subtle: rgba(163, 113, 247, 0.15);
+#+HTML_HEAD:
+#+HTML_HEAD:     /* Neutral */
+#+HTML_HEAD:     --color-neutral-emphasis: #6e7681;
+#+HTML_HEAD:     --color-neutral-muted: rgba(110, 118, 129, 0.4);
+#+HTML_HEAD:     --color-neutral-subtle: rgba(110, 118, 129, 0.1);
+#+HTML_HEAD:
+#+HTML_HEAD:     /* Syntax highlighting (dark) */
+#+HTML_HEAD:     --syntax-keyword: #ff7b72;
+#+HTML_HEAD:     --syntax-string: #a5d6ff;
+#+HTML_HEAD:     --syntax-comment: #8b949e;
+#+HTML_HEAD:     --syntax-function: #d2a8ff;
+#+HTML_HEAD:     --syntax-variable: #ffa657;
+#+HTML_HEAD:     --syntax-type: #79c0ff;
+#+HTML_HEAD:     --syntax-constant: #79c0ff;
+#+HTML_HEAD:   }
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    Base Reset & Box Sizing
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD: *, *::before, *::after {
+#+HTML_HEAD:   box-sizing: border-box;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: html {
+#+HTML_HEAD:   font-size: var(--font-size-base);
+#+HTML_HEAD:   -webkit-font-smoothing: antialiased;
+#+HTML_HEAD:   -moz-osx-font-smoothing: grayscale;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: body {
+#+HTML_HEAD:   margin: 0;
+#+HTML_HEAD:   padding: 0;
+#+HTML_HEAD:   font-family: var(--font-family);
+#+HTML_HEAD:   font-size: 1rem;
+#+HTML_HEAD:   line-height: var(--line-height);
+#+HTML_HEAD:   color: var(--color-fg-default);
+#+HTML_HEAD:   background-color: var(--color-canvas-default);
+#+HTML_HEAD:   word-wrap: break-word;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    Page Layout Structure
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD:
+#+HTML_HEAD: /* Header bar */
+#+HTML_HEAD: .title {
+#+HTML_HEAD:   margin: 0;
+#+HTML_HEAD:   padding: var(--space-3) var(--space-4);
+#+HTML_HEAD:   background-color: var(--color-canvas-subtle);
+#+HTML_HEAD:   border-bottom: 1px solid var(--color-border-default);
+#+HTML_HEAD:   font-size: 1.25rem;
+#+HTML_HEAD:   font-weight: 600;
+#+HTML_HEAD:   display: flex;
+#+HTML_HEAD:   justify-content: space-between;
+#+HTML_HEAD:   align-items: center;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: h1.title {
+#+HTML_HEAD:   position: sticky;
+#+HTML_HEAD:   top: 0;
+#+HTML_HEAD:   z-index: 100;
+#+HTML_HEAD:   background-color: var(--color-canvas-subtle);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Theme Toggle Button */
+#+HTML_HEAD: .theme-toggle {
+#+HTML_HEAD:   display: flex;
+#+HTML_HEAD:   align-items: center;
+#+HTML_HEAD:   gap: var(--space-2);
+#+HTML_HEAD:   padding: var(--space-1) var(--space-2);
+#+HTML_HEAD:   font-size: var(--font-size-small);
+#+HTML_HEAD:   font-weight: 500;
+#+HTML_HEAD:   color: var(--color-fg-muted);
+#+HTML_HEAD:   background-color: var(--color-canvas-default);
+#+HTML_HEAD:   border: 1px solid var(--color-border-default);
+#+HTML_HEAD:   border-radius: var(--border-radius);
+#+HTML_HEAD:   cursor: pointer;
+#+HTML_HEAD:   transition: background-color 0.15s ease, border-color 0.15s ease;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: .theme-toggle:hover {
+#+HTML_HEAD:   background-color: var(--color-canvas-subtle);
+#+HTML_HEAD:   border-color: var(--color-border-default);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: .theme-toggle:focus {
+#+HTML_HEAD:   outline: 2px solid var(--color-accent-fg);
+#+HTML_HEAD:   outline-offset: 2px;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: .theme-toggle svg {
+#+HTML_HEAD:   width: 16px;
+#+HTML_HEAD:   height: 16px;
+#+HTML_HEAD:   fill: currentColor;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Sun icon (shown in dark mode) */
+#+HTML_HEAD: .theme-toggle .icon-sun {
+#+HTML_HEAD:   display: none;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Moon icon (shown in light mode) */
+#+HTML_HEAD: .theme-toggle .icon-moon {
+#+HTML_HEAD:   display: block;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Toggle icons based on theme */
+#+HTML_HEAD: [data-theme="dark"] .theme-toggle .icon-sun {
+#+HTML_HEAD:   display: block;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: [data-theme="dark"] .theme-toggle .icon-moon {
+#+HTML_HEAD:   display: none;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: @media (prefers-color-scheme: dark) {
+#+HTML_HEAD:   :root:not([data-theme="light"]) .theme-toggle .icon-sun {
+#+HTML_HEAD:     display: block;
+#+HTML_HEAD:   }
+#+HTML_HEAD:   :root:not([data-theme="light"]) .theme-toggle .icon-moon {
+#+HTML_HEAD:     display: none;
+#+HTML_HEAD:   }
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Main content wrapper */
+#+HTML_HEAD: #content {
+#+HTML_HEAD:   max-width: var(--content-width);
+#+HTML_HEAD:   margin: 0 auto;
+#+HTML_HEAD:   padding: var(--space-4);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Footer */
+#+HTML_HEAD: #postamble {
+#+HTML_HEAD:   max-width: var(--content-width);
+#+HTML_HEAD:   margin: 0 auto;
+#+HTML_HEAD:   padding: var(--space-4);
+#+HTML_HEAD:   padding-top: var(--space-5);
+#+HTML_HEAD:   margin-top: var(--space-5);
+#+HTML_HEAD:   border-top: 1px solid var(--color-border-default);
+#+HTML_HEAD:   color: var(--color-fg-muted);
+#+HTML_HEAD:   font-size: var(--font-size-small);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: #postamble p {
+#+HTML_HEAD:   margin: var(--space-1) 0;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    Typography
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD:
+#+HTML_HEAD: /* Headings */
+#+HTML_HEAD: h1, h2, h3, h4, h5, h6 {
+#+HTML_HEAD:   margin-top: var(--space-4);
+#+HTML_HEAD:   margin-bottom: var(--space-3);
+#+HTML_HEAD:   font-weight: 600;
+#+HTML_HEAD:   line-height: var(--line-height-tight);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: h1 { font-size: 2rem; }
+#+HTML_HEAD: h2 { font-size: 1.5rem; }
+#+HTML_HEAD: h3 { font-size: 1.25rem; }
+#+HTML_HEAD: h4 { font-size: 1rem; }
+#+HTML_HEAD: h5 { font-size: 0.875rem; }
+#+HTML_HEAD: h6 { font-size: 0.85rem; color: var(--color-fg-muted); }
+#+HTML_HEAD:
+#+HTML_HEAD: /* H1 and H2 have bottom borders */
+#+HTML_HEAD: h2, .outline-2 > h2 {
+#+HTML_HEAD:   padding-bottom: 0.3em;
+#+HTML_HEAD:   border-bottom: 1px solid var(--color-border-muted);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: #content > h2:first-of-type,
+#+HTML_HEAD: .outline-2:first-of-type > h2 {
+#+HTML_HEAD:   margin-top: 0;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Paragraphs */
+#+HTML_HEAD: p {
+#+HTML_HEAD:   margin-top: 0;
+#+HTML_HEAD:   margin-bottom: var(--space-3);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Links */
+#+HTML_HEAD: a {
+#+HTML_HEAD:   color: var(--color-accent-fg);
+#+HTML_HEAD:   text-decoration: none;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: a:hover {
+#+HTML_HEAD:   text-decoration: underline;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: a:visited {
+#+HTML_HEAD:   color: var(--color-done-fg);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Strong and emphasis */
+#+HTML_HEAD: strong, b {
+#+HTML_HEAD:   font-weight: 600;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    Code & Pre
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD:
+#+HTML_HEAD: /* Inline code */
+#+HTML_HEAD: code {
+#+HTML_HEAD:   font-family: var(--font-family-mono);
+#+HTML_HEAD:   font-size: var(--font-size-mono);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: :not(pre) > code {
+#+HTML_HEAD:   padding: 0.2em 0.4em;
+#+HTML_HEAD:   margin: 0;
+#+HTML_HEAD:   background-color: var(--color-neutral-muted);
+#+HTML_HEAD:   border-radius: var(--border-radius);
+#+HTML_HEAD:   white-space: break-spaces;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Code blocks */
+#+HTML_HEAD: pre {
+#+HTML_HEAD:   margin: var(--space-3) 0;
+#+HTML_HEAD:   padding: var(--space-3);
+#+HTML_HEAD:   overflow: auto;
+#+HTML_HEAD:   font-family: var(--font-family-mono);
+#+HTML_HEAD:   font-size: var(--font-size-mono);
+#+HTML_HEAD:   line-height: 1.45;
+#+HTML_HEAD:   background-color: var(--color-canvas-subtle);
+#+HTML_HEAD:   border-radius: var(--border-radius);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: pre code {
+#+HTML_HEAD:   display: block;
+#+HTML_HEAD:   padding: 0;
+#+HTML_HEAD:   margin: 0;
+#+HTML_HEAD:   overflow: visible;
+#+HTML_HEAD:   background: transparent;
+#+HTML_HEAD:   border: 0;
+#+HTML_HEAD:   white-space: pre;
+#+HTML_HEAD:   word-break: normal;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Source code blocks with language label */
+#+HTML_HEAD: pre.src {
+#+HTML_HEAD:   position: relative;
+#+HTML_HEAD:   padding-top: calc(var(--space-3) + 1.5em);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: pre.src::before {
+#+HTML_HEAD:   content: attr(data-lang);
+#+HTML_HEAD:   position: absolute;
+#+HTML_HEAD:   top: 0;
+#+HTML_HEAD:   right: 0;
+#+HTML_HEAD:   padding: 0.25em 0.75em;
+#+HTML_HEAD:   font-size: 0.75rem;
+#+HTML_HEAD:   font-weight: 500;
+#+HTML_HEAD:   color: var(--color-fg-muted);
+#+HTML_HEAD:   background-color: var(--color-border-muted);
+#+HTML_HEAD:   border-bottom-left-radius: var(--border-radius);
+#+HTML_HEAD:   text-transform: uppercase;
+#+HTML_HEAD:   letter-spacing: 0.02em;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Language-specific labels */
+#+HTML_HEAD: pre.src-rust::before { content: "Rust"; }
+#+HTML_HEAD: pre.src-python::before { content: "Python"; }
+#+HTML_HEAD: pre.src-javascript::before, pre.src-js::before { content: "JavaScript"; }
+#+HTML_HEAD: pre.src-typescript::before, pre.src-ts::before { content: "TypeScript"; }
+#+HTML_HEAD: pre.src-shell::before, pre.src-sh::before, pre.src-bash::before { content: "Shell"; }
+#+HTML_HEAD: pre.src-c::before { content: "C"; }
+#+HTML_HEAD: pre.src-cpp::before, pre.src-c++::before { content: "C++"; }
+#+HTML_HEAD: pre.src-java::before { content: "Java"; }
+#+HTML_HEAD: pre.src-sql::before { content: "SQL"; }
+#+HTML_HEAD: pre.src-yaml::before { content: "YAML"; }
+#+HTML_HEAD: pre.src-json::before { content: "JSON"; }
+#+HTML_HEAD: pre.src-toml::before { content: "TOML"; }
+#+HTML_HEAD: pre.src-elisp::before, pre.src-emacs-lisp::before { content: "Emacs Lisp"; }
+#+HTML_HEAD: pre.src-org::before { content: "Org"; }
+#+HTML_HEAD: pre.src-latex::before { content: "LaTeX"; }
+#+HTML_HEAD: pre.src-css::before { content: "CSS"; }
+#+HTML_HEAD: pre.src-html::before { content: "HTML"; }
+#+HTML_HEAD: pre.src-go::before { content: "Go"; }
+#+HTML_HEAD: pre.src-cuda::before { content: "CUDA"; }
+#+HTML_HEAD: pre.src-glsl::before { content: "GLSL"; }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Example blocks */
+#+HTML_HEAD: pre.example {
+#+HTML_HEAD:   border-left: 4px solid var(--color-border-default);
+#+HTML_HEAD:   background-color: var(--color-canvas-subtle);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Syntax highlighting (org htmlize classes) */
+#+HTML_HEAD: .org-keyword { color: var(--syntax-keyword); }
+#+HTML_HEAD: .org-string { color: var(--syntax-string); }
+#+HTML_HEAD: .org-comment, .org-comment-delimiter { color: var(--syntax-comment); font-style: italic; }
+#+HTML_HEAD: .org-function-name { color: var(--syntax-function); }
+#+HTML_HEAD: .org-variable-name { color: var(--syntax-variable); }
+#+HTML_HEAD: .org-type { color: var(--syntax-type); }
+#+HTML_HEAD: .org-builtin { color: var(--syntax-keyword); }
+#+HTML_HEAD: .org-constant { color: var(--syntax-constant); }
+#+HTML_HEAD: .org-preprocessor { color: var(--syntax-keyword); }
+#+HTML_HEAD: .org-doc { color: var(--syntax-comment); }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    Tables
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD: table {
+#+HTML_HEAD:   display: block;
+#+HTML_HEAD:   width: 100%;
+#+HTML_HEAD:   width: max-content;
+#+HTML_HEAD:   max-width: 100%;
+#+HTML_HEAD:   overflow: auto;
+#+HTML_HEAD:   margin: var(--space-3) 0;
+#+HTML_HEAD:   border-spacing: 0;
+#+HTML_HEAD:   border-collapse: collapse;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: table th, table td {
+#+HTML_HEAD:   padding: 6px 13px;
+#+HTML_HEAD:   border: 1px solid var(--color-border-default);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: table th {
+#+HTML_HEAD:   font-weight: 600;
+#+HTML_HEAD:   background-color: var(--color-canvas-subtle);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: table tr {
+#+HTML_HEAD:   background-color: var(--color-canvas-default);
+#+HTML_HEAD:   border-top: 1px solid var(--color-border-muted);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: table tr:nth-child(2n) {
+#+HTML_HEAD:   background-color: var(--color-canvas-subtle);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    Lists
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD: ul, ol {
+#+HTML_HEAD:   margin-top: 0;
+#+HTML_HEAD:   margin-bottom: var(--space-3);
+#+HTML_HEAD:   padding-left: 2em;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: ul ul, ul ol, ol ul, ol ol {
+#+HTML_HEAD:   margin-top: 0;
+#+HTML_HEAD:   margin-bottom: 0;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: li {
+#+HTML_HEAD:   margin-top: 0.25em;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: li > p {
+#+HTML_HEAD:   margin-top: var(--space-3);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: li + li {
+#+HTML_HEAD:   margin-top: 0.25em;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Definition lists */
+#+HTML_HEAD: dl {
+#+HTML_HEAD:   padding: 0;
+#+HTML_HEAD:   margin-bottom: var(--space-3);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: dl dt {
+#+HTML_HEAD:   padding: 0;
+#+HTML_HEAD:   margin-top: var(--space-3);
+#+HTML_HEAD:   font-weight: 600;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: dl dd {
+#+HTML_HEAD:   padding: 0 var(--space-3);
+#+HTML_HEAD:   margin-left: 0;
+#+HTML_HEAD:   margin-bottom: var(--space-3);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    Blockquotes
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD: blockquote {
+#+HTML_HEAD:   margin: var(--space-3) 0;
+#+HTML_HEAD:   padding: 0 1em;
+#+HTML_HEAD:   color: var(--color-fg-muted);
+#+HTML_HEAD:   border-left: 0.25em solid var(--color-border-default);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: blockquote > :first-child {
+#+HTML_HEAD:   margin-top: 0;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: blockquote > :last-child {
+#+HTML_HEAD:   margin-bottom: 0;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    Horizontal Rules
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD: hr {
+#+HTML_HEAD:   height: 0.25em;
+#+HTML_HEAD:   margin: var(--space-4) 0;
+#+HTML_HEAD:   padding: 0;
+#+HTML_HEAD:   background-color: var(--color-border-default);
+#+HTML_HEAD:   border: 0;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    Images & Figures
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD: img {
+#+HTML_HEAD:   max-width: 100%;
+#+HTML_HEAD:   height: auto;
+#+HTML_HEAD:   border-radius: var(--border-radius);
+#+HTML_HEAD:   background-color: var(--color-canvas-default);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: .figure {
+#+HTML_HEAD:   margin: var(--space-3) 0;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: .figure p.caption {
+#+HTML_HEAD:   margin-top: var(--space-2);
+#+HTML_HEAD:   font-size: var(--font-size-small);
+#+HTML_HEAD:   color: var(--color-fg-muted);
+#+HTML_HEAD:   text-align: center;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    GitHub-style Alerts (NOTE, WARNING, TIP, IMPORTANT, CAUTION)
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD: div.NOTE, div.TIP, div.IMPORTANT, div.WARNING, div.CAUTION,
+#+HTML_HEAD: .admonition, .notice {
+#+HTML_HEAD:   padding: var(--space-3);
+#+HTML_HEAD:   margin: var(--space-3) 0;
+#+HTML_HEAD:   border-radius: var(--border-radius);
+#+HTML_HEAD:   border-left: 4px solid;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: div.NOTE, .admonition.note, .notice-info {
+#+HTML_HEAD:   background-color: var(--color-accent-subtle);
+#+HTML_HEAD:   border-left-color: var(--color-accent-fg);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: div.TIP, .admonition.tip {
+#+HTML_HEAD:   background-color: var(--color-success-subtle);
+#+HTML_HEAD:   border-left-color: var(--color-success-fg);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: div.IMPORTANT, .admonition.important {
+#+HTML_HEAD:   background-color: var(--color-done-subtle);
+#+HTML_HEAD:   border-left-color: var(--color-done-fg);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: div.WARNING, .admonition.warning, .notice-warning {
+#+HTML_HEAD:   background-color: var(--color-attention-subtle);
+#+HTML_HEAD:   border-left-color: var(--color-attention-fg);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: div.CAUTION, .admonition.caution, .notice-danger {
+#+HTML_HEAD:   background-color: var(--color-danger-subtle);
+#+HTML_HEAD:   border-left-color: var(--color-danger-fg);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Alert titles */
+#+HTML_HEAD: div.NOTE::before, div.TIP::before, div.IMPORTANT::before,
+#+HTML_HEAD: div.WARNING::before, div.CAUTION::before {
+#+HTML_HEAD:   display: block;
+#+HTML_HEAD:   margin-bottom: var(--space-2);
+#+HTML_HEAD:   font-weight: 600;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: div.NOTE::before { content: "Note"; color: var(--color-accent-fg); }
+#+HTML_HEAD: div.TIP::before { content: "Tip"; color: var(--color-success-fg); }
+#+HTML_HEAD: div.IMPORTANT::before { content: "Important"; color: var(--color-done-fg); }
+#+HTML_HEAD: div.WARNING::before { content: "Warning"; color: var(--color-attention-fg); }
+#+HTML_HEAD: div.CAUTION::before { content: "Caution"; color: var(--color-danger-fg); }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Alert content */
+#+HTML_HEAD: div.NOTE > :last-child, div.TIP > :last-child, div.IMPORTANT > :last-child,
+#+HTML_HEAD: div.WARNING > :last-child, div.CAUTION > :last-child {
+#+HTML_HEAD:   margin-bottom: 0;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    TODO/DONE Keywords
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD: .todo, .done {
+#+HTML_HEAD:   display: inline-block;
+#+HTML_HEAD:   padding: 0.125em 0.5em;
+#+HTML_HEAD:   font-family: var(--font-family-mono);
+#+HTML_HEAD:   font-size: 0.75rem;
+#+HTML_HEAD:   font-weight: 600;
+#+HTML_HEAD:   border-radius: 2em;
+#+HTML_HEAD:   vertical-align: middle;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: .todo {
+#+HTML_HEAD:   color: var(--color-attention-fg);
+#+HTML_HEAD:   background-color: var(--color-attention-subtle);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: .done {
+#+HTML_HEAD:   color: var(--color-success-fg);
+#+HTML_HEAD:   background-color: var(--color-success-subtle);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    Tags
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD: .tag {
+#+HTML_HEAD:   float: right;
+#+HTML_HEAD:   margin-top: 0.25em;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: .tag span {
+#+HTML_HEAD:   display: inline-block;
+#+HTML_HEAD:   padding: 0.125em 0.5em;
+#+HTML_HEAD:   margin-left: 0.25em;
+#+HTML_HEAD:   font-family: var(--font-family-mono);
+#+HTML_HEAD:   font-size: 0.75rem;
+#+HTML_HEAD:   font-weight: 500;
+#+HTML_HEAD:   color: var(--color-accent-fg);
+#+HTML_HEAD:   background-color: var(--color-accent-subtle);
+#+HTML_HEAD:   border-radius: 2em;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    KaTeX Math Styling
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD: .katex-display {
+#+HTML_HEAD:   margin: var(--space-3) 0;
+#+HTML_HEAD:   overflow-x: auto;
+#+HTML_HEAD:   overflow-y: hidden;
+#+HTML_HEAD:   padding: var(--space-2) 0;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: .katex {
+#+HTML_HEAD:   font-size: 1.1em;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Scrollable display math on overflow */
+#+HTML_HEAD: .katex-display > .katex {
+#+HTML_HEAD:   white-space: nowrap;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    Table of Contents (Sidebar)
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD: #table-of-contents {
+#+HTML_HEAD:   font-size: var(--font-size-small);
+#+HTML_HEAD:   line-height: 1.4;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: #table-of-contents h2 {
+#+HTML_HEAD:   margin-top: 0;
+#+HTML_HEAD:   margin-bottom: var(--space-3);
+#+HTML_HEAD:   padding-bottom: var(--space-2);
+#+HTML_HEAD:   font-size: 0.875rem;
+#+HTML_HEAD:   font-weight: 600;
+#+HTML_HEAD:   color: var(--color-fg-default);
+#+HTML_HEAD:   border-bottom: 1px solid var(--color-border-default);
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: #table-of-contents ul {
+#+HTML_HEAD:   margin: 0;
+#+HTML_HEAD:   padding-left: var(--space-3);
+#+HTML_HEAD:   list-style: none;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: #table-of-contents > div > ul {
+#+HTML_HEAD:   padding-left: 0;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: #table-of-contents li {
+#+HTML_HEAD:   margin: var(--space-1) 0;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: #table-of-contents a {
+#+HTML_HEAD:   color: var(--color-fg-default);
+#+HTML_HEAD:   text-decoration: none;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: #table-of-contents a:hover {
+#+HTML_HEAD:   color: var(--color-accent-fg);
+#+HTML_HEAD:   text-decoration: none;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: #table-of-contents .tag {
+#+HTML_HEAD:   display: none;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: #table-of-contents .todo,
+#+HTML_HEAD: #table-of-contents .done {
+#+HTML_HEAD:   font-size: 0.65rem;
+#+HTML_HEAD:   padding: 0.1em 0.4em;
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    Responsive Layout
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD:
+#+HTML_HEAD: /* Large screens (>= 1012px): Sidebar layout */
+#+HTML_HEAD: @media screen and (min-width: 1012px) {
+#+HTML_HEAD:   body {
+#+HTML_HEAD:     display: block;
+#+HTML_HEAD:     min-height: 100vh;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Title stays at top */
+#+HTML_HEAD:   h1.title {
+#+HTML_HEAD:     position: sticky;
+#+HTML_HEAD:     top: 0;
+#+HTML_HEAD:     z-index: 100;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Main layout wrapper - created by JS or manual wrapping */
+#+HTML_HEAD:   .layout-wrapper {
+#+HTML_HEAD:     display: flex;
+#+HTML_HEAD:     flex-direction: row;
+#+HTML_HEAD:     max-width: calc(var(--content-width) + var(--sidebar-width) + 64px);
+#+HTML_HEAD:     margin: 0 auto;
+#+HTML_HEAD:     padding: 0 var(--space-3);
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Fallback: when no wrapper, use flex on body descendants */
+#+HTML_HEAD:   body:not(:has(.layout-wrapper)) {
+#+HTML_HEAD:     display: flex;
+#+HTML_HEAD:     flex-direction: column;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   body:not(:has(.layout-wrapper)) > h1.title {
+#+HTML_HEAD:     flex-shrink: 0;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   body:not(:has(.layout-wrapper)) > h1.title ~ * {
+#+HTML_HEAD:     /* All elements after title become part of flex row */
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   /* TOC Sidebar */
+#+HTML_HEAD:   #table-of-contents {
+#+HTML_HEAD:     position: fixed;
+#+HTML_HEAD:     left: 0;
+#+HTML_HEAD:     top: 0;
+#+HTML_HEAD:     width: var(--sidebar-width);
+#+HTML_HEAD:     height: 100vh;
+#+HTML_HEAD:     padding: var(--space-4);
+#+HTML_HEAD:     padding-top: calc(var(--space-4) + 60px); /* Account for sticky title */
+#+HTML_HEAD:     background-color: var(--color-canvas-subtle);
+#+HTML_HEAD:     border-right: 1px solid var(--color-border-default);
+#+HTML_HEAD:     overflow-y: auto;
+#+HTML_HEAD:     overflow-x: hidden;
+#+HTML_HEAD:     z-index: 50;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Custom scrollbar for TOC */
+#+HTML_HEAD:   #table-of-contents::-webkit-scrollbar {
+#+HTML_HEAD:     width: 6px;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   #table-of-contents::-webkit-scrollbar-track {
+#+HTML_HEAD:     background: transparent;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   #table-of-contents::-webkit-scrollbar-thumb {
+#+HTML_HEAD:     background-color: var(--color-border-default);
+#+HTML_HEAD:     border-radius: 3px;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Main content - offset by sidebar width */
+#+HTML_HEAD:   #content {
+#+HTML_HEAD:     margin-left: var(--sidebar-width);
+#+HTML_HEAD:     max-width: var(--content-width);
+#+HTML_HEAD:     padding: var(--space-4);
+#+HTML_HEAD:     padding-left: var(--space-5);
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Footer also offset */
+#+HTML_HEAD:   #postamble {
+#+HTML_HEAD:     margin-left: var(--sidebar-width);
+#+HTML_HEAD:     max-width: var(--content-width);
+#+HTML_HEAD:     padding-left: var(--space-5);
+#+HTML_HEAD:   }
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Medium screens (768px - 1011px): No sidebar */
+#+HTML_HEAD: @media screen and (min-width: 768px) and (max-width: 1011px) {
+#+HTML_HEAD:   body {
+#+HTML_HEAD:     display: block;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   #table-of-contents {
+#+HTML_HEAD:     max-width: var(--content-width);
+#+HTML_HEAD:     margin: 0 auto var(--space-4) auto;
+#+HTML_HEAD:     padding: var(--space-3);
+#+HTML_HEAD:     background-color: var(--color-canvas-subtle);
+#+HTML_HEAD:     border-radius: var(--border-radius);
+#+HTML_HEAD:     border: 1px solid var(--color-border-default);
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   #content, #postamble {
+#+HTML_HEAD:     max-width: var(--content-width);
+#+HTML_HEAD:     margin: 0 auto;
+#+HTML_HEAD:     padding: 0 var(--space-3);
+#+HTML_HEAD:   }
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* Small screens (< 768px): Mobile layout */
+#+HTML_HEAD: @media screen and (max-width: 767px) {
+#+HTML_HEAD:   :root {
+#+HTML_HEAD:     --font-size-base: 14px;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   body {
+#+HTML_HEAD:     display: block;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   h1.title {
+#+HTML_HEAD:     padding: var(--space-2) var(--space-3);
+#+HTML_HEAD:     font-size: 1.1rem;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   #table-of-contents {
+#+HTML_HEAD:     margin: var(--space-3);
+#+HTML_HEAD:     padding: var(--space-3);
+#+HTML_HEAD:     background-color: var(--color-canvas-subtle);
+#+HTML_HEAD:     border-radius: var(--border-radius);
+#+HTML_HEAD:     border: 1px solid var(--color-border-default);
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   #content, #postamble {
+#+HTML_HEAD:     padding: 0 var(--space-3);
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Smaller headings on mobile */
+#+HTML_HEAD:   h1 { font-size: 1.5rem; }
+#+HTML_HEAD:   h2 { font-size: 1.25rem; }
+#+HTML_HEAD:   h3 { font-size: 1.1rem; }
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Full-width tables on mobile */
+#+HTML_HEAD:   table {
+#+HTML_HEAD:     display: block;
+#+HTML_HEAD:     overflow-x: auto;
+#+HTML_HEAD:     -webkit-overflow-scrolling: touch;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Smaller code blocks */
+#+HTML_HEAD:   pre {
+#+HTML_HEAD:     padding: var(--space-2);
+#+HTML_HEAD:     font-size: 0.8rem;
+#+HTML_HEAD:   }
+#+HTML_HEAD: }
+#+HTML_HEAD:
+#+HTML_HEAD: /* ----------------------------------------------------------------------------
+#+HTML_HEAD:    Print Styles
+#+HTML_HEAD:    ---------------------------------------------------------------------------- */
+#+HTML_HEAD: @media print {
+#+HTML_HEAD:   :root {
+#+HTML_HEAD:     --color-fg-default: #000000;
+#+HTML_HEAD:     --color-canvas-default: #ffffff;
+#+HTML_HEAD:     --color-canvas-subtle: #f5f5f5;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   body {
+#+HTML_HEAD:     display: block;
+#+HTML_HEAD:     font-size: 12pt;
+#+HTML_HEAD:     color: black;
+#+HTML_HEAD:     background: white;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   @page {
+#+HTML_HEAD:     margin: 20mm;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   h1.title {
+#+HTML_HEAD:     position: static;
+#+HTML_HEAD:     background: none;
+#+HTML_HEAD:     border-bottom: 2px solid black;
+#+HTML_HEAD:     page-break-after: avoid;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   .theme-toggle {
+#+HTML_HEAD:     display: none;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   #table-of-contents {
+#+HTML_HEAD:     position: static;
+#+HTML_HEAD:     width: auto;
+#+HTML_HEAD:     height: auto;
+#+HTML_HEAD:     padding: 0;
+#+HTML_HEAD:     background: none;
+#+HTML_HEAD:     border: none;
+#+HTML_HEAD:     page-break-after: always;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   #content, #postamble {
+#+HTML_HEAD:     max-width: 100%;
+#+HTML_HEAD:     padding: 0;
+#+HTML_HEAD:     margin: 0;
+#+HTML_HEAD:     margin-left: 0;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   h2, h3, h4 {
+#+HTML_HEAD:     page-break-after: avoid;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   pre, blockquote, table, figure {
+#+HTML_HEAD:     page-break-inside: avoid;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   a {
+#+HTML_HEAD:     color: black;
+#+HTML_HEAD:     text-decoration: underline;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   a[href^="http"]::after {
+#+HTML_HEAD:     content: " (" attr(href) ")";
+#+HTML_HEAD:     font-size: 0.8em;
+#+HTML_HEAD:     color: #666;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   /* Hide non-essential elements */
+#+HTML_HEAD:   .tag, .todo, .done {
+#+HTML_HEAD:     border: 1px solid #ccc;
+#+HTML_HEAD:     background: none;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   pre {
+#+HTML_HEAD:     border: 1px solid #ccc;
+#+HTML_HEAD:     background-color: #f5f5f5;
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   pre.src::before {
+#+HTML_HEAD:     background: #ccc;
+#+HTML_HEAD:     color: black;
+#+HTML_HEAD:   }
+#+HTML_HEAD: }
+#+HTML_HEAD: </style>
+
+# === JavaScript Initialization ===
+#+HTML_HEAD: <script>
+#+HTML_HEAD: // Theme management - runs immediately to prevent flash
+#+HTML_HEAD: (function() {
+#+HTML_HEAD:   const STORAGE_KEY = 'theme-preference';
+#+HTML_HEAD:
+#+HTML_HEAD:   // Get theme preference: stored > system > light
+#+HTML_HEAD:   function getThemePreference() {
+#+HTML_HEAD:     const stored = localStorage.getItem(STORAGE_KEY);
+#+HTML_HEAD:     if (stored) return stored;
+#+HTML_HEAD:     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   // Apply theme to document
+#+HTML_HEAD:   function applyTheme(theme) {
+#+HTML_HEAD:     const root = document.documentElement;
+#+HTML_HEAD:     if (theme === 'dark') {
+#+HTML_HEAD:       root.setAttribute('data-theme', 'dark');
+#+HTML_HEAD:     } else if (theme === 'light') {
+#+HTML_HEAD:       root.setAttribute('data-theme', 'light');
+#+HTML_HEAD:     } else {
+#+HTML_HEAD:       root.removeAttribute('data-theme'); // Use system preference
+#+HTML_HEAD:     }
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   // Apply theme immediately to prevent flash
+#+HTML_HEAD:   applyTheme(getThemePreference());
+#+HTML_HEAD:
+#+HTML_HEAD:   // Expose functions globally for toggle button
+#+HTML_HEAD:   window.themeManager = {
+#+HTML_HEAD:     getPreference: getThemePreference,
+#+HTML_HEAD:     apply: applyTheme,
+#+HTML_HEAD:     toggle: function() {
+#+HTML_HEAD:       const current = getThemePreference();
+#+HTML_HEAD:       const next = current === 'dark' ? 'light' : 'dark';
+#+HTML_HEAD:       localStorage.setItem(STORAGE_KEY, next);
+#+HTML_HEAD:       applyTheme(next);
+#+HTML_HEAD:       return next;
+#+HTML_HEAD:     },
+#+HTML_HEAD:     setSystem: function() {
+#+HTML_HEAD:       localStorage.removeItem(STORAGE_KEY);
+#+HTML_HEAD:       applyTheme(null);
+#+HTML_HEAD:     }
+#+HTML_HEAD:   };
+#+HTML_HEAD: })();
+#+HTML_HEAD:
+#+HTML_HEAD: document.addEventListener("DOMContentLoaded", function() {
+#+HTML_HEAD:   // Create and inject theme toggle button
+#+HTML_HEAD:   const title = document.querySelector('h1.title');
+#+HTML_HEAD:   if (title) {
+#+HTML_HEAD:     const toggleBtn = document.createElement('button');
+#+HTML_HEAD:     toggleBtn.className = 'theme-toggle';
+#+HTML_HEAD:     toggleBtn.setAttribute('aria-label', 'Toggle dark/light theme');
+#+HTML_HEAD:     toggleBtn.setAttribute('title', 'Toggle theme');
+#+HTML_HEAD:     toggleBtn.innerHTML = `
+#+HTML_HEAD:       <svg class="icon-sun" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+#+HTML_HEAD:         <path d="M8 12a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-1.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zm5.657-8.157a.75.75 0 0 1 0 1.061l-1.061 1.06a.75.75 0 1 1-1.06-1.06l1.06-1.06a.75.75 0 0 1 1.06 0zm-9.193 9.193a.75.75 0 0 1 0 1.06l-1.06 1.061a.75.75 0 1 1-1.061-1.06l1.06-1.061a.75.75 0 0 1 1.061 0zM8 0a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V.75A.75.75 0 0 1 8 0zM3 8a.75.75 0 0 1-.75.75H.75a.75.75 0 0 1 0-1.5h1.5A.75.75 0 0 1 3 8zm13 0a.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1 0-1.5h1.5A.75.75 0 0 1 16 8zm-8 5a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0v-1.5A.75.75 0 0 1 8 13zM2.343 2.343a.75.75 0 0 1 1.061 0l1.06 1.061a.75.75 0 0 1-1.06 1.06l-1.06-1.06a.75.75 0 0 1 0-1.06zm9.193 9.193a.75.75 0 0 1 1.06 0l1.061 1.06a.75.75 0 0 1-1.06 1.061l-1.061-1.06a.75.75 0 0 1 0-1.061z"/>
+#+HTML_HEAD:       </svg>
+#+HTML_HEAD:       <svg class="icon-moon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+#+HTML_HEAD:         <path d="M9.598 1.591a.75.75 0 0 1 .785-.175 7 7 0 1 1-8.967 8.967.75.75 0 0 1 .961-.96 5.5 5.5 0 0 0 7.046-7.046.75.75 0 0 1 .175-.786zm1.616 1.945a7 7 0 0 1-7.678 7.678 5.5 5.5 0 1 0 7.678-7.678z"/>
+#+HTML_HEAD:       </svg>
+#+HTML_HEAD:     `;
+#+HTML_HEAD:     toggleBtn.addEventListener('click', function() {
+#+HTML_HEAD:       window.themeManager.toggle();
+#+HTML_HEAD:     });
+#+HTML_HEAD:     title.appendChild(toggleBtn);
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   // Listen for system theme changes
+#+HTML_HEAD:   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+#+HTML_HEAD:     if (!localStorage.getItem('theme-preference')) {
+#+HTML_HEAD:       window.themeManager.apply(e.matches ? 'dark' : 'light');
+#+HTML_HEAD:     }
+#+HTML_HEAD:   });
+#+HTML_HEAD:
+#+HTML_HEAD:   // Initialize KaTeX auto-render
+#+HTML_HEAD:   if (typeof renderMathInElement !== 'undefined') {
+#+HTML_HEAD:     renderMathInElement(document.body, {
+#+HTML_HEAD:       delimiters: [
+#+HTML_HEAD:         {left: "$$", right: "$$", display: true},
+#+HTML_HEAD:         {left: "\\[", right: "\\]", display: true},
+#+HTML_HEAD:         {left: "$", right: "$", display: false},
+#+HTML_HEAD:         {left: "\\(", right: "\\)", display: false}
+#+HTML_HEAD:       ],
+#+HTML_HEAD:       throwOnError: false,
+#+HTML_HEAD:       strict: false
+#+HTML_HEAD:     });
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   // Initialize pseudocode rendering
+#+HTML_HEAD:   if (typeof pseudocode !== 'undefined') {
+#+HTML_HEAD:     pseudocode.renderClass("pseudocode");
+#+HTML_HEAD:   }
+#+HTML_HEAD:
+#+HTML_HEAD:   // Initialize highlight.js for code blocks
+#+HTML_HEAD:   if (typeof hljs !== 'undefined') {
+#+HTML_HEAD:     // Map org-mode src class names to highlight.js language names
+#+HTML_HEAD:     document.querySelectorAll('pre.src').forEach(function(block) {
+#+HTML_HEAD:       var classList = block.className.split(' ');
+#+HTML_HEAD:       for (var i = 0; i < classList.length; i++) {
+#+HTML_HEAD:         if (classList[i].startsWith('src-')) {
+#+HTML_HEAD:           var lang = classList[i].replace('src-', '');
+#+HTML_HEAD:           // Handle language aliases
+#+HTML_HEAD:           if (lang === 'elisp' || lang === 'emacs-lisp') lang = 'lisp';
+#+HTML_HEAD:           if (lang === 'sh' || lang === 'shell') lang = 'bash';
+#+HTML_HEAD:           if (lang === 'c++') lang = 'cpp';
+#+HTML_HEAD:           // CUDA uses C++ highlighting
+#+HTML_HEAD:           if (lang === 'cuda') lang = 'cpp';
+#+HTML_HEAD:           block.classList.add('language-' + lang);
+#+HTML_HEAD:           break;
+#+HTML_HEAD:         }
+#+HTML_HEAD:       }
+#+HTML_HEAD:       hljs.highlightElement(block);
+#+HTML_HEAD:     });
+#+HTML_HEAD:   }
+#+HTML_HEAD: });
+#+HTML_HEAD: </script>
