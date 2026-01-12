@@ -339,4 +339,45 @@ mod tests {
             voxel.principal_axis
         );
     }
+
+    #[test]
+    fn test_eigenvalue_ordering() {
+        // Create a covariance matrix with known, distinct eigenvalues
+        let cov = Matrix3::new(
+            0.5, 0.0, 0.0, //
+            0.0, 0.3, 0.0, //
+            0.0, 0.0, 0.01,
+        );
+
+        let eigen = cov.symmetric_eigen();
+        let e0: f64 = eigen.eigenvalues[0];
+        let e1: f64 = eigen.eigenvalues[1];
+        let e2: f64 = eigen.eigenvalues[2];
+
+        println!("Covariance diagonal: [0.5, 0.3, 0.01]");
+        println!("Eigenvalues:");
+        println!("  eigenvalue[0] = {:.6}", e0);
+        println!("  eigenvalue[1] = {:.6}", e1);
+        println!("  eigenvalue[2] = {:.6}", e2);
+
+        // Find min and max
+        let min_val = e0.min(e1).min(e2);
+        let max_val = e0.max(e1).max(e2);
+        println!("Min eigenvalue: {}", min_val);
+        println!("Max eigenvalue: {}", max_val);
+
+        // In Eigen (Autoware), eigenvalues are sorted in ASCENDING order
+        // eigenvalue(0, 0) is smallest, eigenvalue(2, 2) is largest
+        // They use eigenvalue(2, 2) as max for regularization threshold
+
+        // Note: nalgebra may NOT sort eigenvalues in any particular order!
+        // Let's check...
+        if e0 < e1 && e1 < e2 {
+            println!("nalgebra order: ASCENDING (matches Eigen)");
+        } else if e0 > e1 && e1 > e2 {
+            println!("nalgebra order: DESCENDING (opposite of Eigen)");
+        } else {
+            println!("nalgebra order: UNORDERED (random order)");
+        }
+    }
 }
