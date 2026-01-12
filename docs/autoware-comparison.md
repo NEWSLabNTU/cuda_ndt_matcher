@@ -2,7 +2,7 @@
 
 Feature comparison between `cuda_ndt_matcher` and Autoware's `ndt_scan_matcher`.
 
-**Last Updated**: 2026-01-12 (Phase 16 GPU Initial Pose kernels added)
+**Last Updated**: 2026-01-13 (Added test coverage section)
 
 ---
 
@@ -227,7 +227,7 @@ See `docs/roadmap/phase-13-gpu-scoring-pipeline.md` for implementation details.
 | Distance tolerance      | ✅     | —   | Same thresholds     | Single check                                         |
 | TPE optimization        | ✅     | —   | Same algorithm      | Sequential Bayesian optimization (data dependency)   |
 | Particle evaluation     | ✅     | ✅  | Same                | Uses GPU NVTL batch                                  |
-| Batch startup alignment | 🔲     | 🔲  | N/A (our extension) | **Planned**: Batch N startup particles in single GPU pass |
+| Batch startup alignment | ✅     | ✅  | N/A (our extension) | **Phase 16**: Batch N startup particles via `align_batch()` |
 | Monte Carlo markers     | ✅     | —   | Same visualization  | ROS message creation                                 |
 | `multi_initial_pose`    | ✅     | —   | Same                | Initial offset poses for MULTI_NDT covariance        |
 
@@ -235,35 +235,39 @@ See `docs/roadmap/phase-13-gpu-scoring-pipeline.md` for implementation details.
 
 The initial pose estimation has two phases with different parallelization potential:
 
-| Phase | Particles | Current | GPU Potential | Speedup |
-|-------|-----------|---------|---------------|---------|
-| **Startup** (random sampling) | First N | Sequential (N × 16ms) | Fully parallel (~25ms) | **6x** |
-| **TPE-guided** (Bayesian opt) | Remaining | Sequential | Sequential (data dependency) | 1x |
+| Phase | Particles | Implementation | GPU Acceleration | Speedup |
+|-------|-----------|----------------|------------------|---------|
+| **Startup** (random sampling) | First N | Batch via `align_batch()` | ✅ Full GPU | ~6x |
+| **TPE-guided** (Bayesian opt) | Remaining | Sequential | — (data dependency) | 1x |
 
 **Why startup is parallelizable**: No dependencies between particles - all use random poses.
 
 **Why TPE-guided is sequential**: Each particle depends on previous results to guide the search via kernel density estimation.
 
-### Planned: GPU Batch Startup Pipeline
+### GPU Batch Startup Pipeline (✅ Complete)
 
 See `docs/roadmap/phase-16-gpu-initial-pose-pipeline.md` for implementation details.
 
 ```
-Current flow (sequential):
+Previous flow (sequential):
   FOR i = 1 to N:
     pose[i] = random()           ─┐
     result[i] = NDT_align(pose)   │ 16ms per particle
     nvtl[i] = evaluate_NVTL()    ─┘
   Total: N × 16ms = 160ms (N=10)
 
-GPU batch flow (parallel):
+Current flow (batch parallel):
   poses[1..N] = random()         ─┐
-  results = batch_NDT_align()     │ ~25ms total
+  results = align_batch(poses)    │ ~25ms total (GPU batch)
   nvtls = batch_NVTL()           ─┘
   Total: ~25ms (6x speedup)
 ```
 
-**Status**: 🔲 Planned - requires batched cuSOLVER integration
+**Implementation** (`initial_pose.rs`):
+- Startup phase samples all N poses from TPE at once
+- Uses `ndt_manager.align_batch()` for GPU batch alignment
+- Falls back to sequential CPU alignment on error
+- Guided phase remains sequential (TPE data dependency)
 
 ---
 
@@ -436,6 +440,161 @@ All diagnostic keys published by Autoware are now implemented:
 
 ---
 
+## 12. Test Coverage
+
+**Last Updated**: 2026-01-13 | **Total**: 422 tests (419 pass, 3 ignored)
+
+### 1. Core NDT Algorithm
+
+| Feature                       | Tests | Test Names                                                                                                                          |
+|-------------------------------|-------|-------------------------------------------------------------------------------------------------------------------------------------|
+| Newton-Raphson optimization   | 10    | `test_newton_step_*`, `test_align_identity`, `test_align_with_translation`                                                          |
+| More-Thuente line search      | 6     | `test_simple_line_search`, `test_quadratic_minimization`, `test_auxiliary_psi`, `test_armijo_condition`, `test_curvature_condition` |
+| Voxel grid construction       | 15    | `test_build_voxel_grid_*`, `test_voxel_grid_from_*`, `test_gpu_voxel_grid_construction`                                             |
+| Gaussian covariance per voxel | 8     | `test_covariance_symmetry`, `test_regularize_covariance`, `test_autoware_voxel_construction`, `test_compare_covariance_computation` |
+| Multi-voxel radius search     | 5     | `test_radius_search_*`, `test_3d_radius_search`, `test_within_with_distances`                                                       |
+| Convergence detection         | 3     | `test_check_convergence`, `test_convergence_status`, `test_convergence_kernel_*`                                                    |
+| Oscillation detection         | 10    | `test_oscillation_*`, `test_no_oscillation_*`, `test_pipeline_v2_oscillation_tracking`                                              |
+| Step size clamping            | 2     | `test_apply_pose_delta_*`, `test_generate_candidates_with_clamping`                                                                 |
+| KDTREE search                 | 5     | `test_single_voxel`, `test_multiple_voxels_radius_search`, `test_3d_radius_search`                                                  |
+
+### 1.2 Voxel Grid Pipeline
+
+| Stage                   | Tests | Test Names                                                                                        |
+|-------------------------|-------|---------------------------------------------------------------------------------------------------|
+| Morton code computation | 3     | `test_morton_codes_valid`, `test_compute_morton_codes_cpu`, `test_morton_encode_decode_roundtrip` |
+| Radix sort              | 8     | `test_sort_*`, `test_radix_sort_gpu`, `test_radix_sort_preserves_data`                            |
+| Segment detection       | 10    | `test_detect_segments_*`, `test_segment_detection_*`, `test_gpu_segment_detection`                |
+| Statistics accumulation | 6     | `test_voxel_sums_*`, `test_means_from_sums`, `test_full_statistics_pipeline`                      |
+| GPU vs CPU consistency  | 6     | `test_cpu_gpu_*_consistency`, `test_gpu_zero_copy_vs_*`                                           |
+
+### 2. Derivative Computation
+
+| Feature                     | Tests | Test Names                                                                                                    |
+|-----------------------------|-------|---------------------------------------------------------------------------------------------------------------|
+| Jacobian computation        | 6     | `test_point_jacobians_identity`, `test_gpu_jacobians_match_cpu`, `test_jacobians_match_angular_derivatives`   |
+| Hessian computation         | 4     | `test_gpu_point_hessians_match_cpu`, `test_point_hessians_match_angular_derivatives`, `test_hessian_symmetry` |
+| Angular derivatives (j_ang) | 4     | `test_zero_angles`, `test_point_gradient_terms`, `test_small_angles_approximation`                            |
+| Point Hessian (h_ang)       | 3     | `test_point_hessian_terms`, `test_hessian_not_computed_when_disabled`                                         |
+| Gradient accumulation       | 3     | `test_gradient_finite_difference`, `test_derivative_result_accumulate`                                        |
+| CPU vs GPU derivatives      | 4     | `test_cpu_vs_gpu_derivatives`, `test_cpu_vs_gpu_single_point_single_voxel`                                    |
+
+### 3. Scoring
+
+| Feature                | Tests | Test Names                                                                       |
+|------------------------|-------|----------------------------------------------------------------------------------|
+| Transform probability  | 10    | `test_transform_probability_*`, `test_gpu_cpu_transform_probability_consistency` |
+| NVTL scoring           | 13    | `test_nvtl_*`, `test_gpu_cpu_nvtl_consistency`                                   |
+| Per-point score colors | 3     | `test_score_to_color_range`, `test_ndt_score_to_color`, `test_color_packing`     |
+| GPU scoring pipeline   | 6     | `test_gpu_scoring_*`, `test_gpu_vs_cpu_scoring`                                  |
+
+### 4. Covariance Estimation
+
+| Feature              | Tests | Test Names                                                |
+|----------------------|-------|-----------------------------------------------------------|
+| FIXED mode           | 1     | `test_adjust_diagonal`                                    |
+| LAPLACE mode         | 1     | `test_hessian_returned`                                   |
+| MULTI_NDT mode       | 3     | `test_sample_covariance`, `test_weighted_covariance_*`    |
+| MULTI_NDT_SCORE mode | 2     | `test_softmax_weights`, `test_gpu_scoring_multiple_poses` |
+| Offset pose proposal | 2     | `test_propose_offset_poses_*`                             |
+
+### 5. Initial Pose Estimation
+
+| Feature                    | Tests | Test Names                                                                            |
+|----------------------------|-------|---------------------------------------------------------------------------------------|
+| SmartPoseBuffer            | 10    | `test_push_back_*`, `test_interpolate_*`, `test_pop_old`, `test_clear`                |
+| Pose timeout validation    | 1     | `test_time_validation_rejects_stale_poses`                                            |
+| Distance tolerance         | 1     | `test_distance_validation_rejects_position_jumps`                                     |
+| TPE optimization           | 4     | `test_tpe_startup_phase`, `test_tpe_guided_phase`, `test_log_sum_exp*`                |
+| Particle evaluation        | 2     | `test_select_best_particle`, `test_select_best_empty`                                 |
+| Batch startup alignment    | 3     | `test_batch_kernels_compile`, `test_evaluate_batch_empty`*, `test_pipeline_creation`* |
+| Quaternion/pose conversion | 2     | `test_quaternion_rpy_roundtrip`, `test_input_pose_roundtrip`                          |
+
+*\* = requires CUDA GPU (ignored on CPU-only)*
+
+### 6. Map Management
+
+| Feature                 | Tests | Test Names                                                                             |
+|-------------------------|-------|----------------------------------------------------------------------------------------|
+| Dynamic map loading     | 2     | `test_load_full_map`, `test_check_and_update`                                          |
+| Tile-based updates      | 2     | `test_add_remove_tiles`, `test_get_stats`                                              |
+| Position-based trigger  | 4     | `test_should_update_*`                                                                 |
+| Map radius filtering    | 1     | `test_map_radius_filtering`                                                            |
+| Dual-NDT (non-blocking) | 3     | `test_dual_ndt_manager_creation`, `test_blocking_set_target`, `test_background_update` |
+
+### 7. Regularization
+
+| Feature               | Tests | Test Names                                                                         |
+|-----------------------|-------|------------------------------------------------------------------------------------|
+| Regularization buffer | 1     | (uses SmartPoseBuffer tests)                                                       |
+| Scale factor          | 1     | `test_regularization_with_offset`                                                  |
+| Enable/disable flag   | 2     | `test_regularization_disabled`, `test_pipeline_v2_regularization_disabled`         |
+| Gradient penalty      | 2     | `test_regularization_at_reference`, `test_regularization_with_offset`              |
+| Hessian contribution  | 1     | `test_regularization_with_yaw`                                                     |
+| GPU regularization    | 2     | `test_pipeline_v2_with_regularization`, `test_pipeline_v2_regularization_disabled` |
+
+### 8. Diagnostics
+
+| Feature                   | Tests | Test Names                                              |
+|---------------------------|-------|---------------------------------------------------------|
+| Execution time            | 1     | `test_execution_timer`                                  |
+| Diagnostic levels         | 2     | `test_diagnostic_category`, `test_level_only_increases` |
+| Scan matching diagnostics | 1     | `test_scan_matching_diagnostics`                        |
+
+### 9. Point Cloud Processing
+
+| Feature                | Tests | Test Names                                              |
+|------------------------|-------|---------------------------------------------------------|
+| PointCloud2 conversion | 2     | `test_from_pointcloud2`, `test_empty_pointcloud`        |
+| Distance filtering     | 4     | `test_filter_distance*`                                 |
+| Z-height filtering     | 2     | `test_filter_z_height`, `test_filter_z`                 |
+| Voxel downsampling     | 6     | `test_voxel_downsample_*`                               |
+| Combined filtering     | 2     | `test_filter_combined`, `test_filter_with_downsampling` |
+
+### 10. GPU Pipeline Integration
+
+| Feature              | Tests | Test Names                                                                                                       |
+|----------------------|-------|------------------------------------------------------------------------------------------------------------------|
+| Full GPU Newton      | 3     | `test_align_full_gpu_*`                                                                                          |
+| GPU Newton solver    | 6     | `test_solve_*` (gpu_newton.rs)                                                                                   |
+| Pipeline creation    | 2     | `test_pipeline_v2_creation`, `test_pipeline_v2_with_config`                                                      |
+| Line search pipeline | 2     | `test_pipeline_v2_with_line_search`, `test_pipeline_v2_no_line_search`                                           |
+| Debug collection     | 2     | `test_pipeline_v2_debug_collection`, `test_pipeline_v2_debug_disabled`                                           |
+| GPU kernels          | 8     | `test_transform_kernel_*`, `test_dot_product_kernel*`, `test_convergence_kernel_*`, `test_more_thuente_kernel_*` |
+
+### 11. CUB FFI Bindings
+
+| Feature           | Tests | Test Names                                          |
+|-------------------|-------|-----------------------------------------------------|
+| Radix sort        | 8     | `test_sort_*` (radix_sort.rs)                       |
+| Segment detection | 6     | `test_detect_segments_*` (segment_detect.rs)        |
+| Segmented reduce  | 7     | `test_sum_*` (segmented_reduce.rs)                  |
+| Batched Cholesky  | 2     | `test_solver_creation`, `test_workspace_size_query` |
+
+### Autoware Reference Verification
+
+Tests that verify correctness against Autoware's pclomp implementation:
+
+| Test                                            | Verification                             |
+|-------------------------------------------------|------------------------------------------|
+| `test_autoware_voxel_construction`              | Voxel grid output matches pclomp         |
+| `test_compare_covariance_computation`           | Covariance formula matches pclomp        |
+| `test_compare_inverse_covariance`               | Inverse covariance matches pclomp        |
+| `test_compare_mean_computation`                 | Voxel means match pclomp                 |
+| `test_eigenvalue_regularization`                | Eigenvalue regularization matches pclomp |
+| `test_jacobians_match_angular_derivatives`      | All 8 Jacobian terms match reference     |
+| `test_point_hessians_match_angular_derivatives` | All 15 Hessian terms match reference     |
+
+### Running Tests
+
+```bash
+just test                    # Run all tests
+just test -- test_name       # Run specific test
+just test -- --nocapture     # Run with output
+```
+
+---
+
 ## Summary: What's Missing
 
 ### Functional Gaps
@@ -483,6 +642,7 @@ None - all debug publishers are implemented.
 | NVTL scoring                    | Parallel per-point max                            |
 | Batch scoring (MULTI_NDT_SCORE) | `GpuScoringPipeline` - M poses × N points         |
 | Batch alignment (MULTI_NDT)     | `FullGpuPipelineV2` - shared voxel data           |
+| Batch startup (Initial Pose)    | `align_batch()` - Phase 16, ~6x speedup           |
 | Per-point score visualization   | GPU max-score extraction + CPU color mapping      |
 | Sensor point filtering          | GPU if ≥10k points                                |
 
@@ -503,6 +663,7 @@ None - all debug publishers are implemented.
 | GPU reduction (sum)           | ✅ Working    | ✅ Integrated     | CUB DeviceSegmentedReduce|
 | Batch scoring pipeline        | ✅ Working    | ✅ Integrated     | ~15x speedup             |
 | Batch alignment pipeline      | ✅ Working    | ✅ Integrated     | ~2-3x speedup            |
+| Batch startup pipeline        | ✅ Working    | ✅ Integrated     | Phase 16, ~6x speedup    |
 
 See `docs/roadmap/phase-15-gpu-line-search.md` for implementation details.
 
