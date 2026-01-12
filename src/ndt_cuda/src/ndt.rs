@@ -420,6 +420,12 @@ impl NdtScanMatcher {
         source_points: &[[f32; 3]],
         initial_guess: Isometry3<f64>,
     ) -> Result<AlignResult> {
+        // Use full GPU path when GPU is enabled and regularization is disabled
+        // (GPU path doesn't support GNSS regularization yet)
+        if self.config.use_gpu && !self.config.regularization_enabled {
+            return self.align_gpu(source_points, initial_guess);
+        }
+
         let grid = self
             .target_grid
             .as_ref()

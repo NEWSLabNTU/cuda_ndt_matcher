@@ -346,6 +346,159 @@ impl GpuNewtonSolver {
         Ok(solution)
     }
 
+    /// Solve H·δ = -g entirely on GPU with result staying on GPU.
+    ///
+    /// This is the Phase 15.3 implementation for zero-transfer Newton iterations.
+    /// Unlike `solve()`, this method:
+    /// - Takes GPU device slices directly (no host->device copy)
+    /// - Leaves the result on GPU (no device->host copy)
+    ///
+    /// # Arguments
+    /// * `hessian` - 6×6 Hessian matrix (column-major, already on GPU)
+    /// * `gradient` - 6-element gradient vector (on GPU)
+    /// * `delta` - 6-element output buffer (on GPU, will contain -H⁻¹g)
+    ///
+    /// # Note
+    /// The hessian buffer is modified during factorization.
+    /// The gradient buffer is NOT modified; its negation is copied to delta first.
+    pub fn solve_inplace(
+        &mut self,
+        hessian: &mut CudaSlice<f64>,
+        gradient: &CudaSlice<f64>,
+        delta: &mut CudaSlice<f64>,
+    ) -> Result<(), GpuNewtonError> {
+        // Copy -gradient to delta (b = -g)
+        self.negate_and_copy(gradient, delta)?;
+
+        // Try Cholesky first (for positive definite matrices)
+        let cholesky_result = self.solve_cholesky_inplace(hessian, delta);
+
+        if cholesky_result.is_ok() {
+            return Ok(());
+        }
+
+        // Cholesky failed - Hessian was modified, so caller must ensure we can
+        // still use LU. For now, we'll return an error since we can't restore
+        // the original Hessian without a copy.
+        // In practice, NDT Hessians should be positive definite near convergence.
+        Err(GpuNewtonError::SingularMatrix)
+    }
+
+    /// Copy -src to dst on GPU.
+    fn negate_and_copy(
+        &self,
+        src: &CudaSlice<f64>,
+        dst: &mut CudaSlice<f64>,
+    ) -> Result<(), GpuNewtonError> {
+        // Download, negate, upload (simple but adds latency)
+        // TODO: Replace with a simple CUDA kernel for better performance
+        let mut host = [0.0f64; 6];
+        self.stream.memcpy_dtoh(src, &mut host)?;
+        for v in &mut host {
+            *v = -*v;
+        }
+        self.stream.memcpy_htod(&host, dst)?;
+        Ok(())
+    }
+
+    /// Solve using Cholesky factorization with GPU-resident buffers.
+    fn solve_cholesky_inplace(
+        &mut self,
+        hessian: &mut CudaSlice<f64>,
+        rhs: &mut CudaSlice<f64>,
+    ) -> Result<(), GpuNewtonError> {
+        // Get device pointers with proper synchronization
+        let (hessian_ptr, _hessian_guard) = hessian.device_ptr_mut(&self.stream);
+        let (workspace_ptr, _workspace_guard) = self.d_workspace.device_ptr_mut(&self.stream);
+        let (info_ptr, _info_guard) = self.d_info.device_ptr_mut(&self.stream);
+
+        // Cholesky factorization: A = U^T * U
+        let status = unsafe {
+            cusolver_sys::cusolverDnDpotrf(
+                self.handle.cu(),
+                cusolver_sys::cublasFillMode_t::CUBLAS_FILL_MODE_UPPER,
+                6, // n
+                hessian_ptr as *mut f64,
+                6, // lda
+                workspace_ptr as *mut f64,
+                self.workspace_size as i32,
+                info_ptr as *mut i32,
+            )
+        };
+
+        // Drop guards to ensure operations are recorded
+        drop(_hessian_guard);
+        drop(_workspace_guard);
+        drop(_info_guard);
+
+        if status != cusolver_sys::cusolverStatus_t::CUSOLVER_STATUS_SUCCESS {
+            return Err(GpuNewtonError::CusolverError(status));
+        }
+
+        // Check factorization result
+        let mut info = [0i32];
+        self.stream.memcpy_dtoh(&self.d_info, &mut info)?;
+        self.stream.synchronize()?;
+
+        if info[0] != 0 {
+            // Matrix is not positive definite
+            return Err(GpuNewtonError::FactorizationFailed(info[0]));
+        }
+
+        // Get pointers for solve step
+        let (hessian_ptr, _hessian_guard) = hessian.device_ptr(&self.stream);
+        let (rhs_ptr, _rhs_guard) = rhs.device_ptr_mut(&self.stream);
+        let (info_ptr, _info_guard) = self.d_info.device_ptr_mut(&self.stream);
+
+        // Solve using Cholesky factors
+        let status = unsafe {
+            cusolver_sys::cusolverDnDpotrs(
+                self.handle.cu(),
+                cusolver_sys::cublasFillMode_t::CUBLAS_FILL_MODE_UPPER,
+                6, // n
+                1, // nrhs
+                hessian_ptr as *const f64,
+                6, // lda
+                rhs_ptr as *mut f64,
+                6, // ldb
+                info_ptr as *mut i32,
+            )
+        };
+
+        drop(_hessian_guard);
+        drop(_rhs_guard);
+        drop(_info_guard);
+
+        if status != cusolver_sys::cusolverStatus_t::CUSOLVER_STATUS_SUCCESS {
+            return Err(GpuNewtonError::CusolverError(status));
+        }
+
+        // Synchronize to ensure solve is complete
+        self.stream.synchronize()?;
+
+        Ok(())
+    }
+
+    /// Get access to the internal Hessian buffer for direct GPU operations.
+    pub fn hessian_buffer(&self) -> &CudaSlice<f64> {
+        &self.d_hessian
+    }
+
+    /// Get mutable access to the internal Hessian buffer.
+    pub fn hessian_buffer_mut(&mut self) -> &mut CudaSlice<f64> {
+        &mut self.d_hessian
+    }
+
+    /// Get access to the internal RHS/solution buffer.
+    pub fn rhs_buffer(&self) -> &CudaSlice<f64> {
+        &self.d_rhs
+    }
+
+    /// Get mutable access to the internal RHS/solution buffer.
+    pub fn rhs_buffer_mut(&mut self) -> &mut CudaSlice<f64> {
+        &mut self.d_rhs
+    }
+
     /// Convert 6×6 matrix from row-major to column-major order.
     fn row_to_col_major_6x6(row_major: &[f64; 36]) -> [f64; 36] {
         let mut col_major = [0.0f64; 36];
@@ -486,6 +639,47 @@ mod tests {
             for j in 0..6 {
                 assert_eq!(col_major[j * 6 + i], row_major[i * 6 + j]);
             }
+        }
+    }
+
+    #[test]
+    fn test_solve_inplace() {
+        let mut solver = GpuNewtonSolver::new(0).unwrap();
+
+        // H = 2I, g = [2, 4, 6, 8, 10, 12]
+        // δ = -H⁻¹g = -g/2 = [-1, -2, -3, -4, -5, -6]
+        let hessian_row_major = [
+            2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 2.0,
+        ];
+        let hessian_col_major = GpuNewtonSolver::row_to_col_major_6x6(&hessian_row_major);
+        let gradient = [2.0, 4.0, 6.0, 8.0, 10.0, 12.0];
+
+        // Upload to GPU
+        let stream = solver.stream().clone();
+        let mut d_hessian = stream.alloc_zeros::<f64>(36).unwrap();
+        let mut d_gradient = stream.alloc_zeros::<f64>(6).unwrap();
+        let mut d_delta = stream.alloc_zeros::<f64>(6).unwrap();
+
+        stream
+            .memcpy_htod(&hessian_col_major, &mut d_hessian)
+            .unwrap();
+        stream.memcpy_htod(&gradient, &mut d_gradient).unwrap();
+        stream.synchronize().unwrap();
+
+        // Solve inplace
+        solver
+            .solve_inplace(&mut d_hessian, &d_gradient, &mut d_delta)
+            .unwrap();
+
+        // Download result
+        let mut delta = [0.0f64; 6];
+        stream.memcpy_dtoh(&d_delta, &mut delta).unwrap();
+        stream.synchronize().unwrap();
+
+        for (i, &val) in delta.iter().enumerate() {
+            assert_relative_eq!(val, -(i as f64 + 1.0), epsilon = 1e-10);
         }
     }
 }

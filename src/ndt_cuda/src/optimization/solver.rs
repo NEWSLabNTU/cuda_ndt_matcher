@@ -9,7 +9,7 @@
 
 use nalgebra::{Isometry3, Matrix6, Vector6};
 
-use super::full_gpu_pipeline::FullGpuPipeline;
+use super::full_gpu_pipeline_v2::{FullGpuPipelineV2, PipelineV2Config};
 use super::line_search::{directional_derivative, LineSearchConfig};
 use super::more_thuente::{more_thuente_search, MoreThuenteConfig};
 use super::newton::{condition_number, newton_step_regularized};
@@ -477,11 +477,12 @@ impl NdtOptimizer {
         })
     }
 
-    /// Align source points to target using full GPU Newton iteration.
+    /// Align source points to target using full GPU Newton iteration with line search.
     ///
-    /// This method runs the entire Newton optimization loop on GPU, computing
-    /// Jacobians and Point Hessians on GPU instead of uploading them each iteration.
-    /// This eliminates ~490KB of CPU→GPU transfers per iteration.
+    /// This method runs the entire Newton optimization loop on GPU with integrated
+    /// batched line search. Jacobians and Point Hessians are computed on GPU,
+    /// eliminating ~490KB of CPU→GPU transfers per iteration. Per-iteration transfer
+    /// is reduced to ~200 bytes (Newton solve requires f64 precision).
     ///
     /// # Arguments
     /// * `source_points` - Source point cloud to align
@@ -497,7 +498,6 @@ impl NdtOptimizer {
     /// # Note
     /// This method currently does not support:
     /// - GNSS regularization (regularization terms are ignored)
-    /// - Line search (uses fixed step size)
     /// - Oscillation detection
     ///
     /// These features require per-iteration CPU involvement and will be added in future.
@@ -507,10 +507,18 @@ impl NdtOptimizer {
         target_grid: &VoxelGrid,
         initial_guess: Isometry3<f64>,
     ) -> Result<NdtResult, anyhow::Error> {
-        // Create full GPU pipeline
+        // Create full GPU pipeline V2 with line search
         let max_points = source_points.len().max(1);
         let max_voxels = target_grid.len().max(1);
-        let mut pipeline = FullGpuPipeline::new(max_points, max_voxels)?;
+
+        // Configure V2 pipeline based on optimizer settings
+        let config = PipelineV2Config {
+            use_line_search: self.config.ndt.use_line_search,
+            step_max: self.config.ndt.step_size as f32,
+            ..PipelineV2Config::default()
+        };
+
+        let mut pipeline = FullGpuPipelineV2::with_config(max_points, max_voxels, config)?;
 
         // Upload alignment data once
         let voxel_data = GpuVoxelData::from_voxel_grid(target_grid);
@@ -525,7 +533,7 @@ impl NdtOptimizer {
         // Convert initial guess to pose vector
         let initial_pose = isometry_to_pose_vector(&initial_guess);
 
-        // Run full GPU optimization
+        // Run full GPU optimization with line search
         let gpu_result = pipeline.optimize(
             &initial_pose,
             self.config.ndt.max_iterations as u32,
