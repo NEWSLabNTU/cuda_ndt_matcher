@@ -704,22 +704,27 @@ See `docs/profiling-results.md` for detailed profiling data.
 
 #### 2. Per-Iteration Memory Transfer Overhead
 
-Each iteration of the Newton optimization involves significant CPU↔GPU transfers:
+Despite Phase 14 "Full GPU Newton", significant CPU↔GPU transfers remain per iteration:
 
 | Direction | Data | Size (N=756 points) |
 |-----------|------|---------------------|
-| CPU → GPU | Transform matrix | 64 bytes |
-| CPU → GPU | Jacobians | 54 KB |
-| CPU → GPU | Point Hessians | 435 KB |
+| GPU → CPU | Jacobians | 54 KB |
+| GPU → CPU | Point Hessians | 435 KB |
+| CPU → GPU | Combined (J+PH) | 489 KB |
 | GPU → CPU | Reduced results | 172 bytes |
+| CPU → GPU | Transform matrix | 64 bytes |
 
-**Total per iteration**: ~490 KB upload
+**Total per iteration**: ~490 KB (mostly J/PH combine roundtrip)
 
 For 15-30 iterations, that's **7-15 MB of transfers per alignment**.
 
-**Issues in current implementation** (`derivatives/pipeline.rs`):
-1. Jacobians computed on CPU every iteration and uploaded (lines 480-484)
-2. New GPU buffers allocated each iteration via `client.create()` instead of reusing
+**Issues in current implementation** (`optimization/full_gpu_pipeline.rs`):
+1. Hessian kernel requires combined J+PH buffer (lines 433-443: download, combine on CPU, re-upload)
+2. Transform matrix computed on CPU (line 344-345)
+3. Newton solve result downloaded to CPU (line 534-555)
+4. Pose update done on CPU (lines 558-560)
+
+**Solution**: Phase 15 True Full GPU Pipeline - see design document.
 
 #### 3. No Batch Processing for Incoming Scans
 
@@ -763,29 +768,38 @@ See `docs/roadmap/phase-14-iteration-optimization.md` for implementation details
 - Line search uses fixed step size (Phase 15 adds this)
 - Oscillation detection not available (Phase 15 adds this)
 
-### Phase 15: GPU Line Search (Designed)
+### Phase 15: True Full GPU Newton Pipeline with Line Search (Designed)
 
 See `docs/roadmap/phase-15-gpu-line-search.md` for complete design.
 
-**Goal**: Run More-Thuente line search and oscillation detection on GPU, eliminating all remaining CPU involvement in the Newton iteration loop.
+**Goal**: Complete GPU Newton optimization with integrated More-Thuente line search. Zero CPU-GPU data transfers during iterations - CPU only launches kernels.
 
-**Design**: Batched speculative evaluation
-1. Pre-compute K=8 candidate step sizes (geometric progression)
-2. Evaluate ALL K candidates in parallel on GPU (score + directional derivative)
-3. Run More-Thuente logic using cached GPU results
-4. Only generate new batch if all candidates exhausted (~5% cases)
+**Current problem**: Despite Phase 14, ~490 KB transferred per iteration:
+- Jacobians/Point Hessians: Downloaded, combined on CPU, re-uploaded (~480 KB)
+- Reduce output: Downloaded for CPU Newton solve (~172 bytes)
+- Pose/Transform: Uploaded each iteration (~88 bytes)
+- No line search: Fixed step can overshoot/undershoot
 
-**Key insight**: More-Thuente is sequential but each trial only needs score and directional derivative - both computable in parallel on GPU for multiple candidates.
+**Design**: Three-phase GPU iteration
+1. **Phase A - Newton Direction**: sin/cos → transform → J/PH → derivatives → reduce → cuSOLVER
+2. **Phase B - Batched Line Search**: Generate K=8 candidates → batch transform K×N points → batch score/gradient → reduce → More-Thuente logic
+3. **Phase C - Update State**: pose += α×δ → convergence check → download 4-byte flag
 
-**New kernels**:
-- `compute_candidates_batch_kernel` - Evaluate K step sizes in parallel
-- `check_wolfe_conditions_kernel` - Check Strong Wolfe conditions on GPU
-- `oscillation_update_kernel` - Track direction history on GPU
+**New kernels** (11 total):
+- `compute_transform_from_sincos_kernel` - Build 4×4 transform on GPU
+- `compute_ndt_hessian_kernel_v2` - Takes separate J, PH buffers (no CPU combine)
+- `dot_product_6_kernel` - Compute φ'(0) = g·δ
+- `generate_candidates_kernel` - Generate K step sizes
+- `batch_transform_kernel` - Transform K×N points in parallel
+- `batch_score_gradient_kernel` - Score/gradient for K candidates
+- `more_thuente_kernel` - Line search logic using cached evaluations
+- `update_pose_kernel` - pose += α×δ on GPU
+- `check_convergence_kernel` - ||α×δ|| < ε check on GPU
 
 **Expected impact**:
-- Zero per-iteration CPU↔GPU transfers when line search enabled
-- Maintains mathematical correctness of More-Thuente algorithm
-- Overhead: ~100-200 bytes/iteration for oscillation state
+- Per-iteration transfer: 490 KB → 4 bytes (**122,500× reduction**)
+- Line search: Better convergence with Strong Wolfe conditions
+- Memory overhead: ~121 KB for line search buffers (acceptable)
 
 ### P6: Scan Queue for Batch Processing (Future)
 
@@ -808,8 +822,8 @@ See `docs/roadmap/phase-15-gpu-line-search.md` for complete design.
 | P1           | Morton code packing kernel           | 3× voxel build      | ~50 LOC      | ✅ Complete |
 | P2           | Jacobian caching optimization        | 12 KB/iter          | Simple       | ✅ Complete |
 | **Phase 14** | **Full GPU Newton (P3+P4+P5)**       | **490 KB/iter → 0** | **~500 LOC** | ✅ Complete |
-| **Phase 15** | **GPU Line Search**                  | **Zero transfers**  | **~400 LOC** | 🔲 Designed |
+| **Phase 15** | **True Full GPU + Line Search**      | **122,500× transfer**| **~600 LOC** | 🔲 Designed |
 | P6           | Scan queue batch processing          | Amortize setup      | Medium       | 🔲 Future   |
 
 **Phase 14 complete!** The full GPU Newton path is now the default when `NDT_USE_GPU=1`.
-**Phase 15 designed** - see `docs/roadmap/phase-15-gpu-line-search.md` for GPU More-Thuente line search design.
+**Phase 15 designed** - see `docs/roadmap/phase-15-gpu-line-search.md` for true zero-transfer GPU Newton pipeline design.
