@@ -93,7 +93,9 @@ impl SmartPoseBuffer {
 
         let first_time_ns = Self::stamp_to_ns(&buffer.front().unwrap().header.stamp);
 
-        // Target must be after first pose
+        // Reject if target is before first pose (matches Autoware behavior)
+        // See: external/autoware_core/localization/autoware_localization_util/src/smart_pose_buffer.cpp
+        // Autoware returns nullopt with "Mismatch between pose timestamp and current timestamp"
         if target_time_ns < first_time_ns {
             return None;
         }

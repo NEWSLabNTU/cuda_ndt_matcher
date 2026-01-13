@@ -289,16 +289,44 @@ impl NdtScanMatcherNode {
         };
 
         // Initial pose subscription - pushes to pose buffer for interpolation
+        // Uses QoS depth 100 (matching Autoware) to buffer messages during node initialization.
+        // This prevents losing early EKF messages before spin() starts processing callbacks.
         let initial_pose_sub = {
             let pose_buffer = Arc::clone(&pose_buffer);
 
+            // Use relative topic name - remapping should be handled by rcl layer
+            // Launch file remaps: ekf_pose_with_covariance -> /localization/pose_twist_fusion_filter/biased_pose_with_covariance
             let mut opts = SubscriptionOptions::new("ekf_pose_with_covariance");
-            opts.qos = sensor_qos;
+            // QoS depth 100 matches Autoware's ndt_scan_matcher_core.cpp line 118
+            opts.qos = QoSProfile {
+                history: QoSHistoryPolicy::KeepLast { depth: 100 },
+                ..QoSProfile::default()
+            };
 
             node.create_subscription(opts, move |msg: PoseWithCovarianceStamped| {
+                // Debug: log received EKF pose with timestamp
+                if std::env::var("NDT_DEBUG").is_ok() {
+                    let p = &msg.pose.pose.position;
+                    let q = &msg.pose.pose.orientation;
+                    let ts = &msg.header.stamp;
+                    log_info!(
+                        NODE_NAME,
+                        "[EKF_IN] ts={}.{:09} pos=({:.3}, {:.3}, {:.3}) quat=({:.6}, {:.6}, {:.6}, {:.6})",
+                        ts.sec, ts.nanosec,
+                        p.x, p.y, p.z,
+                        q.x, q.y, q.z, q.w
+                    );
+                }
                 pose_buffer.push_back(msg);
             })?
         };
+
+        // Log the actual topic name after remapping
+        log_debug!(
+            NODE_NAME,
+            "EKF pose subscription topic (after remapping): {}",
+            initial_pose_sub.topic_name()
+        );
 
         // Regularization pose subscription (GNSS pose for regularization)
         let regularization_pose_sub = {
