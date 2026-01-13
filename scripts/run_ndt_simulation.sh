@@ -40,12 +40,10 @@ if [[ "$RVIZ" == "true" ]]; then
     fi
 fi
 
-# When running without RViz (headless), enable user-defined initial pose
-# This provides the initial pose that would normally be set via RViz "2D Pose Estimate"
-USE_INITIAL_POSE="false"
-if [[ "$RVIZ" == "false" ]]; then
-    USE_INITIAL_POSE="true"
-fi
+# Always enable user-defined initial pose for demo runs
+# This provides a consistent starting pose for reproducible testing
+# Without this, the EKF initializes to an unknown state
+USE_INITIAL_POSE="true"
 
 # Source the local workspace setup
 source "$PROJECT_DIR/install/setup.bash"
