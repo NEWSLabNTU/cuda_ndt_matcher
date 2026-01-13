@@ -4,27 +4,28 @@ This document outlines the plan to implement custom CUDA kernels for NDT scan ma
 
 ## Current Status (2026-01-12)
 
-| Phase                            | Status         | Notes                                                    |
-|----------------------------------|----------------|----------------------------------------------------------|
-| Phase 1: Voxel Grid              | ✅ Complete    | CPU + GPU hybrid implementation with KD-tree search      |
-| Phase 2: Derivatives             | ✅ Complete    | CPU multi-voxel matching, GPU kernels defined            |
-| Phase 3: Newton Solver           | ✅ Complete    | More-Thuente line search implemented                     |
-| Phase 4: Scoring                 | ✅ Complete    | NVTL and transform probability                           |
-| Phase 5: Integration             | ✅ Complete    | API complete, GPU runtime implemented                    |
-| Phase 6: Validation              | ⚠️ Partial     | Algorithm verified, rosbag testing pending               |
-| Phase 7: ROS Features            | ✅ Complete    | TF, map loading, multi-NDT, Monte Carlo viz, GPU scoring |
-| Phase 8: Missing Features        | ✅ Complete    | All sub-phases complete including 8.6 multi-grid         |
-| Phase 9: Full GPU Acceleration   | ⚠️ Partial     | 9.1 workaround, 9.2 GPU voxel grid complete              |
-| Phase 10: SmartPoseBuffer        | ✅ Complete    | Pose interpolation for timestamp-aligned initial guess   |
-| Phase 11: GPU Zero-Copy Voxel    | ✅ Complete    | CubeCL-cuda_ffi interop, radix sort + segment on GPU     |
-| Phase 12: GPU Derivative Pipeline| ✅ Complete    | All sub-phases complete, CUB GPU reduction implemented   |
-| Phase 13: GPU Scoring Pipeline   | ✅ Complete    | Batched NVTL/TP scoring for MULTI_NDT_SCORE              |
-| Phase 14: Full GPU Newton        | ✅ Complete    | GPU Jacobians, cuSOLVER Newton (superseded by Phase 15)  |
-| Phase 15: Full GPU + Line Search | ✅ Complete    | ~200 bytes/iter + batched More-Thuente (K=8 candidates)  |
+| Phase                             | Status       | Notes                                                    |
+|-----------------------------------|--------------|----------------------------------------------------------|
+| Phase 1: Voxel Grid               | ✅ Complete  | CPU + GPU hybrid implementation with KD-tree search      |
+| Phase 2: Derivatives              | ✅ Complete  | CPU multi-voxel matching, GPU kernels defined            |
+| Phase 3: Newton Solver            | ✅ Complete  | More-Thuente line search implemented                     |
+| Phase 4: Scoring                  | ✅ Complete  | NVTL and transform probability                           |
+| Phase 5: Integration              | ✅ Complete  | API complete, GPU runtime implemented                    |
+| Phase 6: Validation               | ⚠️ Partial    | Algorithm verified, rosbag testing pending               |
+| Phase 7: ROS Features             | ✅ Complete  | TF, map loading, multi-NDT, Monte Carlo viz, GPU scoring |
+| Phase 8: Missing Features         | ✅ Complete  | All sub-phases complete including 8.6 multi-grid         |
+| Phase 9: Full GPU Acceleration    | ⚠️ Partial    | 9.1 workaround, 9.2 GPU voxel grid complete              |
+| Phase 10: SmartPoseBuffer         | ✅ Complete  | Pose interpolation for timestamp-aligned initial guess   |
+| Phase 11: GPU Zero-Copy Voxel     | ✅ Complete  | CubeCL-cuda_ffi interop, radix sort + segment on GPU     |
+| Phase 12: GPU Derivative Pipeline | ⚠️ Superseded | Replaced by FullGpuPipelineV2 (Phase 15)                 |
+| Phase 13: GPU Scoring Pipeline    | ✅ Complete  | Batched NVTL/TP scoring for MULTI_NDT_SCORE              |
+| Phase 14: Full GPU Newton         | ✅ Complete  | GPU Jacobians, cuSOLVER Newton (superseded by Phase 15)  |
+| Phase 15: Full GPU + Line Search  | ✅ Complete  | ~200 bytes/iter + batched More-Thuente (K=8 candidates)  |
+| Phase 16: GPU Initial Pose        | ✅ Complete  | Batch kernels + pipeline + initial_pose.rs integration   |
 
 **Core NDT algorithm is fully implemented on CPU and matches Autoware's pclomp.**
 **GPU runtime is implemented with CubeCL for accelerated scoring and voxel grid construction.**
-**383 tests pass (307 ndt_cuda + 56 cuda_ndt_matcher + 20 cuda_ffi). All GPU tests enabled and passing.**
+**341 tests pass (ndt_cuda + cuda_ndt_matcher + cuda_ffi). All GPU tests enabled and passing.**
 
 ## Phase Documents
 
@@ -43,6 +44,7 @@ This document outlines the plan to implement custom CUDA kernels for NDT scan ma
 - [Phase 13: GPU Scoring Pipeline](phase-13-gpu-scoring-pipeline.md) ✅
 - [Phase 14: Full GPU Newton](phase-14-iteration-optimization.md) ✅
 - [Phase 15: Full GPU + Line Search](phase-15-gpu-line-search.md) ✅
+- [Phase 16: GPU Initial Pose Pipeline](phase-16-gpu-initial-pose-pipeline.md) 🔲
 - [Implementation Notes](implementation-notes.md) - Dependencies, risks, references
 
 ## Background
