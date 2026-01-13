@@ -590,7 +590,27 @@ impl NdtScanMatcherNode {
 
         let interpolate_result = pose_buffer.interpolate(sensor_time_ns);
         let initial_pose = match &interpolate_result {
-            Some(result) => &result.interpolated_pose,
+            Some(result) => {
+                // Debug: log interpolated pose
+                if std::env::var("NDT_DEBUG").is_ok() {
+                    let p = &result.interpolated_pose.pose.pose.position;
+                    let q = &result.interpolated_pose.pose.pose.orientation;
+                    let ts = &result.interpolated_pose.header.stamp;
+                    // Convert quaternion to euler angles for easier comparison
+                    let quat =
+                        UnitQuaternion::from_quaternion(NaQuaternion::new(q.w, q.x, q.y, q.z));
+                    let (roll, pitch, yaw) = quat.euler_angles();
+                    log_info!(
+                        NODE_NAME,
+                        "[INTERP] ts={}.{:09} pos=({:.3}, {:.3}, {:.3}) rpy=({:.3}, {:.3}, {:.3}) sensor_ts={}",
+                        ts.sec, ts.nanosec,
+                        p.x, p.y, p.z,
+                        roll.to_degrees(), pitch.to_degrees(), yaw.to_degrees(),
+                        sensor_time_ns
+                    );
+                }
+                &result.interpolated_pose
+            }
             None => {
                 // Interpolation failed - need at least 2 poses, or validation failed
                 if pose_buffer.len() < 2 {
@@ -685,6 +705,26 @@ impl NdtScanMatcherNode {
         let debug_enabled = std::env::var("NDT_DEBUG").is_ok();
         // timestamp_ns is computed at the beginning of this function for deduplication
 
+        // Debug: log pose being passed to NDT alignment
+        if debug_enabled {
+            let p = &initial_pose.pose.pose.position;
+            let q = &initial_pose.pose.pose.orientation;
+            let quat = UnitQuaternion::from_quaternion(NaQuaternion::new(q.w, q.x, q.y, q.z));
+            let (roll, pitch, yaw) = quat.euler_angles();
+            log_info!(
+                NODE_NAME,
+                "[NDT_IN] ts_ns={} pos=({:.3}, {:.3}, {:.3}) rpy=({:.3}, {:.3}, {:.3}) n_pts={}",
+                timestamp_ns,
+                p.x,
+                p.y,
+                p.z,
+                roll.to_degrees(),
+                pitch.to_degrees(),
+                yaw.to_degrees(),
+                sensor_points.len()
+            );
+        }
+
         // Get lock on active NDT manager (also checks for pending swap from background update)
         let mut manager = ndt_manager.lock();
 
@@ -739,6 +779,24 @@ impl NdtScanMatcherNode {
 
         // Calculate execution time immediately after alignment (matches Autoware's scope)
         let exe_time_ms = align_start_time.elapsed().as_secs_f32() * 1000.0;
+
+        // Debug: log NDT result
+        if debug_enabled {
+            let p = &result.pose.position;
+            let q = &result.pose.orientation;
+            let quat = UnitQuaternion::from_quaternion(NaQuaternion::new(q.w, q.x, q.y, q.z));
+            let (roll, pitch, yaw) = quat.euler_angles();
+            log_info!(
+                NODE_NAME,
+                "[NDT_OUT] ts_ns={} pos=({:.3}, {:.3}, {:.3}) rpy=({:.3}, {:.3}, {:.3}) iter={} conv={} osc={}",
+                timestamp_ns,
+                p.x, p.y, p.z,
+                roll.to_degrees(), pitch.to_degrees(), yaw.to_degrees(),
+                result.iterations,
+                result.converged,
+                result.oscillation_count
+            );
+        }
 
         // ---- Compute scores for filtering decision ----
         // Like Autoware, we compute NVTL and transform_probability before deciding to publish
