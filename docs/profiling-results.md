@@ -4,169 +4,222 @@ This document captures profiling results comparing the CUDA NDT implementation a
 
 ## Test Environment
 
-- **Date**: 2026-01-10
+- **Date**: 2026-01-14
 - **Hardware**: NVIDIA GPU (CUDA enabled)
 - **Dataset**: Autoware sample rosbag (~23 seconds of driving data)
 - **Map**: sample-map-rosbag (point cloud map)
+- **Initial Pose**: user_defined_initial_pose enabled for both runs
+
+## Executive Summary
+
+| Metric             | Autoware (OpenMP) | CUDA NDT     | Ratio            |
+|--------------------|-------------------|--------------|------------------|
+| **Mean exe time**  | **2.31 ms**       | **12.58 ms** | **5.45x slower** |
+| Median exe time    | 2.30 ms           | 15.57 ms     | 6.77x slower     |
+| Mean iterations    | 2.73              | 15.64        | 5.73x more       |
+| Convergence rate   | 100%              | 53.9%        | -                |
+| Hit max iterations | 0%                | 46.1%        | -                |
 
 ## Execution Time Comparison
 
-| Metric   | Autoware (OpenMP) | CUDA GPU     | Ratio           |
-|----------|-------------------|--------------|-----------------|
-| **Mean** | **2.48 ms**       | **13.07 ms** | **5.3x slower** |
-| Median   | 2.42 ms           | 15.86 ms     | 6.5x slower     |
-| Stdev    | 1.20 ms           | 8.24 ms      | -               |
-| Min      | 1.08 ms           | 2.00 ms      | 1.9x slower     |
-| Max      | 16.46 ms          | 27.02 ms     | 1.6x slower     |
-| P95      | 3.57 ms           | 24.46 ms     | 6.9x slower     |
-| P99      | 3.98 ms           | 26.34 ms     | 6.6x slower     |
+| Metric   | Autoware (OpenMP) | CUDA NDT     | Ratio            |
+|----------|-------------------|--------------|------------------|
+| **Mean** | **2.31 ms**       | **12.58 ms** | **5.45x slower** |
+| Median   | 2.30 ms           | 15.57 ms     | 6.77x slower     |
+| Stdev    | 0.66 ms           | 8.09 ms      | -                |
+| Min      | 1.11 ms           | 2.00 ms      | 1.80x slower     |
+| Max      | 3.97 ms           | 26.81 ms     | 6.75x slower     |
+| P95      | 3.34 ms           | 24.57 ms     | 7.35x slower     |
+| P99      | 3.56 ms           | 25.30 ms     | 7.11x slower     |
 
-**Sample sizes**: Autoware: 221 alignments, CUDA: 225 alignments (from rosbag recording)
+**Sample sizes**: Autoware: 215 alignments, CUDA: 225 alignments
+
+### Execution Time Distribution
+
+**Autoware:**
+```
+ 0- 2ms:   72 ( 33.5%) ################
+ 2- 5ms:  143 ( 66.5%) #################################
+ 5-10ms:    0 (  0.0%)
+10-15ms:    0 (  0.0%)
+```
+
+**CUDA:**
+```
+ 0- 2ms:    0 (  0.0%)
+ 2- 5ms:   69 ( 30.7%) ###############
+ 5-10ms:   27 ( 12.0%) ######
+10-15ms:   11 (  4.9%) ##
+15-20ms:   71 ( 31.6%) ###############
+20-30ms:   47 ( 20.9%) ##########
+```
+
+## Iteration Analysis
+
+| Metric            | Autoware | CUDA  |
+|-------------------|----------|-------|
+| Mean iterations   | 2.73     | 15.64 |
+| Median iterations | 3.0      | 10.0  |
+| Stdev             | 1.41     | 13.65 |
+| Min               | 1        | 1     |
+| Max               | 6        | 30    |
+
+### Iteration Distribution
+
+**Autoware:**
+```
+ 1- 3:  177 ( 67.0%) #################################
+ 4- 6:   87 ( 33.0%) ################
+ 7-10:    0 (  0.0%)
+```
+
+**CUDA:**
+```
+ 1- 3:   98 ( 36.2%) ##################
+ 4- 6:   32 ( 11.8%) #####
+ 7-10:   10 (  3.7%) #
+11-15:    2 (  0.7%)
+16-20:    0 (  0.0%)
+21-25:    3 (  1.1%)
+26-30:  126 ( 46.5%) #######################
+```
+
+## Convergence Analysis
+
+| Metric        | Autoware       | CUDA            |
+|---------------|----------------|-----------------|
+| **Converged** | **264 (100%)** | **146 (53.9%)** |
+| MaxIterations | 0 (0%)         | 125 (46.1%)     |
+
+## Score Comparison
+
+| Metric                              | Autoware | CUDA    |
+|-------------------------------------|----------|---------|
+| Mean score                          | 7786.52  | 4620.60 |
+| Median score                        | 8016.22  | 6601.21 |
+| Stdev                               | 847.39   | 2783.44 |
+| Lab 3 - Localization & SLAM.pptxMin | 5519.44  | 560.53  |
+| Max                                 | 8783.90  | 7170.84 |
+
+### Score Evolution (first to last iteration)
+
+| Metric        | Autoware | CUDA  |
+|---------------|----------|-------|
+| Mean change   | +0.3%    | -9.4% |
+| Median change | +0.1%    | -3.7% |
+
+**Note**: CUDA scores decrease during optimization (negative change), while Autoware scores are stable. This indicates potential issues with the CUDA optimizer's step direction or size.
+
+## Pose Estimation Quality
+
+| Metric                          | Autoware | CUDA    |
+|---------------------------------|----------|---------|
+| Mean initial-to-result distance | 0.078 m  | 0.168 m |
+| Median distance                 | 0.101 m  | 0.052 m |
+| Max distance                    | 0.266 m  | 1.631 m |
+| P95 distance                    | 0.176 m  | 0.812 m |
+
+## Oscillation Analysis (CUDA only)
+
+| Metric                    | Value       |
+|---------------------------|-------------|
+| Mean oscillation count    | 7.54        |
+| Max oscillation count     | 28          |
+| Entries with oscillations | 162 (59.8%) |
+
+**Note**: Nearly 60% of CUDA alignments experience oscillation (optimizer direction reversals), contributing to slow convergence.
 
 ## Root Cause Analysis
 
-### ~~Issue 1: Duplicate Message Processing (Critical)~~ - RESOLVED
+### Primary Issue: Low Convergence Rate
 
-**Update (2026-01-10)**: This was a false alarm caused by analyzing accumulated debug data.
+CUDA NDT hits max iterations (30) for 46.1% of alignments, compared to 0% for Autoware. This is the primary cause of the 5.45x performance gap.
 
-The initial analysis showed:
-| Metric                     | Value        |
-|----------------------------|--------------|
-| Total alignments in debug file | 4,668    |
-| Unique timestamps          | 449          |
-| Apparent duplicate ratio   | ~10x         |
+**Contributing factors:**
 
-**Actual cause**: The debug file (`/tmp/ndt_cuda_debug.jsonl`) was using `append` mode, accumulating data from 19 separate test runs. Each individual run processes timestamps correctly:
+1. **Score degradation during optimization** - CUDA scores decrease on average (-9.4%) while Autoware scores remain stable (+0.3%). This suggests step direction or magnitude issues.
 
-| Run | Entries | Unique Timestamps | Dedup Working? |
-|-----|---------|-------------------|----------------|
-| 1   | 181     | 181               | Yes            |
-| 2   | 260     | 260               | Yes            |
-| ... | ...     | ...               | Yes            |
-| 19  | 268     | 268               | Yes            |
+2. **High oscillation rate** - 59.8% of CUDA alignments experience direction reversals, indicating the optimizer is overshooting or the gradients are noisy.
 
-**Resolution**:
-- The deduplication logic IS working correctly (HashSet-based timestamp tracking)
-- Fixed the debug file to truncate at startup instead of appending
-- Added callback counters for future debugging
+3. **Higher iteration variance** - CUDA iteration count has stdev of 13.65 vs 1.41 for Autoware, showing inconsistent convergence behavior.
 
-**Verified**: Within a single run, each timestamp is processed exactly once. The rosbag has ~260 unique scans, matching the alignment count per run.
+### When CUDA Works Well
 
-### Issue 1: Low Convergence Rate (Primary Performance Issue)
+Looking at the 36.2% of alignments that converge in 1-3 iterations:
+- These match Autoware's typical behavior
+- Execution times in the 2-5ms range are comparable
+- The algorithm itself is sound; the issue is consistency
 
-| Metric            | Autoware | CUDA       |
-|-------------------|----------|------------|
-| Convergence rate  | ~100%    | 51.9%      |
-| Mean iterations   | 3-5      | 15.2       |
-| Median iterations | 3-4      | 8          |
-| Max iterations    | ~10      | 30 (limit) |
-| Hit max iterations| ~0%      | 48.1%      |
+### Potential Causes
 
-**Impact**: Non-converging alignments run for all 30 iterations, significantly increasing execution time.
-
-**Execution time distribution** (from latest run):
-| Category    | Count | Percentage | Notes |
-|-------------|-------|------------|-------|
-| Fast (<5ms) | 66    | 29.3%      | Converged quickly (1-3 iter) |
-| Medium (5-15ms) | 37 | 16.4%   | Converged with more iterations |
-| Slow (15-25ms) | 117 | 52.0%   | Hit max iterations (30) |
-| Very slow (>=25ms) | 5 | 2.2%  | Worst cases |
-
-**Possible causes**:
-- Derivative computation differences
-- Step size or line search behavior
-- Initial pose quality differences
-- Voxel search radius differences
-
-### Issue 2: GPU Overhead
-
-Even without the above issues, GPU-based NDT has inherent overhead:
-- Memory transfer (CPU → GPU → CPU)
-- Kernel launch latency
-- Small batch sizes (single scan) don't fully utilize GPU parallelism
-
-## CUDA NDT Detailed Statistics
-
-From `/tmp/ndt_cuda_debug.jsonl` analysis:
-
-| Metric                       | Value                                |
-|------------------------------|--------------------------------------|
-| Mean correspondences         | 3,447 points                         |
-| Mean score                   | 5,363                                |
-| Mean NVTL                    | 2.16                                 |
-| Convergence status breakdown | 56.8% Converged, 43.2% MaxIterations |
+1. **Hessian regularization** - May differ between implementations
+2. **Line search behavior** - Step size selection may be suboptimal
+3. **Gradient computation** - Numerical precision or formulation differences
+4. **Voxel search radius** - May affect correspondence quality
 
 ## Recommendations
 
 ### High Priority
 
-1. **Investigate convergence issues** (Primary focus)
-   - Compare derivative values between CUDA and Autoware at each iteration
-   - Verify Hessian computation matches Autoware's implementation
-   - Check if step size clamping behavior differs
-   - Analyze why 48% of alignments hit max iterations
+1. **Debug oscillation behavior**
+   - Add detailed logging when direction reverses
+   - Compare step sizes between CUDA and Autoware
+   - Check if Hessian conditioning differs
 
-2. **Analyze fast vs slow trajectories**
-   - First ~87 entries are fast (<5ms), then majority become slow
-   - Investigate what changes in the trajectory at that point
-   - Could be map loading, entering challenging area, or initial pose drift
+2. **Investigate score decrease**
+   - The score should improve (decrease in NDT terms = better fit)
+   - But score *increasing* during optimization suggests step issues
+   - Compare per-iteration score trajectories
+
+3. **Analyze failed convergence cases**
+   - What do the 46% non-converging cases have in common?
+   - Are they concentrated in specific map regions?
+   - Do they correlate with initial pose quality?
 
 ### Medium Priority
 
-3. **Optimize GPU memory transfers**
-   - Keep voxel grid on GPU between alignments
-   - Use pinned memory for faster transfers
-   - Consider async transfers with CUDA streams
+4. **Profile per-phase timing**
+   - Enable `profiling` feature to identify bottlenecks
+   - Determine if GPU overhead or algorithm iterations dominate
 
-4. **Batch processing**
-   - Process multiple initial pose hypotheses in parallel on GPU
-   - This is where GPU excels over CPU
-
-### Low Priority
-
-5. **Profile individual phases**
-   - Enable `profiling` feature: `cargo build --features profiling`
-   - Identify which phase (voxel search, derivatives, solver) is slowest
+5. **Compare derivative values**
+   - Log gradients/Hessians at each iteration
+   - Side-by-side comparison with Autoware values
 
 ## Data Files
 
-| File                                           | Description                   |
-|------------------------------------------------|-------------------------------|
-| `rosbag/builtin_20260110_023936/`              | Autoware NDT recorded output  |
-| `rosbag/builtin_20260110_023936/exe_times.txt` | Extracted execution times     |
-| `rosbag/cuda_20260110_121409/`                 | CUDA NDT recorded output      |
-| `rosbag/cuda_20260110_121409/exe_times.txt`    | Extracted execution times     |
-| `/tmp/ndt_cuda_debug.jsonl`                    | Detailed CUDA iteration debug |
+| File | Description |
+|------|-------------|
+| `rosbag/builtin_20260114_141715/` | Autoware NDT recorded output |
+| `rosbag/cuda_20260114_141818/` | CUDA NDT recorded output |
+| `/tmp/ndt_autoware_debug.jsonl` | Autoware iteration debug |
+| `/tmp/ndt_cuda_debug.jsonl` | CUDA iteration debug |
 
 ## Reproducing Results
 
 ```bash
+# Clear old debug files
+rm -f /tmp/ndt_autoware_debug.jsonl /tmp/ndt_cuda_debug.jsonl
+
 # Run Autoware builtin NDT
 just run-builtin
 
 # Run CUDA NDT
 just run-cuda
 
-# Extract execution times
-python3 tmp/extract_exe_times.py rosbag/builtin_*/
-python3 tmp/extract_exe_times.py rosbag/cuda_*/
-
-# Run comparison analysis
-python3 tmp/analyze_comparison.py
+# Analyze results
+python3 tmp/analyze_profile.py
+python3 tmp/extract_exe_times.py
 ```
 
 ## Conclusion
 
-The CUDA NDT implementation is currently **5.3x slower** than Autoware's OpenMP implementation. The primary cause is:
+The CUDA NDT implementation is **5.45x slower** than Autoware's OpenMP implementation. The primary cause is:
 
-1. **Low convergence rate** (51.9% vs ~100%) - 48% of alignments hit the 30-iteration limit
-2. **GPU overhead** - inherent but can be optimized
+1. **Low convergence rate** (53.9% vs 100%) - 46% of alignments hit the 30-iteration limit
+2. **Score degradation** during optimization - suggests step size/direction issues
+3. **High oscillation rate** (59.8%) - optimizer frequently reverses direction
 
-**Note**: The previously reported "duplicate message processing" issue was a false alarm caused by analyzing accumulated debug data from multiple test runs. The deduplication logic is working correctly.
+**Key insight**: When CUDA converges quickly (36% of cases in 1-3 iterations), performance is competitive. The optimization algorithm needs tuning to achieve consistent convergence.
 
-**Key insight**: When the CUDA implementation converges quickly (entries 0-86), execution times are 2-3ms (comparable to or faster than Autoware). The performance gap is caused by the 52% of alignments that hit max iterations.
-
-Focus should be on understanding why convergence degrades partway through the trajectory. Potential causes:
-- Map tile transitions affecting voxel quality
-- Initial pose drift accumulating errors
-- Entering areas with less distinctive map features
+**Next steps**: Focus on understanding why the optimizer oscillates and why scores decrease during iteration. This likely points to Hessian conditioning, step size, or line search differences from Autoware.
