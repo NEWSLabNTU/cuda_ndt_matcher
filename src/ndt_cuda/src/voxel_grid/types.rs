@@ -66,8 +66,16 @@ impl Voxel {
         // Compute mean
         let mean = sum / n;
 
-        // Compute covariance using the formula:
+        // Compute standard sample covariance:
         // Cov = (sum_sq - n * mean * mean^T) / (n - 1)
+        //
+        // This is mathematically equivalent to:
+        // Cov = Σ(x_i - mean)(x_i - mean)^T / (n - 1)
+        //
+        // Autoware uses the same formula:
+        // Reference: autoware_ndt_scan_matcher/src/ndt_omp/multi_voxel_grid_covariance_omp_impl.hpp
+        // Line 436: leaf.cov_ = (leaf.cov_ - pt_sum * leaf.mean_.transpose()) / (n - 1)
+        // where pt_sum = n * mean, so pt_sum * mean^T = n * mean * mean^T
         let mean_outer = mean * mean.transpose();
         let covariance = (sum_sq - mean_outer * n) / (n - 1.0);
 

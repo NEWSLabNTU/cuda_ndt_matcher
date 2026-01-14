@@ -418,13 +418,23 @@ pub fn finalize_voxels_cpu(
             continue;
         }
 
-        // Finalize covariance: cov = sum / (count - 1)
+        // Standard sample covariance formula:
+        // Cov = Σ(x_i - mean)(x_i - mean)^T / (n - 1)
+        //
+        // The GPU kernel accumulates centered deviations: cov_sums = Σ(x - mean)(x - mean)^T
+        // which mathematically equals: sum_sq - n * mean * mean^T
+        //
+        // So we just divide by (n-1) to get the sample covariance.
+        // This matches Autoware's formula (line 436 in multi_voxel_grid_covariance_omp_impl.hpp):
+        // leaf.cov_ = (sum_sq - pt_sum * mean^T) / (n - 1)
+        // where pt_sum * mean^T = n * mean * mean^T
         let denom = if count > 1 {
             1.0 / (count - 1) as f32
         } else {
             1.0
         };
 
+        // Finalize covariance: cov = cov_sums / (n - 1)
         for i in 0..9 {
             covariances[v * 9 + i] = cov_sums[v * 9 + i] * denom;
         }
