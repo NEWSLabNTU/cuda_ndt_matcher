@@ -30,6 +30,7 @@ fn main() {
         "csrc/segment_detect.cu",
         "csrc/segmented_reduce.cu",
         "csrc/batched_solve.cu",
+        "csrc/voxel_hash.cu",
     ];
 
     for source in &cuda_sources {
@@ -50,6 +51,7 @@ fn main() {
     println!("cargo:rustc-link-lib=static=segment_detect");
     println!("cargo:rustc-link-lib=static=segmented_reduce");
     println!("cargo:rustc-link-lib=static=batched_solve");
+    println!("cargo:rustc-link-lib=static=voxel_hash");
 
     // Rerun if CUDA sources change
     for source in &cuda_sources {

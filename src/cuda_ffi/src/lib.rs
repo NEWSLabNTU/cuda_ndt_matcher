@@ -6,6 +6,7 @@
 //! - CUB DeviceSelect (stream compaction)
 //! - GPU segment detection for voxel boundaries
 //! - cuSOLVER batched Cholesky solver
+//! - Spatial hash table for GPU-accelerated voxel lookup
 //!
 //! # Example
 //!
@@ -23,6 +24,7 @@ pub mod batched_solve;
 pub mod radix_sort;
 pub mod segment_detect;
 pub mod segmented_reduce;
+pub mod voxel_hash;
 
 pub use batched_solve::{BatchedCholeskySolver, CusolverDnHandle, CusolverError};
 pub use radix_sort::{
@@ -35,6 +37,10 @@ pub use segment_detect::{
 pub use segmented_reduce::{
     segmented_reduce_sum_f32_inplace, segmented_reduce_sum_f32_temp_size,
     segmented_reduce_sum_f64_inplace, segmented_reduce_sum_f64_temp_size, SegmentedReducer,
+};
+pub use voxel_hash::{
+    hash_table_build, hash_table_capacity, hash_table_init, hash_table_query, hash_table_size,
+    max_neighbors as voxel_hash_max_neighbors, VoxelHash,
 };
 
 /// Device-to-device memory copy using CUDA.

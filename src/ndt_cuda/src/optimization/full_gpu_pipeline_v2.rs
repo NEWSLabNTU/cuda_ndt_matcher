@@ -16,7 +16,7 @@
 //!     3. compute_jacobians_kernel(sin_cos → jacobians)
 //!     4. compute_point_hessians_kernel(sin_cos → point_hessians)
 //!     5. transform_points_kernel(transform → transformed)
-//!     6. radius_search_kernel(→ neighbors)
+//!     6. voxel_hash_query(→ neighbors) [O(27) instead of O(V)]
 //!     7. score/gradient/hessian_v2 kernels (→ scores, grads, hess)
 //!     8. CUB segmented reduce (→ score[1], gradient[6], H[36])
 //!     9. cuSOLVER solve (H, -g → delta) [requires f64, small download]
@@ -55,7 +55,7 @@ use cubecl::server::Handle;
 
 use crate::derivatives::gpu::{
     compute_ndt_gradient_kernel, compute_ndt_hessian_kernel_v2, compute_ndt_score_kernel,
-    radius_search_kernel, GpuVoxelData, MAX_NEIGHBORS,
+    GpuVoxelData, MAX_NEIGHBORS,
 };
 use crate::derivatives::gpu_jacobian::{
     compute_jacobians_kernel, compute_point_hessians_kernel, compute_sin_cos_kernel,
@@ -164,6 +164,13 @@ pub struct FullGpuPipelineV2 {
     voxel_means: Handle,    // [V × 3]
     voxel_inv_covs: Handle, // [V × 9]
     voxel_valid: Handle,    // [V]
+
+    // ========================================================================
+    // Spatial hash table for O(27) voxel lookup
+    // ========================================================================
+    hash_table: Handle, // [capacity × 16] bytes (HashEntry)
+    hash_capacity: u32, // Hash table capacity (power of 2)
+    resolution: f32,    // Voxel grid resolution for grid coordinate conversion
 
     // ========================================================================
     // Iteration state (GPU-resident)
@@ -284,6 +291,11 @@ impl FullGpuPipelineV2 {
         let voxel_inv_covs = client.empty(max_voxels * 9 * std::mem::size_of::<f32>());
         let voxel_valid = client.empty(max_voxels * std::mem::size_of::<u32>());
 
+        // Spatial hash table for O(27) voxel lookup
+        let hash_capacity = cuda_ffi::hash_table_capacity(max_voxels)?;
+        let hash_table_bytes = cuda_ffi::hash_table_size(hash_capacity)?;
+        let hash_table = client.empty(hash_table_bytes);
+
         // Iteration state buffers
         let pose_gpu = client.empty(6 * std::mem::size_of::<f32>());
         let delta_gpu = client.empty(6 * std::mem::size_of::<f32>());
@@ -367,6 +379,9 @@ impl FullGpuPipelineV2 {
             voxel_means,
             voxel_inv_covs,
             voxel_valid,
+            hash_table,
+            hash_capacity,
+            resolution: 0.0, // Set in upload_alignment_data
             pose_gpu,
             delta_gpu,
             sin_cos,
@@ -455,6 +470,24 @@ impl FullGpuPipelineV2 {
             .client
             .create(f32::as_bytes(&voxel_data.inv_covariances));
         self.voxel_valid = self.client.create(u32::as_bytes(&voxel_data.valid));
+
+        // Build spatial hash table for O(27) voxel lookup
+        self.resolution = search_radius; // Resolution = search_radius in NDT
+        let voxel_means_ptr = self.raw_ptr(&self.voxel_means);
+        let voxel_valid_ptr = self.raw_ptr(&self.voxel_valid);
+        let hash_table_ptr = self.raw_ptr(&self.hash_table);
+
+        unsafe {
+            cuda_ffi::hash_table_init(hash_table_ptr, self.hash_capacity)?;
+            cuda_ffi::hash_table_build(
+                voxel_means_ptr,
+                voxel_valid_ptr,
+                num_voxels,
+                self.resolution,
+                hash_table_ptr,
+                self.hash_capacity,
+            )?;
+        }
 
         // Update CUB offsets for actual num_points
         let n = num_points as i32;
@@ -642,25 +675,25 @@ impl FullGpuPipelineV2 {
                 );
             }
 
-            // Step 6: Radius search
+            // Step 6: Radius search using spatial hash table (O(27) instead of O(V))
             unsafe {
-                radius_search_kernel::launch_unchecked::<f32, CudaRuntime>(
-                    &self.client,
-                    CubeCount::Static(cube_count, 1, 1),
-                    CubeDim::new(256, 1, 1),
-                    ArrayArg::from_raw_parts::<f32>(&self.transformed_points, num_points * 3, 1),
-                    ArrayArg::from_raw_parts::<f32>(&self.voxel_means, num_voxels * 3, 1),
-                    ArrayArg::from_raw_parts::<u32>(&self.voxel_valid, num_voxels, 1),
-                    ScalarArg::new(self.search_radius_sq),
-                    ScalarArg::new(num_points as u32),
-                    ScalarArg::new(num_voxels as u32),
-                    ArrayArg::from_raw_parts::<i32>(
-                        &self.neighbor_indices,
-                        num_points * MAX_NEIGHBORS as usize,
-                        1,
-                    ),
-                    ArrayArg::from_raw_parts::<u32>(&self.neighbor_counts, num_points, 1),
-                );
+                let transformed_ptr = self.raw_ptr(&self.transformed_points);
+                let voxel_means_ptr = self.raw_ptr(&self.voxel_means);
+                let hash_table_ptr = self.raw_ptr(&self.hash_table);
+                let neighbor_indices_ptr = self.raw_ptr(&self.neighbor_indices);
+                let neighbor_counts_ptr = self.raw_ptr(&self.neighbor_counts);
+
+                cuda_ffi::hash_table_query(
+                    transformed_ptr,
+                    voxel_means_ptr,
+                    num_points,
+                    self.resolution,
+                    self.resolution, // search_radius = resolution
+                    hash_table_ptr,
+                    self.hash_capacity,
+                    neighbor_indices_ptr,
+                    neighbor_counts_ptr,
+                )?;
             }
 
             // Step 7a: Score kernel
@@ -1302,12 +1335,13 @@ mod tests {
         ];
 
         // Create multiple voxels at different positions for well-conditioned Hessian
-        // Each voxel has 3 floats for mean, 9 for inv_cov, 3 for principal_axis
+        // Voxels must be in different grid cells (spacing >= resolution)
+        // With resolution=2.0: (0,0,0)->cell(0,0,0), (3,0,0)->cell(1,0,0), (0,3,0)->cell(0,1,0)
         let voxel_data = GpuVoxelData {
             means: vec![
-                0.0, 0.0, 0.0, // Voxel 0 at origin
-                2.0, 0.0, 0.0, // Voxel 1 at (2,0,0)
-                0.0, 2.0, 0.0, // Voxel 2 at (0,2,0)
+                0.0, 0.0, 0.0, // Voxel 0 at origin -> grid cell (0,0,0)
+                3.0, 0.0, 0.0, // Voxel 1 at (3,0,0) -> grid cell (1,0,0)
+                0.0, 3.0, 0.0, // Voxel 2 at (0,3,0) -> grid cell (0,1,0)
             ],
             inv_covariances: vec![
                 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, // Voxel 0
@@ -1323,8 +1357,9 @@ mod tests {
             num_voxels: 3,
         };
 
+        // Use resolution=2.0 so each voxel is in its own grid cell
         pipeline
-            .upload_alignment_data(&source_points, &voxel_data, 0.55, 0.4, 3.0)
+            .upload_alignment_data(&source_points, &voxel_data, 0.55, 0.4, 2.0)
             .unwrap();
 
         let result = pipeline
@@ -1410,11 +1445,12 @@ mod tests {
         ];
 
         // Create multiple voxels at different positions for well-conditioned Hessian
+        // Voxels must be in different grid cells (spacing >= resolution)
         let voxel_data = GpuVoxelData {
             means: vec![
-                0.0, 0.0, 0.0, // Voxel 0 at origin
-                2.0, 0.0, 0.0, // Voxel 1 at (2,0,0)
-                0.0, 2.0, 0.0, // Voxel 2 at (0,2,0)
+                0.0, 0.0, 0.0, // Voxel 0 at origin -> grid cell (0,0,0)
+                3.0, 0.0, 0.0, // Voxel 1 at (3,0,0) -> grid cell (1,0,0)
+                0.0, 3.0, 0.0, // Voxel 2 at (0,3,0) -> grid cell (0,1,0)
             ],
             inv_covariances: vec![
                 0.5, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5, // Voxel 0
@@ -1430,8 +1466,9 @@ mod tests {
             num_voxels: 3,
         };
 
+        // Use resolution=2.0 so each voxel is in its own grid cell
         pipeline
-            .upload_alignment_data(&source_points, &voxel_data, 0.55, 0.4, 3.0)
+            .upload_alignment_data(&source_points, &voxel_data, 0.55, 0.4, 2.0)
             .unwrap();
 
         // Set regularization reference pose at (0.1, 0.0) - small offset
@@ -1478,11 +1515,12 @@ mod tests {
         ];
 
         // Create multiple voxels at different positions for well-conditioned Hessian
+        // Voxels must be in different grid cells (spacing >= resolution)
         let voxel_data = GpuVoxelData {
             means: vec![
-                0.0, 0.0, 0.0, // Voxel 0 at origin
-                2.0, 0.0, 0.0, // Voxel 1 at (2,0,0)
-                0.0, 2.0, 0.0, // Voxel 2 at (0,2,0)
+                0.0, 0.0, 0.0, // Voxel 0 at origin -> grid cell (0,0,0)
+                3.0, 0.0, 0.0, // Voxel 1 at (3,0,0) -> grid cell (1,0,0)
+                0.0, 3.0, 0.0, // Voxel 2 at (0,3,0) -> grid cell (0,1,0)
             ],
             inv_covariances: vec![
                 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, // Voxel 0
@@ -1498,8 +1536,9 @@ mod tests {
             num_voxels: 3,
         };
 
+        // Use resolution=2.0 so each voxel is in its own grid cell
         pipeline
-            .upload_alignment_data(&source_points, &voxel_data, 0.55, 0.4, 3.0)
+            .upload_alignment_data(&source_points, &voxel_data, 0.55, 0.4, 2.0)
             .unwrap();
 
         // Set a regularization pose (should be ignored since disabled)
@@ -1678,11 +1717,12 @@ mod tests {
         ];
 
         // Create multiple voxels at different positions for well-conditioned Hessian
+        // Voxels must be in different grid cells (spacing >= resolution)
         let voxel_data = GpuVoxelData {
             means: vec![
-                0.0, 0.0, 0.0, // Voxel 0 at origin
-                2.0, 0.0, 0.0, // Voxel 1 at (2,0,0)
-                0.0, 2.0, 0.0, // Voxel 2 at (0,2,0)
+                0.0, 0.0, 0.0, // Voxel 0 at origin -> grid cell (0,0,0)
+                3.0, 0.0, 0.0, // Voxel 1 at (3,0,0) -> grid cell (1,0,0)
+                0.0, 3.0, 0.0, // Voxel 2 at (0,3,0) -> grid cell (0,1,0)
             ],
             inv_covariances: vec![
                 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, // Voxel 0
@@ -1698,8 +1738,9 @@ mod tests {
             num_voxels: 3,
         };
 
+        // Use resolution=2.0 so each voxel is in its own grid cell
         pipeline
-            .upload_alignment_data(&source_points, &voxel_data, 0.55, 0.4, 3.0)
+            .upload_alignment_data(&source_points, &voxel_data, 0.55, 0.4, 2.0)
             .unwrap();
 
         let result = pipeline
