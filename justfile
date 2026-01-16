@@ -71,14 +71,15 @@ lint-cuda-ndt-matcher:
 test-rust:
     #!/usr/bin/env bash
     source {{local_setup}}
-    # Note: --test-threads=1 required to avoid CUDA/PCL thread-safety issues in fast-gicp tests
-    cargo test --manifest-path {{manifest}} --config {{cargo_config}} --all-targets -- --test-threads=1
+    # Note: --test-threads=2 needed to avoid CubeCL GPU state race conditions
+    cargo test --manifest-path {{manifest}} --config {{cargo_config}} --all-targets -- --test-threads=2
 
 # Test ndt_cuda crate only
 test-ndt-cuda:
     #!/usr/bin/env bash
     source {{local_setup}}
-    cargo test --manifest-path {{manifest}} --config {{cargo_config}} -p ndt_cuda -- --test-threads=1
+    # Note: --test-threads=2 needed to avoid CubeCL GPU state race conditions
+    cargo test --manifest-path {{manifest}} --config {{cargo_config}} -p ndt_cuda -- --test-threads=2
 
 # Test cuda_ffi crate only
 test-cuda-ffi:
