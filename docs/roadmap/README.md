@@ -2,7 +2,7 @@
 
 This document outlines the plan to implement custom CUDA kernels for NDT scan matching using [CubeCL](https://github.com/tracel-ai/cubecl), phasing out the fast-gicp dependency.
 
-## Current Status (2026-01-12)
+## Current Status (2026-01-16)
 
 | Phase                             | Status       | Notes                                                    |
 |-----------------------------------|--------------|----------------------------------------------------------|
@@ -22,10 +22,20 @@ This document outlines the plan to implement custom CUDA kernels for NDT scan ma
 | Phase 14: Full GPU Newton         | ✅ Complete  | GPU Jacobians, cuSOLVER Newton (superseded by Phase 15)  |
 | Phase 15: Full GPU + Line Search  | ✅ Complete  | ~200 bytes/iter + batched More-Thuente (K=8 candidates)  |
 | Phase 16: GPU Initial Pose        | ✅ Complete  | Batch kernels + pipeline + initial_pose.rs integration   |
+| Phase 17: Kernel Optimization     | ✅ Complete  | Persistent kernel with cooperative groups                |
+| Phase 18: Persistent Full Features| ✅ Complete  | All 5 features complete including line search (Option A) |
+| Phase 19: Cleanup & Enhancements  | ✅ Complete  | Struct cleanup, alpha tracking, per-iteration debug      |
 
 **Core NDT algorithm is fully implemented on CPU and matches Autoware's pclomp.**
-**GPU runtime is implemented with CubeCL for accelerated scoring and voxel grid construction.**
-**341 tests pass (ndt_cuda + cuda_ndt_matcher + cuda_ffi). All GPU tests enabled and passing.**
+**GPU runtime uses persistent kernel (single launch) for all optimization.**
+**339 tests pass (ndt_cuda + cuda_ndt_matcher + cuda_ffi), 7 ignored.**
+
+### Phase 17 Note
+
+The persistent kernel (single kernel launch for entire Newton iteration loop) is now fully functional.
+The previous hash table lookup issue was caused by memory visibility problems between CubeCL buffers
+and CUDA FFI operations. Fixed by adding `cuda_device_synchronize()` calls to ensure all CubeCL
+buffer writes are complete before the cooperative kernel reads from them.
 
 ## Phase Documents
 
@@ -44,7 +54,10 @@ This document outlines the plan to implement custom CUDA kernels for NDT scan ma
 - [Phase 13: GPU Scoring Pipeline](phase-13-gpu-scoring-pipeline.md) ✅
 - [Phase 14: Full GPU Newton](phase-14-iteration-optimization.md) ✅
 - [Phase 15: Full GPU + Line Search](phase-15-gpu-line-search.md) ✅
-- [Phase 16: GPU Initial Pose Pipeline](phase-16-gpu-initial-pose-pipeline.md) 🔲
+- [Phase 16: GPU Initial Pose Pipeline](phase-16-gpu-initial-pose-pipeline.md) ✅
+- [Phase 17: Kernel Optimization](phase-17-kernel-optimization.md) ✅ - Persistent kernel with cooperative groups
+- [Phase 18: Persistent Kernel Features](phase-18-persistent-kernel-features.md) ✅ - All 5 features: Hessian, regularization, correspondences, oscillation, line search
+- [Phase 19: Cleanup & Enhancements](phase-19-cleanup.md) ✅ - Struct cleanup, alpha tracking, per-iteration debug
 - [Implementation Notes](implementation-notes.md) - Dependencies, risks, references
 
 ## Background
@@ -121,18 +134,8 @@ cuda_ndt_matcher/
 | Phase                                | Estimated Duration | Priority     | Status         |
 |--------------------------------------|--------------------|--------------|----------------|
 | Phase 6: Validation                  | 1-2 weeks          | High         | ⚠️ Partial     |
-| Phase 9.3: GPU Derivatives           | 1-2 weeks          | Medium       | 🔲 Not started |
-| Phase 9.4: GPU Memory Pooling        | 3-4 days           | Low          | 🔲 Not started |
-| Phase 9.5: Async GPU Execution       | 1 week             | Low          | 🔲 Not started |
-| Phase 11: GPU Zero-Copy Voxel        | 1-2 weeks          | Medium       | ✅ Complete    |
-| Phase 12: GPU Derivative Pipeline    | 1-2 weeks          | High         | ✅ Complete    |
-| Phase 13: GPU Scoring Pipeline       | 1 week             | Medium       | ✅ Complete    |
-| Phase 14: Full GPU Newton            | 1-2 weeks          | **High**     | ✅ Complete    |
-| Phase 15: Full GPU + Line Search     | 2-3 weeks          | **High**     | ✅ Complete    |
-| **Total Remaining**                  | **~2-3 weeks**     |              | 6, 9.3-9.5     |
+| **Total Remaining**                  | **~1-2 weeks**     |              |                |
 
 ### Priority Order
 
 1. **Phase 6: Validation** - Run rosbag comparison to verify algorithm correctness
-2. **Phase 9.3: GPU Derivatives** - Additional GPU kernels for scoring path
-3. **Phase 9.4-9.5: GPU Optimization** - Memory pooling and async execution
