@@ -12,7 +12,7 @@ use nalgebra::{Isometry3, Matrix6, Vector6};
 use super::full_gpu_pipeline_v2::{FullGpuPipelineV2, PipelineV2Config};
 use super::line_search::{directional_derivative, LineSearchConfig};
 use super::more_thuente::{more_thuente_search, MoreThuenteConfig};
-use super::newton::{condition_number, newton_step_regularized};
+use super::newton::{condition_number, newton_step_negative_definite};
 use super::regularization::{RegularizationConfig, RegularizationTerm};
 use super::types::{
     apply_pose_delta, isometry_to_pose_vector, pose_vector_to_isometry, ConvergenceStatus,
@@ -191,13 +191,14 @@ impl NdtOptimizer {
                 best_pose = pose;
             }
 
-            // Compute Newton step
-            let delta = match newton_step_regularized(
+            // Compute Newton step with negative-definite regularization for maximization
+            let (delta_opt, _hessian_regularized) = newton_step_negative_definite(
                 &total_gradient,
                 &total_hessian,
-                self.config.ndt.regularization,
+                -1e-3, // Minimum eigenvalue: ensures all eigenvalues <= -1e-3
                 self.config.svd_tolerance,
-            ) {
+            );
+            let delta = match delta_opt {
                 Some(d) => d,
                 None => {
                     // Singular Hessian - return current best
@@ -749,13 +750,15 @@ impl NdtOptimizer {
                 best_pose = pose;
             }
 
-            // Compute Newton step
-            let delta = match newton_step_regularized(
+            // Compute Newton step with negative-definite regularization for maximization
+            // This ensures the Newton step points in an ascent direction
+            let (delta_opt, _hessian_was_regularized) = newton_step_negative_definite(
                 &derivatives.gradient,
                 &derivatives.hessian,
-                self.config.ndt.regularization,
+                -1e-3, // Minimum eigenvalue: ensures all eigenvalues <= -1e-3
                 self.config.svd_tolerance,
-            ) {
+            );
+            let delta = match delta_opt {
                 Some(d) => d,
                 None => {
                     debug.iterations.push(iter_debug);
