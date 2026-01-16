@@ -57,6 +57,8 @@ src/
 | `NDT_DEBUG=1` | Enable debug JSONL output |
 | `NDT_DEBUG_VPP=1` | Log voxel-per-point distribution |
 
+**Pipeline config**: `PipelineV2Config::enable_debug = true` collects per-iteration debug data (score, gradient, Hessian, step size) from the persistent kernel with zero overhead when disabled.
+
 ## ROS 2 Integration Notes
 
 **EKF Subscription QoS**: Uses depth 100 (matching Autoware) to buffer messages during node initialization. With depth 1, early EKF messages are lost before `spin()` starts processing callbacks.
@@ -81,8 +83,9 @@ src/
 
 | File | Purpose |
 |------|---------|
-| `ndt_cuda/src/optimization/full_gpu_pipeline_v2.rs` | Full GPU Newton with line search |
-| `ndt_cuda/src/optimization/gpu_pipeline_kernels.rs` | All GPU kernels |
+| `ndt_cuda/src/optimization/full_gpu_pipeline_v2.rs` | Full GPU Newton with line search (persistent kernel) |
+| `ndt_cuda/src/optimization/debug.rs` | Per-iteration debug data structures |
+| `cuda_ffi/csrc/persistent_ndt.cu` | CUDA persistent kernel with cooperative groups |
 | `ndt_cuda/src/voxel_grid/gpu/pipeline.rs` | Zero-copy voxel grid construction |
 | `cuda_ndt_matcher/src/main.rs` | ROS node entry point |
 
