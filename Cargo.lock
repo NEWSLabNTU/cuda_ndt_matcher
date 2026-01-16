@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "action_msgs"
-version = "1.2.2"
+version = "1.2.1"
 dependencies = [
  "builtin_interfaces",
  "rosidl_runtime_rs",
@@ -330,7 +330,7 @@ dependencies = [
 
 [[package]]
 name = "builtin_interfaces"
-version = "1.2.2"
+version = "1.2.1"
 dependencies = [
  "rosidl_runtime_rs",
 ]
@@ -1074,7 +1074,7 @@ checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
 name = "diagnostic_msgs"
-version = "4.9.0"
+version = "4.2.4"
 dependencies = [
  "rosidl_runtime_rs",
  "std_msgs",
@@ -1550,7 +1550,7 @@ dependencies = [
 
 [[package]]
 name = "geometry_msgs"
-version = "4.9.0"
+version = "4.2.4"
 dependencies = [
  "rosidl_runtime_rs",
  "std_msgs",
@@ -3175,7 +3175,7 @@ checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
 
 [[package]]
 name = "sensor_msgs"
-version = "4.9.0"
+version = "4.2.4"
 dependencies = [
  "builtin_interfaces",
  "geometry_msgs",
@@ -3385,7 +3385,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "std_msgs"
-version = "4.9.0"
+version = "4.2.4"
 dependencies = [
  "builtin_interfaces",
  "rosidl_runtime_rs",
@@ -3393,7 +3393,7 @@ dependencies = [
 
 [[package]]
 name = "std_srvs"
-version = "4.9.0"
+version = "4.2.4"
 dependencies = [
  "rosidl_runtime_rs",
 ]
@@ -3477,7 +3477,7 @@ dependencies = [
 
 [[package]]
 name = "tf2_msgs"
-version = "0.25.16"
+version = "0.25.12"
 dependencies = [
  "action_msgs",
  "builtin_interfaces",
@@ -3996,7 +3996,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "visualization_msgs"
-version = "4.9.0"
+version = "4.2.4"
 dependencies = [
  "builtin_interfaces",
  "geometry_msgs",
