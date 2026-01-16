@@ -2610,13 +2610,14 @@ fn accumulate_hessian_contribution<F: Float>(
         let xch_35 = cx1 * ph_13_5 + cx2 * ph_14_5;
 
         // Block 4 (pitch): row 16 has non-zero entries in cols 4,5 (d1, e1)
-        let xch_43 = cx1 * ph_17_3 + cx2 * ph_18_3; // col 3: row 16 is zero
+        // xch_43, xch_53, xch_54 are symmetric to xch_34, xch_35, xch_45 and not needed
+        let _xch_43 = cx1 * ph_17_3 + cx2 * ph_18_3; // col 3: row 16 is zero
         let xch_44 = cx0 * ph_16_4 + cx1 * ph_17_4 + cx2 * ph_18_4; // col 4: includes d1
         let xch_45 = cx0 * ph_16_5 + cx1 * ph_17_5 + cx2 * ph_18_5; // col 5: includes e1
 
         // Block 5 (yaw): row 20 has non-zero entries in cols 4,5 (e1, f1)
-        let xch_53 = cx1 * ph_21_3 + cx2 * ph_22_3; // col 3: row 20 is zero
-        let xch_54 = cx0 * ph_20_4 + cx1 * ph_21_4 + cx2 * ph_22_4; // col 4: includes e1
+        let _xch_53 = cx1 * ph_21_3 + cx2 * ph_22_3; // col 3: row 20 is zero
+        let _xch_54 = cx0 * ph_20_4 + cx1 * ph_21_4 + cx2 * ph_22_4; // col 4: includes e1
         let xch_55 = cx0 * ph_20_5 + cx1 * ph_21_5 + cx2 * ph_22_5; // col 5: includes f1
 
         // Accumulate Hessian: H[i,j] += e_x_cov_x * (-d2 * cov_dxd[i] * cov_dxd[j] + xch[i][j] + jtcj[i][j])
@@ -2644,15 +2645,15 @@ fn accumulate_hessian_contribution<F: Float>(
         *h25 += e_x_cov_x * (neg_d2 * cov_dxd_2 * cov_dxd_5 + jtcj_25);
 
         // Row 3: H[3,3..5] - includes xch terms
-        // For off-diagonal terms H[i,j], both xch[i,j] and xch[j,i] contribute
-        // (from x'Σ⁻¹H_i[:,j] and x'Σ⁻¹H_j[:,i] in Magnusson 2009 Eq. 6.13)
+        // For off-diagonal H[i,j], use only xch[i,j] (not xch[j,i]) since the point
+        // Hessian is symmetric and Autoware only uses one term per matrix entry.
         *h33 += e_x_cov_x * (neg_d2 * cov_dxd_3 * cov_dxd_3 + xch_33 + jtcj_33);
-        *h34 += e_x_cov_x * (neg_d2 * cov_dxd_3 * cov_dxd_4 + xch_34 + xch_43 + jtcj_34);
-        *h35 += e_x_cov_x * (neg_d2 * cov_dxd_3 * cov_dxd_5 + xch_35 + xch_53 + jtcj_35);
+        *h34 += e_x_cov_x * (neg_d2 * cov_dxd_3 * cov_dxd_4 + xch_34 + jtcj_34);
+        *h35 += e_x_cov_x * (neg_d2 * cov_dxd_3 * cov_dxd_5 + xch_35 + jtcj_35);
 
         // Row 4: H[4,4..5] - includes xch terms
         *h44 += e_x_cov_x * (neg_d2 * cov_dxd_4 * cov_dxd_4 + xch_44 + jtcj_44);
-        *h45 += e_x_cov_x * (neg_d2 * cov_dxd_4 * cov_dxd_5 + xch_45 + xch_54 + jtcj_45);
+        *h45 += e_x_cov_x * (neg_d2 * cov_dxd_4 * cov_dxd_5 + xch_45 + jtcj_45);
 
         // Row 5: H[5,5] - includes xch term
         *h55 += e_x_cov_x * (neg_d2 * cov_dxd_5 * cov_dxd_5 + xch_55 + jtcj_55);
