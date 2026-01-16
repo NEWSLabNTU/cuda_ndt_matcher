@@ -161,7 +161,6 @@ impl SmartPoseBuffer {
     }
 
     /// Clear all poses from the buffer
-    #[allow(dead_code)]
     pub fn clear(&self) {
         self.buffer.lock().clear();
     }

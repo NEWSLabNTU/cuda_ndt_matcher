@@ -162,7 +162,10 @@ impl NdtScanMatcherNode {
         ));
         let latest_sensor_points: Arc<ArcSwap<Option<Vec<[f32; 3]>>>> =
             Arc::new(ArcSwap::from_pointee(None));
-        let enabled = Arc::new(AtomicBool::new(true));
+        // Start disabled - wait for trigger_node service to enable
+        // This matches Autoware's behavior: pose_initializer refines the initial pose
+        // via ndt_align_srv, sends it to EKF, then enables NDT
+        let enabled = Arc::new(AtomicBool::new(false));
         // Track consecutive skips due to low score (like Autoware's skipping_publish_num)
         let skip_counter = Arc::new(AtomicI32::new(0));
 
@@ -373,12 +376,20 @@ impl NdtScanMatcherNode {
         // Trigger service
         let trigger_srv = {
             let enabled = Arc::clone(&enabled);
+            let pose_buffer = Arc::clone(&pose_buffer);
 
             node.create_service::<SetBool, _>(
                 "trigger_node_srv",
                 move |req: SetBoolRequest, _info: rclrs::ServiceInfo| {
                     enabled.store(req.data, Ordering::SeqCst);
-                    log_info!(NODE_NAME, "Node enabled: {}", req.data);
+                    // Clear pose buffer when enabling (matches Autoware behavior)
+                    // This ensures we start fresh with EKF poses from after initialization
+                    if req.data {
+                        pose_buffer.clear();
+                        log_info!(NODE_NAME, "NDT scan matcher enabled (pose buffer cleared)");
+                    } else {
+                        log_info!(NODE_NAME, "NDT scan matcher disabled");
+                    }
                     SetBoolResponse {
                         success: true,
                         message: format!(
@@ -631,6 +642,11 @@ impl NdtScanMatcherNode {
 
         // Pop old poses to prevent unbounded buffer growth
         pose_buffer.pop_old(sensor_time_ns);
+
+        // Note: Early alignments may have roll=0, pitch=0 (unrefined initial pose)
+        // before EKF has fused any NDT output. These alignments may have indefinite
+        // Hessians, but the regularization in newton.rs handles this correctly.
+        // We process them anyway to bootstrap the EKF with NDT data.
 
         // Check if map needs updating based on current position
         // This implements Autoware's dynamic map loading behavior
