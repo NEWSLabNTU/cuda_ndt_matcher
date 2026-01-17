@@ -12,6 +12,7 @@ CUDA/Rust re-implementation of Autoware's `ndt_scan_matcher` using CubeCL for GP
 - `docs/autoware-comparison.md` - Feature comparison and GPU acceleration status
 - `docs/roadmap/` - Implementation phases and status
 - `docs/profiling-results.md` - Performance analysis
+- `docs/optimization-approaches.md` - Potential optimizations for iteration reduction
 
 ## Build Commands
 
@@ -59,6 +60,22 @@ src/
 
 **Pipeline config**: `PipelineV2Config::enable_debug = true` collects per-iteration debug data (score, gradient, Hessian, step size) from the persistent kernel with zero overhead when disabled.
 
+## Cargo Features
+
+**ndt_cuda crate**:
+| Feature | Description |
+|---------|-------------|
+| `cuda` | Enable CUDA backend (default) |
+| `profiling` | Enable detailed timing instrumentation and hash table debug logs |
+| `test-verbose` | Enable verbose println output in tests |
+
+**cuda_ffi crate**:
+| Feature | Description |
+|---------|-------------|
+| `test-verbose` | Enable verbose println output in tests |
+
+Enable features with: `cargo test --features test-verbose` or `cargo build --features profiling`
+
 ## ROS 2 Integration Notes
 
 **EKF Subscription QoS**: Uses depth 100 (matching Autoware) to buffer messages during node initialization. With depth 1, early EKF messages are lost before `spin()` starts processing callbacks.
@@ -96,3 +113,18 @@ src/
 - Create temp files in `$project/tmp/` not `/tmp/`
 - Always use Write/Edit tools to create files, not `cat << EOF` heredoc patterns in Bash
 - **Do NOT modify files in `external/autoware_repo`** - copy to `src/` first
+
+### Process Cleanup
+
+When stopping `play_launch` or multi-process ROS systems, **kill the entire process group** to avoid orphan child processes that may interfere with topics:
+
+```bash
+# Get the PGID of play_launch and kill the whole group
+PGID=$(ps -o pgid= -p $(pgrep -f play_launch) | tr -d ' ')
+kill -9 -$PGID
+
+# Or use pkill with -g flag to kill process group
+pkill -9 -g $PGID
+```
+
+**Never** use `pkill -9 -f play_launch` alone as it leaves orphaned child processes (component containers, ros2 nodes) that hold topics and prevent clean restarts.
