@@ -332,9 +332,7 @@ impl NdtOptimizer {
 
         debug!(
             "align_full_gpu: {} points, {} voxels, resolution={}",
-            max_points,
-            max_voxels,
-            self.config.ndt.resolution
+            max_points, max_voxels, self.config.ndt.resolution
         );
 
         if max_voxels == 0 {

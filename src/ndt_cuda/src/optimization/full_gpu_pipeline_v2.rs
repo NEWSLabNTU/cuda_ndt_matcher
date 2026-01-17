@@ -351,9 +351,8 @@ impl FullGpuPipelineV2 {
         // Debug: count hash entries to verify table is populated
         #[cfg(feature = "profiling")]
         {
-            let entry_count = unsafe {
-                cuda_ffi::hash_table_count_entries(hash_table_ptr, self.hash_capacity)?
-            };
+            let entry_count =
+                unsafe { cuda_ffi::hash_table_count_entries(hash_table_ptr, self.hash_capacity)? };
             debug!(
                 entry_count,
                 num_voxels,
@@ -789,7 +788,9 @@ mod tests {
         assert!(result.iterations > 0, "Should run at least one iteration");
         crate::test_println!(
             "Multiple points test: {} iterations, converged={}, score={}",
-            result.iterations, result.converged, result.score
+            result.iterations,
+            result.converged,
+            result.score
         );
     }
 
@@ -853,7 +854,8 @@ mod tests {
         );
         crate::test_println!(
             "No line search test: {} iterations, converged={}",
-            result.iterations, result.converged
+            result.iterations,
+            result.converged
         );
     }
 
@@ -896,7 +898,9 @@ mod tests {
         assert!(result.used_line_search);
         crate::test_println!(
             "With line search test: {} iterations, converged={}, avg_alpha={}",
-            result.iterations, result.converged, result.avg_alpha
+            result.iterations,
+            result.converged,
+            result.avg_alpha
         );
     }
 
@@ -960,7 +964,11 @@ mod tests {
 
         crate::test_println!(
             "Regularization test: {} iterations, converged={}, score={}, pose=({:.4}, {:.4})",
-            result.iterations, result.converged, result.score, result.pose[0], result.pose[1]
+            result.iterations,
+            result.converged,
+            result.score,
+            result.pose[0],
+            result.pose[1]
         );
 
         // Should complete iterations with regularization active
@@ -1029,7 +1037,9 @@ mod tests {
 
         crate::test_println!(
             "Regularization disabled test: {} iterations, pose=({:.4}, {:.4})",
-            result.iterations, result.pose[0], result.pose[1]
+            result.iterations,
+            result.pose[0],
+            result.pose[1]
         );
 
         // Should complete normally (regularization shouldn't affect result)
@@ -1077,7 +1087,9 @@ mod tests {
         // The optimization may or may not oscillate depending on the problem geometry
         crate::test_println!(
             "Oscillation tracking test: {} iterations, converged={}, oscillation_count={}",
-            result.iterations, result.converged, result.oscillation_count
+            result.iterations,
+            result.converged,
+            result.oscillation_count
         );
 
         // The field should exist and the result should be reasonable (not some garbage value)
@@ -1288,7 +1300,9 @@ mod tests {
 
         crate::test_println!(
             "Persistent kernel test: {} iterations, converged={}, score={:.4}",
-            result.iterations, result.converged, result.score
+            result.iterations,
+            result.converged,
+            result.score
         );
         crate::test_println!("  Final pose: {:?}", result.pose);
 

@@ -1220,7 +1220,9 @@ mod tests {
             let diff = (cpu_g - gpu_g).abs();
             crate::test_println!(
                 "  g[{i}]: CPU={:12.4}, GPU={:12.4}, diff={:12.4}",
-                cpu_g, gpu_g, diff
+                cpu_g,
+                gpu_g,
+                diff
             );
         }
 
@@ -1232,7 +1234,10 @@ mod tests {
             let sign_match = (cpu_h * gpu_h) > 0.0;
             crate::test_println!(
                 "  h[{i},{i}]: CPU={:12.2}, GPU={:12.2}, diff={:12.2}, sign_match={}",
-                cpu_h, gpu_h, diff, sign_match
+                cpu_h,
+                gpu_h,
+                diff,
+                sign_match
             );
         }
 
@@ -1245,7 +1250,9 @@ mod tests {
                 if diff > 1.0 {
                     crate::test_println!(
                         "  h[{i},{j}]: CPU={:12.2}, GPU={:12.2}, diff={:12.2}",
-                        cpu_h, gpu_h, diff
+                        cpu_h,
+                        gpu_h,
+                        diff
                     );
                 }
             }
@@ -1351,18 +1358,21 @@ mod tests {
         crate::test_println!("\n=== Single Point Test ===");
         crate::test_println!(
             "CPU score: {:.6}, GPU score: {:.6}",
-            cpu_result.score, gpu_result.score
+            cpu_result.score,
+            gpu_result.score
         );
         crate::test_println!(
             "CPU correspondences: {}, GPU correspondences: {}",
-            cpu_result.num_correspondences, gpu_result.num_correspondences
+            cpu_result.num_correspondences,
+            gpu_result.num_correspondences
         );
 
         crate::test_println!("\nGradient comparison:");
         for i in 0..6 {
             crate::test_println!(
                 "  g[{i}]: CPU={:12.6}, GPU={:12.6}",
-                cpu_result.gradient[i], gpu_result.gradient[i]
+                cpu_result.gradient[i],
+                gpu_result.gradient[i]
             );
         }
 

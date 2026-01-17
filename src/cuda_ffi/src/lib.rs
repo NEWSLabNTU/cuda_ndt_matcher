@@ -48,8 +48,7 @@ pub use segmented_reduce::{
 };
 pub use voxel_hash::{
     hash_table_build, hash_table_capacity, hash_table_count_entries, hash_table_init,
-    hash_table_query, hash_table_size,
-    max_neighbors as voxel_hash_max_neighbors, VoxelHash,
+    hash_table_query, hash_table_size, max_neighbors as voxel_hash_max_neighbors, VoxelHash,
 };
 
 /// Device-to-device memory copy using CUDA.

@@ -779,11 +779,13 @@ mod tests {
         // so results may differ slightly for edge cases
         crate::test_println!(
             "GPU TP: {}, CPU TP: {}",
-            gpu_results[0].transform_probability, cpu_tp.transform_probability
+            gpu_results[0].transform_probability,
+            cpu_tp.transform_probability
         );
         crate::test_println!(
             "GPU NVTL: {}, CPU NVTL: {}",
-            gpu_results[0].nvtl, cpu_nvtl.nvtl
+            gpu_results[0].nvtl,
+            cpu_nvtl.nvtl
         );
 
         // Both should be positive (NDT score = -d1*exp(...) where d1 < 0)

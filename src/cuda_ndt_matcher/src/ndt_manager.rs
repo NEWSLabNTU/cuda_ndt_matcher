@@ -90,22 +90,33 @@ impl NdtManager {
             // Log actual grid bounding box (min/max of all voxel means)
             let voxels = grid.voxels();
             if !voxels.is_empty() {
-                let (min_x, max_x) = voxels.iter().map(|v| v.mean[0]).fold(
-                    (f32::MAX, f32::MIN),
-                    |(min, max), x| (min.min(x), max.max(x)),
-                );
-                let (min_y, max_y) = voxels.iter().map(|v| v.mean[1]).fold(
-                    (f32::MAX, f32::MIN),
-                    |(min, max), y| (min.min(y), max.max(y)),
-                );
-                let (min_z, max_z) = voxels.iter().map(|v| v.mean[2]).fold(
-                    (f32::MAX, f32::MIN),
-                    |(min, max), z| (min.min(z), max.max(z)),
-                );
+                let (min_x, max_x) = voxels
+                    .iter()
+                    .map(|v| v.mean[0])
+                    .fold((f32::MAX, f32::MIN), |(min, max), x| {
+                        (min.min(x), max.max(x))
+                    });
+                let (min_y, max_y) = voxels
+                    .iter()
+                    .map(|v| v.mean[1])
+                    .fold((f32::MAX, f32::MIN), |(min, max), y| {
+                        (min.min(y), max.max(y))
+                    });
+                let (min_z, max_z) = voxels
+                    .iter()
+                    .map(|v| v.mean[2])
+                    .fold((f32::MAX, f32::MIN), |(min, max), z| {
+                        (min.min(z), max.max(z))
+                    });
                 log_info!(
                     LOGGER_NAME,
                     "Grid bounds: X=[{:.1},{:.1}] Y=[{:.1},{:.1}] Z=[{:.1},{:.1}]",
-                    min_x, max_x, min_y, max_y, min_z, max_z
+                    min_x,
+                    max_x,
+                    min_y,
+                    max_y,
+                    min_z,
+                    max_z
                 );
             }
         } else {
@@ -197,20 +208,27 @@ impl NdtManager {
         // Log voxel grid state before alignment
         if let Some(grid) = self.matcher.target_grid() {
             // Log source point cloud bounds
-            let (min_x, max_x) = source_points.iter().map(|p| p[0]).fold(
-                (f32::MAX, f32::MIN),
-                |(min, max), x| (min.min(x), max.max(x)),
-            );
-            let (min_y, max_y) = source_points.iter().map(|p| p[1]).fold(
-                (f32::MAX, f32::MIN),
-                |(min, max), y| (min.min(y), max.max(y)),
-            );
+            let (min_x, max_x) = source_points
+                .iter()
+                .map(|p| p[0])
+                .fold((f32::MAX, f32::MIN), |(min, max), x| {
+                    (min.min(x), max.max(x))
+                });
+            let (min_y, max_y) = source_points
+                .iter()
+                .map(|p| p[1])
+                .fold((f32::MAX, f32::MIN), |(min, max), y| {
+                    (min.min(y), max.max(y))
+                });
             log_info!(
                 LOGGER_NAME,
                 "align_with_debug: {} pts, {} voxels, source X=[{:.1},{:.1}] Y=[{:.1},{:.1}]",
                 source_points.len(),
                 grid.len(),
-                min_x, max_x, min_y, max_y
+                min_x,
+                max_x,
+                min_y,
+                max_y
             );
         } else {
             log_warn!(LOGGER_NAME, "align_with_debug: target grid is None!");

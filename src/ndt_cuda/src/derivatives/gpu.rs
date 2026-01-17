@@ -3039,13 +3039,17 @@ mod tests {
         crate::test_println!("=== Jacobian Comparison ===");
         crate::test_println!(
             "Pose: roll={:.3}, pitch={:.3}, yaw={:.3}",
-            pose[3], pose[4], pose[5]
+            pose[3],
+            pose[4],
+            pose[5]
         );
 
         for (i, point) in points.iter().enumerate() {
             crate::test_println!(
                 "\nPoint {i}: [{:.1}, {:.1}, {:.1}]",
-                point[0], point[1], point[2]
+                point[0],
+                point[1],
+                point[2]
             );
 
             let point_f64 = [point[0] as f64, point[1] as f64, point[2] as f64];
@@ -3106,7 +3110,12 @@ mod tests {
 
             crate::test_println!(
                 "  Yaw:   GPU=[{:.4}, {:.4}, {:.4}], CPU=[{:.4}, {:.4}, {:.4}]",
-                gpu_dx_dyaw, gpu_dy_dyaw, gpu_dz_dyaw, cpu_dx_dyaw, cpu_dy_dyaw, cpu_dz_dyaw
+                gpu_dx_dyaw,
+                gpu_dy_dyaw,
+                gpu_dz_dyaw,
+                cpu_dx_dyaw,
+                cpu_dy_dyaw,
+                cpu_dz_dyaw
             );
             crate::test_println!(
                 "         diff=[{:.4}, {:.4}, {:.4}]",
@@ -3175,13 +3184,17 @@ mod tests {
         crate::test_println!("=== Point Hessian Comparison ===");
         crate::test_println!(
             "Pose: roll={:.3}, pitch={:.3}, yaw={:.3}",
-            pose[3], pose[4], pose[5]
+            pose[3],
+            pose[4],
+            pose[5]
         );
 
         for (i, point) in points.iter().enumerate() {
             crate::test_println!(
                 "\nPoint {i}: [{:.1}, {:.1}, {:.1}]",
-                point[0], point[1], point[2]
+                point[0],
+                point[1],
+                point[2]
             );
 
             let point_f64 = [point[0] as f64, point[1] as f64, point[2] as f64];
