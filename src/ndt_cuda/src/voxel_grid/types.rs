@@ -369,10 +369,10 @@ mod tests {
         crate::test_println!("  eigenvalue[2] = {:.6}", e2);
 
         // Find min and max
-        let min_val = e0.min(e1).min(e2);
-        let max_val = e0.max(e1).max(e2);
-        crate::test_println!("Min eigenvalue: {}", min_val);
-        crate::test_println!("Max eigenvalue: {}", max_val);
+        let _min_val = e0.min(e1).min(e2);
+        let _max_val = e0.max(e1).max(e2);
+        crate::test_println!("Min eigenvalue: {}", _min_val);
+        crate::test_println!("Max eigenvalue: {}", _max_val);
 
         // In Eigen (Autoware), eigenvalues are sorted in ASCENDING order
         // eigenvalue(0, 0) is smallest, eigenvalue(2, 2) is largest

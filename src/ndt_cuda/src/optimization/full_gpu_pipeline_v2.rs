@@ -1177,13 +1177,13 @@ mod tests {
             );
 
             // Print all iterations for verification
-            for iter_debug in debug_vec {
+            for _iter_debug in debug_vec {
                 crate::test_println!(
                     "  iter={} score={:.4} step={:.6} reversed={}",
-                    iter_debug.iteration,
-                    iter_debug.score,
-                    iter_debug.step_length,
-                    iter_debug.direction_reversed
+                    _iter_debug.iteration,
+                    _iter_debug.score,
+                    _iter_debug.step_length,
+                    _iter_debug.direction_reversed
                 );
             }
         }

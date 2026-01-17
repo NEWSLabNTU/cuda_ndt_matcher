@@ -204,6 +204,10 @@ impl VoxelHash {
     }
 
     /// Count non-empty entries in hash table (for debugging).
+    ///
+    /// # Safety
+    /// - `d_hash_table` must be a valid device pointer to a hash table created by `build`
+    /// - `capacity` must match the capacity used when building the hash table
     pub unsafe fn count_entries(
         d_hash_table: *const std::ffi::c_void,
         capacity: u32,

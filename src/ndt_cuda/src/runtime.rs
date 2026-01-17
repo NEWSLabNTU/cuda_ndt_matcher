@@ -988,8 +988,8 @@ mod tests {
 
     #[test]
     fn test_cuda_availability() {
-        let available = is_cuda_available();
-        crate::test_println!("CUDA available: {available}");
+        let _available = is_cuda_available();
+        crate::test_println!("CUDA available: {_available}");
     }
 
     #[test]
@@ -1217,12 +1217,12 @@ mod tests {
         for i in 0..6 {
             let cpu_g = cpu_result.gradient[i];
             let gpu_g = gpu_result.gradient[i];
-            let diff = (cpu_g - gpu_g).abs();
+            let _diff = (cpu_g - gpu_g).abs();
             crate::test_println!(
                 "  g[{i}]: CPU={:12.4}, GPU={:12.4}, diff={:12.4}",
                 cpu_g,
                 gpu_g,
-                diff
+                _diff
             );
         }
 
@@ -1230,14 +1230,14 @@ mod tests {
         for i in 0..6 {
             let cpu_h = cpu_result.hessian[(i, i)];
             let gpu_h = gpu_result.hessian[i][i];
-            let diff = (cpu_h - gpu_h).abs();
-            let sign_match = (cpu_h * gpu_h) > 0.0;
+            let _diff = (cpu_h - gpu_h).abs();
+            let _sign_match = (cpu_h * gpu_h) > 0.0;
             crate::test_println!(
                 "  h[{i},{i}]: CPU={:12.2}, GPU={:12.2}, diff={:12.2}, sign_match={}",
                 cpu_h,
                 gpu_h,
-                diff,
-                sign_match
+                _diff,
+                _sign_match
             );
         }
 
@@ -1294,11 +1294,11 @@ mod tests {
 
         if !sign_mismatches.is_empty() {
             crate::test_println!("\n!!! HESSIAN DIAGONAL SIGN MISMATCHES !!!");
-            for (i, cpu_h, gpu_h) in &sign_mismatches {
+            for (_i, _cpu_h, _gpu_h) in &sign_mismatches {
                 crate::test_println!(
-                    "  h[{i},{i}]: CPU={cpu_h:.2} ({}), GPU={gpu_h:.2} ({})",
-                    if *cpu_h < 0.0 { "neg" } else { "pos" },
-                    if *gpu_h < 0.0 { "neg" } else { "pos" }
+                    "  h[{_i},{_i}]: CPU={_cpu_h:.2} ({}), GPU={_gpu_h:.2} ({})",
+                    if *_cpu_h < 0.0 { "neg" } else { "pos" },
+                    if *_gpu_h < 0.0 { "neg" } else { "pos" }
                 );
             }
             panic!(
@@ -1368,19 +1368,19 @@ mod tests {
         );
 
         crate::test_println!("\nGradient comparison:");
-        for i in 0..6 {
+        for _i in 0..6 {
             crate::test_println!(
-                "  g[{i}]: CPU={:12.6}, GPU={:12.6}",
-                cpu_result.gradient[i],
-                gpu_result.gradient[i]
+                "  g[{_i}]: CPU={:12.6}, GPU={:12.6}",
+                cpu_result.gradient[_i],
+                gpu_result.gradient[_i]
             );
         }
 
         crate::test_println!("\nHessian diagonal:");
-        for i in 0..6 {
-            let cpu_h = cpu_result.hessian[(i, i)];
-            let gpu_h = gpu_result.hessian[i][i];
-            crate::test_println!("  h[{i},{i}]: CPU={:12.4}, GPU={:12.4}", cpu_h, gpu_h);
+        for _i in 0..6 {
+            let _cpu_h = cpu_result.hessian[(_i, _i)];
+            let _gpu_h = gpu_result.hessian[_i][_i];
+            crate::test_println!("  h[{_i},{_i}]: CPU={:12.4}, GPU={:12.4}", _cpu_h, _gpu_h);
         }
 
         // In this simple case, values should match closely

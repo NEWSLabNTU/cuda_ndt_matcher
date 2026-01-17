@@ -1082,8 +1082,13 @@ mod tests {
         crate::test_println!("Min points: 6, eigenvalue_ratio_threshold: 0.01");
         crate::test_println!("Voxel count: {}", grid.len());
 
-        for (coord, voxel) in grid.iter() {
-            crate::test_println!("\n--- Voxel at ({}, {}, {}) ---", coord.x, coord.y, coord.z);
+        for (_coord, voxel) in grid.iter() {
+            crate::test_println!(
+                "\n--- Voxel at ({}, {}, {}) ---",
+                _coord.x,
+                _coord.y,
+                _coord.z
+            );
             crate::test_println!("Point count: {}", voxel.point_count);
             crate::test_println!(
                 "Mean: [{:.6}, {:.6}, {:.6}]",
@@ -1093,22 +1098,22 @@ mod tests {
             );
 
             crate::test_println!("\nCovariance matrix:");
-            for i in 0..3 {
+            for _i in 0..3 {
                 crate::test_println!(
                     "  [{:.8}, {:.8}, {:.8}]",
-                    voxel.covariance[(i, 0)],
-                    voxel.covariance[(i, 1)],
-                    voxel.covariance[(i, 2)]
+                    voxel.covariance[(_i, 0)],
+                    voxel.covariance[(_i, 1)],
+                    voxel.covariance[(_i, 2)]
                 );
             }
 
             crate::test_println!("\nInverse covariance matrix:");
-            for i in 0..3 {
+            for _i in 0..3 {
                 crate::test_println!(
                     "  [{:.8}, {:.8}, {:.8}]",
-                    voxel.inv_covariance[(i, 0)],
-                    voxel.inv_covariance[(i, 1)],
-                    voxel.inv_covariance[(i, 2)]
+                    voxel.inv_covariance[(_i, 0)],
+                    voxel.inv_covariance[(_i, 1)],
+                    voxel.inv_covariance[(_i, 2)]
                 );
             }
 
@@ -1161,18 +1166,18 @@ mod tests {
             // Compute score at voxel center and at offset
             let gauss_d1 = -4.196518186951408f64;
             let gauss_d2 = 0.24847851012449546f64;
-            let score_at_center = -gauss_d1;
-            crate::test_println!("\nScore at voxel center: {:.6}", score_at_center);
+            let _score_at_center = -gauss_d1;
+            crate::test_println!("\nScore at voxel center: {:.6}", _score_at_center);
 
             // Compute score at 0.5m offset
             let offset = 0.5f64;
             let diff = nalgebra::Vector3::new(offset, 0.0, 0.0);
             let icov = voxel.inv_covariance.cast::<f64>();
             let mahal_sq = diff.dot(&(icov * diff));
-            let score_at_offset = -gauss_d1 * (-gauss_d2 * mahal_sq / 2.0).exp();
+            let _score_at_offset = -gauss_d1 * (-gauss_d2 * mahal_sq / 2.0).exp();
             crate::test_println!(
                 "Score at 0.5m X offset: {:.6} (mahal_sq={:.6})",
-                score_at_offset,
+                _score_at_offset,
                 mahal_sq
             );
         }
@@ -1194,13 +1199,13 @@ mod tests {
         crate::test_println!("Resolution: 2.0, Voxel count: {}", grid.len());
 
         // Print stats for first 5 voxels
-        for (i, (coord, voxel)) in grid.iter().enumerate().take(5) {
+        for (_i, (_coord, voxel)) in grid.iter().enumerate().take(5) {
             crate::test_println!(
                 "\nVoxel {} at ({}, {}, {}): {} pts, mean=[{:.3}, {:.3}, {:.3}]",
-                i,
-                coord.x,
-                coord.y,
-                coord.z,
+                _i,
+                _coord.x,
+                _coord.y,
+                _coord.z,
                 voxel.point_count,
                 voxel.mean.x,
                 voxel.mean.y,
@@ -1227,12 +1232,12 @@ mod tests {
             .collect();
         all_icov_traces.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-        let median_idx = all_icov_traces.len() / 2;
+        let _median_idx = all_icov_traces.len() / 2;
         crate::test_println!("\n--- Summary across {} voxels ---", grid.len());
         crate::test_println!(
             "Inv-cov trace: min={:.2}, median={:.2}, max={:.2}",
             all_icov_traces.first().unwrap_or(&0.0),
-            all_icov_traces.get(median_idx).unwrap_or(&0.0),
+            all_icov_traces.get(_median_idx).unwrap_or(&0.0),
             all_icov_traces.last().unwrap_or(&0.0)
         );
 
@@ -1272,7 +1277,7 @@ mod tests {
         let mut all_mahal_sq = Vec::new();
         let mut all_scores = Vec::new();
         let mut num_with_neighbors = 0usize;
-        let mut total_correspondences = 0usize;
+        let mut _total_correspondences = 0usize;
 
         let voxels = grid.voxels();
         for p in &source_points {
@@ -1280,7 +1285,7 @@ mod tests {
 
             if !neighbor_indices.is_empty() {
                 num_with_neighbors += 1;
-                total_correspondences += neighbor_indices.len();
+                _total_correspondences += neighbor_indices.len();
 
                 let mut max_score = 0.0f64;
                 let mut min_mahal_sq = f64::MAX;
@@ -1311,12 +1316,12 @@ mod tests {
         all_mahal_sq.sort_by(|a, b| a.partial_cmp(b).unwrap());
         all_scores.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
-        let avg_mahal_sq: f64 = all_mahal_sq.iter().sum::<f64>() / all_mahal_sq.len() as f64;
-        let avg_score: f64 = all_scores.iter().sum::<f64>() / all_scores.len() as f64;
-        let nvtl = all_scores.iter().sum::<f64>() / num_with_neighbors as f64;
+        let _avg_mahal_sq: f64 = all_mahal_sq.iter().sum::<f64>() / all_mahal_sq.len() as f64;
+        let _avg_score: f64 = all_scores.iter().sum::<f64>() / all_scores.len() as f64;
+        let _nvtl = all_scores.iter().sum::<f64>() / num_with_neighbors as f64;
 
-        let n = all_mahal_sq.len();
-        crate::test_println!("\n--- Statistics over {} points with neighbors ---", n);
+        let _n = all_mahal_sq.len();
+        crate::test_println!("\n--- Statistics over {} points with neighbors ---", _n);
         crate::test_println!(
             "Correspondences: {} total ({:.2} vpp)",
             total_correspondences,
@@ -1340,21 +1345,21 @@ mod tests {
             all_scores.last().unwrap_or(&0.0),
             -gauss_d1
         );
-        crate::test_println!("  average: {:.4}", avg_score);
-        crate::test_println!("  NVTL: {:.4}", nvtl);
+        crate::test_println!("  average: {:.4}", _avg_score);
+        crate::test_println!("  NVTL: {:.4}", _nvtl);
 
         // Also compute what Autoware's NVTL of ~3.0 would imply
         let autoware_nvtl = 3.0f64;
-        let implied_mahal_sq = -2.0 * (autoware_nvtl / (-gauss_d1)).ln() / gauss_d2;
+        let _implied_mahal_sq = -2.0 * (autoware_nvtl / (-gauss_d1)).ln() / gauss_d2;
         crate::test_println!("\n--- For comparison with Autoware ---");
         crate::test_println!(
             "Autoware NVTL ~3.0 implies avg mahal_sq: {:.4}",
-            implied_mahal_sq
+            _implied_mahal_sq
         );
         crate::test_println!(
             "Our avg mahal_sq: {:.4} (ratio: {:.2}x)",
-            avg_mahal_sq,
-            avg_mahal_sq / implied_mahal_sq
+            _avg_mahal_sq,
+            _avg_mahal_sq / _implied_mahal_sq
         );
 
         crate::test_println!("\n=== END MAHALANOBIS DISTANCE DEBUG ===\n");

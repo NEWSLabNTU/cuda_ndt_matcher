@@ -766,7 +766,7 @@ mod tests {
         // CPU result
         let isometry = Isometry3::identity();
         let cpu_tp = compute_transform_probability(&source_points, &grid, &isometry, &gauss);
-        let cpu_nvtl = compute_nvtl(
+        let _cpu_nvtl = compute_nvtl(
             &source_points,
             &grid,
             &isometry,
@@ -785,7 +785,7 @@ mod tests {
         crate::test_println!(
             "GPU NVTL: {}, CPU NVTL: {}",
             gpu_results[0].nvtl,
-            cpu_nvtl.nvtl
+            _cpu_nvtl.nvtl
         );
 
         // Both should be positive (NDT score = -d1*exp(...) where d1 < 0)

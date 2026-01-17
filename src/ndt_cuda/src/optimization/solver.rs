@@ -1321,7 +1321,7 @@ mod tests {
             let _ = optimizer.align(&source_points, &grid, initial_guess);
         }
         let cpu_elapsed = cpu_start.elapsed();
-        let cpu_per_align = cpu_elapsed.as_secs_f64() * 1000.0 / ITERATIONS as f64;
+        let _cpu_per_align = cpu_elapsed.as_secs_f64() * 1000.0 / ITERATIONS as f64;
 
         // Benchmark GPU path (full GPU with line search)
         let gpu_start = Instant::now();
@@ -1329,14 +1329,14 @@ mod tests {
             let _ = optimizer.align_full_gpu(&source_points, &grid, initial_guess);
         }
         let gpu_elapsed = gpu_start.elapsed();
-        let gpu_per_align = gpu_elapsed.as_secs_f64() * 1000.0 / ITERATIONS as f64;
+        let _gpu_per_align = gpu_elapsed.as_secs_f64() * 1000.0 / ITERATIONS as f64;
 
         crate::test_println!("\n=== Performance Comparison ===");
         crate::test_println!("Source points: {}", source_points.len());
         crate::test_println!("Voxel grid: {} voxels", grid.len());
         crate::test_println!("Iterations: {}", ITERATIONS);
-        crate::test_println!("CPU path: {:.2} ms per alignment", cpu_per_align);
-        crate::test_println!("GPU path: {:.2} ms per alignment", gpu_per_align);
+        crate::test_println!("CPU path: {:.2} ms per alignment", _cpu_per_align);
+        crate::test_println!("GPU path: {:.2} ms per alignment", _gpu_per_align);
         crate::test_println!("Speedup: {:.2}x", cpu_per_align / gpu_per_align);
         crate::test_println!("==============================\n");
     }
