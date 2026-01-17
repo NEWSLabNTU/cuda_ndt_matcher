@@ -369,6 +369,7 @@ mod tests {
                 resolution: 2.0,
                 max_iterations: 30,
                 num_threads: 4,
+                use_line_search: false,
             },
             initial_pose: InitialPoseParams {
                 particles_num: 200,

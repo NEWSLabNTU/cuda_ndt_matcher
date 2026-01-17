@@ -80,6 +80,107 @@ __device__ __forceinline__ void cholesky_solve_6x6_f64(
 }
 
 // ============================================================================
+// Cholesky with Levenberg-Marquardt regularization
+// ============================================================================
+
+/// Solve H * x = -g with diagonal regularization for indefinite matrices.
+///
+/// If the matrix is not positive definite, adds increasing regularization
+/// to the diagonal until Cholesky succeeds. This handles the case where
+/// NDT Hessian is indefinite (e.g., far from optimum or at saddle points).
+///
+/// @param H_orig  6x6 Hessian matrix, row-major [36 doubles]. Not modified.
+/// @param g_orig  6-element gradient vector [6 doubles]. Not modified.
+/// @param x_out   6-element solution output.
+/// @param success Output: true if solve succeeded.
+__device__ __forceinline__ void cholesky_solve_regularized_6x6_f64(
+    const double* H_orig,  // [36] row-major, not modified
+    const double* g_orig,  // [6] gradient
+    double* x_out,         // [6] solution output
+    bool* success
+) {
+    // Working copies
+    double H[36];
+    double g[6];
+
+    // Initial regularization based on Hessian magnitude
+    double max_diag = 0.0;
+    for (int i = 0; i < 6; i++) {
+        double d = fabs(H_orig[i * 6 + i]);
+        if (d > max_diag) max_diag = d;
+    }
+
+    // Try with increasing regularization: 0, 1e-6*max, 1e-4*max, 1e-2*max, 1*max
+    double reg_factors[5] = {0.0, 1e-6, 1e-4, 1e-2, 1.0};
+
+    for (int attempt = 0; attempt < 5; attempt++) {
+        double reg = reg_factors[attempt] * max_diag;
+        if (reg < 1e-6 && attempt > 0) reg = 1e-6;  // Minimum regularization
+
+        // Copy with regularization
+        for (int i = 0; i < 36; i++) H[i] = H_orig[i];
+        for (int i = 0; i < 6; i++) {
+            H[i * 6 + i] += reg;
+            g[i] = g_orig[i];
+        }
+
+        // Try Cholesky
+        bool chol_success = true;
+        for (int j = 0; j < 6; j++) {
+            double sum = H[j * 6 + j];
+            for (int k = 0; k < j; k++) {
+                double Ljk = H[j * 6 + k];
+                sum -= Ljk * Ljk;
+            }
+
+            if (sum <= 1e-10) {
+                chol_success = false;
+                break;
+            }
+
+            double Ljj = sqrt(sum);
+            H[j * 6 + j] = Ljj;
+
+            for (int i = j + 1; i < 6; i++) {
+                sum = H[i * 6 + j];
+                for (int k = 0; k < j; k++) {
+                    sum -= H[i * 6 + k] * H[j * 6 + k];
+                }
+                H[i * 6 + j] = sum / Ljj;
+            }
+        }
+
+        if (!chol_success) continue;
+
+        // Forward substitution: L * y = -g
+        for (int i = 0; i < 6; i++) {
+            double sum = -g[i];
+            for (int j = 0; j < i; j++) {
+                sum -= H[i * 6 + j] * g[j];
+            }
+            g[i] = sum / H[i * 6 + i];
+        }
+
+        // Backward substitution: L^T * x = y
+        for (int i = 5; i >= 0; i--) {
+            double sum = g[i];
+            for (int j = i + 1; j < 6; j++) {
+                sum -= H[j * 6 + i] * g[j];
+            }
+            g[i] = sum / H[i * 6 + i];
+        }
+
+        // Copy solution
+        for (int i = 0; i < 6; i++) x_out[i] = g[i];
+        *success = true;
+        return;
+    }
+
+    // All attempts failed
+    *success = false;
+}
+
+// ============================================================================
 // Expand upper triangle to full symmetric matrix
 // ============================================================================
 

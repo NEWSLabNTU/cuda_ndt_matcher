@@ -47,7 +47,8 @@ pub use segmented_reduce::{
     segmented_reduce_sum_f64_inplace, segmented_reduce_sum_f64_temp_size, SegmentedReducer,
 };
 pub use voxel_hash::{
-    hash_table_build, hash_table_capacity, hash_table_init, hash_table_query, hash_table_size,
+    hash_table_build, hash_table_capacity, hash_table_count_entries, hash_table_init,
+    hash_table_query, hash_table_size,
     max_neighbors as voxel_hash_max_neighbors, VoxelHash,
 };
 

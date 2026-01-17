@@ -203,6 +203,10 @@ pub struct AlignmentDebug {
     /// Oscillation indicates the optimizer is bouncing between poses.
     pub oscillation_count: usize,
 
+    /// Number of point-voxel correspondences found.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub num_correspondences: Option<usize>,
+
     /// Timing breakdown (populated when profiling feature is enabled).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timing: Option<AlignmentTimingDebug>,

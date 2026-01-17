@@ -510,6 +510,9 @@ impl NdtScanMatcher {
     /// This is the same as `align()` but also returns detailed debug information
     /// about each iteration for comparison with Autoware's implementation.
     ///
+    /// When GPU mode is enabled, this uses the GPU path for alignment but returns
+    /// simplified debug info (no per-iteration data, only final state).
+    ///
     /// # Arguments
     /// * `source_points` - Source point cloud (sensor scan)
     /// * `initial_guess` - Initial pose estimate
@@ -532,7 +535,13 @@ impl NdtScanMatcher {
             bail!("Source point cloud is empty");
         }
 
-        // Create optimizer with current config
+        // Use GPU path when GPU is enabled and regularization is disabled
+        // (matches align() behavior)
+        if self.config.use_gpu && !self.config.regularization_enabled {
+            return self.align_gpu_with_debug(source_points, initial_guess, timestamp_ns);
+        }
+
+        // CPU path with full per-iteration debug info
         let opt_config = self.build_optimizer_config();
         let optimizer = NdtOptimizer::new(opt_config);
 
@@ -554,6 +563,65 @@ impl NdtScanMatcher {
             },
             debug,
         ))
+    }
+
+    /// GPU variant of align_with_debug.
+    ///
+    /// Uses the GPU path for alignment and returns simplified debug info
+    /// (final state only, no per-iteration data since GPU runs entire loop).
+    fn align_gpu_with_debug(
+        &self,
+        source_points: &[[f32; 3]],
+        initial_guess: Isometry3<f64>,
+        timestamp_ns: u64,
+    ) -> Result<(AlignResult, crate::optimization::AlignmentDebug)> {
+        use crate::optimization::AlignmentDebug;
+
+        // Extract initial pose for debug
+        let translation = initial_guess.translation.vector;
+        let rotation = initial_guess.rotation.euler_angles();
+        let initial_pose_arr = [
+            translation.x,
+            translation.y,
+            translation.z,
+            rotation.0,
+            rotation.1,
+            rotation.2,
+        ];
+
+        // Run GPU alignment
+        let result = self.align_gpu(source_points, initial_guess)?;
+
+        // Extract final pose for debug
+        let final_translation = result.pose.translation.vector;
+        let final_rotation = result.pose.rotation.euler_angles();
+        let final_pose_arr = [
+            final_translation.x,
+            final_translation.y,
+            final_translation.z,
+            final_rotation.0,
+            final_rotation.1,
+            final_rotation.2,
+        ];
+
+        // Build debug info from GPU result
+        let mut debug = AlignmentDebug::new(timestamp_ns);
+        debug.set_initial_pose(&initial_pose_arr);
+        debug.set_final_pose(&final_pose_arr);
+        debug.num_source_points = source_points.len();
+        debug.convergence_status = if result.converged {
+            "Converged".to_string()
+        } else {
+            "MaxIterations".to_string()
+        };
+        debug.total_iterations = result.iterations;
+        debug.final_score = result.score;
+        debug.final_nvtl = result.nvtl;
+        debug.oscillation_count = result.oscillation_count;
+        debug.num_correspondences = Some(result.num_correspondences);
+        // Note: iterations Vec is empty for GPU path (no per-iteration data)
+
+        Ok((result, debug))
     }
 
     /// Evaluate NVTL at a given pose without running optimization.
