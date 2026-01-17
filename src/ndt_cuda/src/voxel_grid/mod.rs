@@ -1047,4 +1047,316 @@ mod tests {
         assert_eq!(result.segment_codes.len(), 3);
         assert_eq!(result.segment_codes, vec![10, 20, 30]);
     }
+
+    /// Debug test to print detailed voxel statistics for comparison with Autoware.
+    /// Run with: cargo test -p ndt_cuda --lib "test_voxel_covariance_debug" -- --nocapture
+    #[test]
+    fn test_voxel_covariance_debug() {
+        // Create a simple cluster of points for debugging
+        let mut points = Vec::new();
+        let center = [1.0f32, 1.0, 1.0];
+
+        // Create 50 points in a deterministic sphere-ish pattern
+        for i in 0..50 {
+            let t = i as f32 / 49.0;
+            let phi = t * std::f32::consts::PI * 2.0;
+            let theta = (i % 10) as f32 / 10.0 * std::f32::consts::PI;
+            let r = 0.3 * (0.5 + 0.5 * ((i * 7) % 11) as f32 / 10.0);
+
+            let x = center[0] + r * theta.sin() * phi.cos();
+            let y = center[1] + r * theta.sin() * phi.sin();
+            let z = center[2] + r * theta.cos();
+            points.push([x, y, z]);
+        }
+
+        crate::test_println!("\n=== VOXEL COVARIANCE DEBUG ===");
+        crate::test_println!(
+            "Input: {} points centered around {:?}",
+            points.len(),
+            center
+        );
+
+        let grid = VoxelGrid::from_points(&points, 2.0).unwrap();
+
+        crate::test_println!("Resolution: 2.0");
+        crate::test_println!("Min points: 6, eigenvalue_ratio_threshold: 0.01");
+        crate::test_println!("Voxel count: {}", grid.len());
+
+        for (coord, voxel) in grid.iter() {
+            crate::test_println!("\n--- Voxel at ({}, {}, {}) ---", coord.x, coord.y, coord.z);
+            crate::test_println!("Point count: {}", voxel.point_count);
+            crate::test_println!(
+                "Mean: [{:.6}, {:.6}, {:.6}]",
+                voxel.mean.x,
+                voxel.mean.y,
+                voxel.mean.z
+            );
+
+            crate::test_println!("\nCovariance matrix:");
+            for i in 0..3 {
+                crate::test_println!(
+                    "  [{:.8}, {:.8}, {:.8}]",
+                    voxel.covariance[(i, 0)],
+                    voxel.covariance[(i, 1)],
+                    voxel.covariance[(i, 2)]
+                );
+            }
+
+            crate::test_println!("\nInverse covariance matrix:");
+            for i in 0..3 {
+                crate::test_println!(
+                    "  [{:.8}, {:.8}, {:.8}]",
+                    voxel.inv_covariance[(i, 0)],
+                    voxel.inv_covariance[(i, 1)],
+                    voxel.inv_covariance[(i, 2)]
+                );
+            }
+
+            // Compute eigenvalues of covariance
+            let cov_f64 = voxel.covariance.cast::<f64>();
+            let eigen = cov_f64.symmetric_eigen();
+            let mut cov_eigs: Vec<f64> = eigen.eigenvalues.iter().copied().collect();
+            cov_eigs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            crate::test_println!(
+                "\nCovariance eigenvalues (sorted): [{:.8}, {:.8}, {:.8}]",
+                cov_eigs[0],
+                cov_eigs[1],
+                cov_eigs[2]
+            );
+
+            // Compute eigenvalues of inverse covariance
+            let icov_f64 = voxel.inv_covariance.cast::<f64>();
+            let ieigen = icov_f64.symmetric_eigen();
+            let mut icov_eigs: Vec<f64> = ieigen.eigenvalues.iter().copied().collect();
+            icov_eigs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            crate::test_println!(
+                "Inv-cov eigenvalues (sorted): [{:.8}, {:.8}, {:.8}]",
+                icov_eigs[0],
+                icov_eigs[1],
+                icov_eigs[2]
+            );
+
+            // Verify: cov_eig * icov_eig should be ~1.0
+            crate::test_println!("\nVerification (cov_eig * icov_eig should be ~1.0):");
+            // For inverse relationship: smallest cov eigenvalue * largest icov eigenvalue = 1
+            crate::test_println!(
+                "  cov_min={:.6} * icov_max={:.6} = {:.6}",
+                cov_eigs[0],
+                icov_eigs[2],
+                cov_eigs[0] * icov_eigs[2]
+            );
+            crate::test_println!(
+                "  cov_mid={:.6} * icov_mid={:.6} = {:.6}",
+                cov_eigs[1],
+                icov_eigs[1],
+                cov_eigs[1] * icov_eigs[1]
+            );
+            crate::test_println!(
+                "  cov_max={:.6} * icov_min={:.6} = {:.6}",
+                cov_eigs[2],
+                icov_eigs[0],
+                cov_eigs[2] * icov_eigs[0]
+            );
+
+            // Compute score at voxel center and at offset
+            let gauss_d1 = -4.196518186951408f64;
+            let gauss_d2 = 0.24847851012449546f64;
+            let score_at_center = -gauss_d1;
+            crate::test_println!("\nScore at voxel center: {:.6}", score_at_center);
+
+            // Compute score at 0.5m offset
+            let offset = 0.5f64;
+            let diff = nalgebra::Vector3::new(offset, 0.0, 0.0);
+            let icov = voxel.inv_covariance.cast::<f64>();
+            let mahal_sq = diff.dot(&(icov * diff));
+            let score_at_offset = -gauss_d1 * (-gauss_d2 * mahal_sq / 2.0).exp();
+            crate::test_println!(
+                "Score at 0.5m X offset: {:.6} (mahal_sq={:.6})",
+                score_at_offset,
+                mahal_sq
+            );
+        }
+
+        crate::test_println!("\n=== END VOXEL COVARIANCE DEBUG ===\n");
+    }
+
+    /// Debug test using half-cubic point cloud (matches Autoware test data).
+    /// Run with: cargo test -p ndt_cuda --lib "test_voxel_half_cubic_debug" -- --nocapture
+    #[test]
+    fn test_voxel_half_cubic_debug() {
+        let points = make_default_half_cubic_pcd();
+
+        crate::test_println!("\n=== HALF CUBIC VOXEL DEBUG ===");
+        crate::test_println!("Input: {} points", points.len());
+
+        let grid = VoxelGrid::from_points(&points, 2.0).unwrap();
+
+        crate::test_println!("Resolution: 2.0, Voxel count: {}", grid.len());
+
+        // Print stats for first 5 voxels
+        for (i, (coord, voxel)) in grid.iter().enumerate().take(5) {
+            crate::test_println!(
+                "\nVoxel {} at ({}, {}, {}): {} pts, mean=[{:.3}, {:.3}, {:.3}]",
+                i,
+                coord.x,
+                coord.y,
+                coord.z,
+                voxel.point_count,
+                voxel.mean.x,
+                voxel.mean.y,
+                voxel.mean.z
+            );
+
+            let icov = voxel.inv_covariance.cast::<f64>();
+            let ieigen = icov.symmetric_eigen();
+            let mut eigs: Vec<f64> = ieigen.eigenvalues.iter().copied().collect();
+            eigs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            crate::test_println!(
+                "  Inv-cov eigenvalues: [{:.2}, {:.2}, {:.2}]",
+                eigs[0],
+                eigs[1],
+                eigs[2]
+            );
+        }
+
+        // Summary statistics across all voxels
+        let mut all_icov_traces: Vec<f32> = grid
+            .voxels()
+            .iter()
+            .map(|v| v.inv_covariance.trace())
+            .collect();
+        all_icov_traces.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let median_idx = all_icov_traces.len() / 2;
+        crate::test_println!("\n--- Summary across {} voxels ---", grid.len());
+        crate::test_println!(
+            "Inv-cov trace: min={:.2}, median={:.2}, max={:.2}",
+            all_icov_traces.first().unwrap_or(&0.0),
+            all_icov_traces.get(median_idx).unwrap_or(&0.0),
+            all_icov_traces.last().unwrap_or(&0.0)
+        );
+
+        crate::test_println!("\n=== END HALF CUBIC DEBUG ===\n");
+    }
+
+    /// Debug test that computes detailed Mahalanobis distance statistics.
+    /// This helps compare with Autoware's behavior.
+    /// Run with: cargo test -p ndt_cuda --lib "test_mahalanobis_distance_stats" --features test-verbose -- --nocapture
+    #[test]
+    fn test_mahalanobis_distance_stats() {
+        use crate::voxel_grid::VoxelSearch;
+
+        let map_points = make_default_half_cubic_pcd();
+        let grid = VoxelGrid::from_points(&map_points, 2.0).unwrap();
+        let search = VoxelSearch::from_voxels(grid.voxels()).unwrap();
+
+        crate::test_println!("\n=== MAHALANOBIS DISTANCE DEBUG ===");
+        crate::test_println!("Map: {} points, {} voxels", map_points.len(), grid.len());
+
+        // Create a source point cloud (subset of map, slightly offset)
+        let source_points: Vec<[f32; 3]> = map_points
+            .iter()
+            .step_by(40) // Sample every 40th point
+            .map(|p| [p[0] + 0.05, p[1] + 0.05, p[2]]) // Small offset
+            .collect();
+
+        crate::test_println!(
+            "Source: {} points (with 5cm offset from map)",
+            source_points.len()
+        );
+
+        let gauss_d1 = -4.196518186951408f64;
+        let gauss_d2 = 0.24847851012449546f64;
+
+        // Compute per-point max scores and Mahalanobis distances
+        let mut all_mahal_sq = Vec::new();
+        let mut all_scores = Vec::new();
+        let mut num_with_neighbors = 0usize;
+        let mut total_correspondences = 0usize;
+
+        let voxels = grid.voxels();
+        for p in &source_points {
+            let neighbor_indices = search.within(p, 2.0);
+
+            if !neighbor_indices.is_empty() {
+                num_with_neighbors += 1;
+                total_correspondences += neighbor_indices.len();
+
+                let mut max_score = 0.0f64;
+                let mut min_mahal_sq = f64::MAX;
+
+                for &idx in &neighbor_indices {
+                    let voxel = &voxels[idx];
+                    let dx = p[0] as f64 - voxel.mean.x as f64;
+                    let dy = p[1] as f64 - voxel.mean.y as f64;
+                    let dz = p[2] as f64 - voxel.mean.z as f64;
+                    let diff = nalgebra::Vector3::new(dx, dy, dz);
+
+                    let icov = voxel.inv_covariance.cast::<f64>();
+                    let mahal_sq = diff.dot(&(icov * diff));
+                    let score = -gauss_d1 * (-gauss_d2 * mahal_sq / 2.0).exp();
+
+                    if score > max_score {
+                        max_score = score;
+                        min_mahal_sq = mahal_sq;
+                    }
+                }
+
+                all_mahal_sq.push(min_mahal_sq);
+                all_scores.push(max_score);
+            }
+        }
+
+        // Compute statistics
+        all_mahal_sq.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        all_scores.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let avg_mahal_sq: f64 = all_mahal_sq.iter().sum::<f64>() / all_mahal_sq.len() as f64;
+        let avg_score: f64 = all_scores.iter().sum::<f64>() / all_scores.len() as f64;
+        let nvtl = all_scores.iter().sum::<f64>() / num_with_neighbors as f64;
+
+        let n = all_mahal_sq.len();
+        crate::test_println!("\n--- Statistics over {} points with neighbors ---", n);
+        crate::test_println!(
+            "Correspondences: {} total ({:.2} vpp)",
+            total_correspondences,
+            total_correspondences as f64 / n as f64
+        );
+        crate::test_println!("\nMahalanobis distance squared (for max score per point):");
+        crate::test_println!("  min: {:.4}", all_mahal_sq.first().unwrap_or(&0.0));
+        crate::test_println!("  10%: {:.4}", all_mahal_sq.get(n / 10).unwrap_or(&0.0));
+        crate::test_println!("  25%: {:.4}", all_mahal_sq.get(n / 4).unwrap_or(&0.0));
+        crate::test_println!("  median: {:.4}", all_mahal_sq.get(n / 2).unwrap_or(&0.0));
+        crate::test_println!("  75%: {:.4}", all_mahal_sq.get(3 * n / 4).unwrap_or(&0.0));
+        crate::test_println!("  90%: {:.4}", all_mahal_sq.get(9 * n / 10).unwrap_or(&0.0));
+        crate::test_println!("  max: {:.4}", all_mahal_sq.last().unwrap_or(&0.0));
+        crate::test_println!("  average: {:.4}", avg_mahal_sq);
+
+        crate::test_println!("\nMax score per point:");
+        crate::test_println!("  min: {:.4}", all_scores.first().unwrap_or(&0.0));
+        crate::test_println!("  median: {:.4}", all_scores.get(n / 2).unwrap_or(&0.0));
+        crate::test_println!(
+            "  max: {:.4} (theoretical max: {:.4})",
+            all_scores.last().unwrap_or(&0.0),
+            -gauss_d1
+        );
+        crate::test_println!("  average: {:.4}", avg_score);
+        crate::test_println!("  NVTL: {:.4}", nvtl);
+
+        // Also compute what Autoware's NVTL of ~3.0 would imply
+        let autoware_nvtl = 3.0f64;
+        let implied_mahal_sq = -2.0 * (autoware_nvtl / (-gauss_d1)).ln() / gauss_d2;
+        crate::test_println!("\n--- For comparison with Autoware ---");
+        crate::test_println!(
+            "Autoware NVTL ~3.0 implies avg mahal_sq: {:.4}",
+            implied_mahal_sq
+        );
+        crate::test_println!(
+            "Our avg mahal_sq: {:.4} (ratio: {:.2}x)",
+            avg_mahal_sq,
+            avg_mahal_sq / implied_mahal_sq
+        );
+
+        crate::test_println!("\n=== END MAHALANOBIS DISTANCE DEBUG ===\n");
+    }
 }

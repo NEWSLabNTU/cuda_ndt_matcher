@@ -504,16 +504,26 @@ __global__ void persistent_ndt_kernel(
 
             // Phase 18.1: Prepare for line search or direct update
             if (ls_enabled) {
+                // Direction check (matching Autoware's computeStepLengthMT):
+                // For MAXIMIZATION, delta should point in same direction as gradient.
+                // If gradient · delta <= 0, reverse direction before line search.
+                float dphi_0_val = 0.0f;
+                for (int i = 0; i < 6; i++) {
+                    dphi_0_val += reduce_buffer[1 + i] * g_delta[i];  // gradient · delta
+                }
+                if (dphi_0_val <= 0.0f) {
+                    // Wrong direction for maximization - reverse
+                    for (int i = 0; i < 6; i++) {
+                        g_delta[i] = -g_delta[i];
+                    }
+                    dphi_0_val = -dphi_0_val;  // Update dphi_0 after reversal
+                }
+
                 // Save state for line search
                 for (int i = 0; i < 6; i++) {
                     g_original_pose[i] = g_pose[i];
                 }
                 *g_phi_0 = score;
-                // Compute dphi_0 = gradient · delta
-                float dphi_0_val = 0.0f;
-                for (int i = 0; i < 6; i++) {
-                    dphi_0_val += reduce_buffer[1 + i] * g_delta[i];
-                }
                 *g_dphi_0 = dphi_0_val;
 
                 // Generate candidates (golden ratio decay from 1.0)
@@ -967,9 +977,13 @@ __global__ void persistent_ndt_kernel(
         // --------------------------------------------------------------------
 
         if (*g_converged > 0.5f) {
+            // Converged: iter is the last iteration number (0-indexed)
+            // Number of iterations = iter + 1 (e.g., if we broke at iter=5, we ran 6 iterations)
+            iter++;
             break;
         }
     }
+    // If loop completed without break, iter = max_iterations
 
     // ========================================================================
     // Write final outputs
@@ -979,7 +993,7 @@ __global__ void persistent_ndt_kernel(
         for (int i = 0; i < 6; i++) {
             out_pose[i] = g_pose[i];
         }
-        *out_iterations = iter + 1;
+        *out_iterations = iter;
         *out_converged = (*g_converged > 0.5f) ? 1 : 0;
         *out_final_score = *g_final_score;
         *out_num_correspondences = (uint32_t)(*g_total_corr);

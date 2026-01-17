@@ -416,6 +416,10 @@ impl FullGpuPipelineV2 {
         const FLOATS_PER_ITER: usize =
             cuda_ffi::persistent_ndt::PersistentNdt::DEBUG_FLOATS_PER_ITER;
 
+        // Cap iterations to what the buffer can hold to prevent out-of-bounds access
+        let max_parseable = floats.len() / FLOATS_PER_ITER;
+        let num_iterations = num_iterations.min(max_parseable);
+
         let mut result = Vec::with_capacity(num_iterations);
         for iter in 0..num_iterations {
             let base = iter * FLOATS_PER_ITER;
