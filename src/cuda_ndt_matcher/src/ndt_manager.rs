@@ -59,6 +59,7 @@ impl NdtManager {
             .outlier_ratio(0.55) // Autoware default
             .regularization_enabled(params.regularization.enabled)
             .regularization_scale_factor(params.regularization.scale_factor)
+            .use_line_search(params.ndt.use_line_search)
             .use_gpu(use_gpu)
             .build()?;
 

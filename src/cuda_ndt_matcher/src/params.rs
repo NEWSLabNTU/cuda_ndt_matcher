@@ -32,6 +32,7 @@ pub struct NdtAlgorithmParams {
     pub resolution: f64,
     pub max_iterations: i32,
     pub num_threads: i32,
+    pub use_line_search: bool,
 }
 
 /// Initial pose estimation configuration
@@ -228,6 +229,11 @@ impl NdtParams {
                     .default(4)
                     .mandatory()?
                     .get() as i32,
+                use_line_search: node
+                    .declare_parameter("ndt.use_line_search")
+                    .default(false)
+                    .mandatory()?
+                    .get(),
             },
             initial_pose: InitialPoseParams {
                 particles_num: node
