@@ -980,7 +980,7 @@ mod tests {
     macro_rules! require_cuda {
         () => {
             if !is_cuda_available() {
-                eprintln!("Skipping test: CUDA not available");
+                ecrate::test_println!("Skipping test: CUDA not available");
                 return;
             }
         };
@@ -989,7 +989,7 @@ mod tests {
     #[test]
     fn test_cuda_availability() {
         let available = is_cuda_available();
-        println!("CUDA available: {available}");
+        crate::test_println!("CUDA available: {available}");
     }
 
     #[test]
@@ -1086,7 +1086,7 @@ mod tests {
             )
             .expect("compute_scores failed");
 
-        println!("GPU score result: {:?}", result);
+        crate::test_println!("GPU score result: {:?}", result);
 
         // Should have one correspondence
         assert_eq!(result.total_correspondences, 1);
@@ -1140,7 +1140,7 @@ mod tests {
             )
             .expect("compute_nvtl_scores failed");
 
-        println!("GPU NVTL result: {:?}", result);
+        crate::test_println!("GPU NVTL result: {:?}", result);
 
         // Should have one point with neighbors
         assert_eq!(result.num_with_neighbors, 1);
@@ -1202,48 +1202,48 @@ mod tests {
             )
             .expect("GPU derivatives failed");
 
-        println!("=== CPU vs GPU Derivative Comparison ===");
-        println!("Source points: {}", source_points.len());
-        println!("CPU correspondences: {}", cpu_result.num_correspondences);
-        println!("GPU correspondences: {}", gpu_result.num_correspondences);
+        crate::test_println!("=== CPU vs GPU Derivative Comparison ===");
+        crate::test_println!("Source points: {}", source_points.len());
+        crate::test_println!("CPU correspondences: {}", cpu_result.num_correspondences);
+        crate::test_println!("GPU correspondences: {}", gpu_result.num_correspondences);
 
-        println!("\n--- Score ---");
-        println!("CPU score: {:.6}", cpu_result.score);
-        println!("GPU score: {:.6}", gpu_result.score);
+        crate::test_println!("\n--- Score ---");
+        crate::test_println!("CPU score: {:.6}", cpu_result.score);
+        crate::test_println!("GPU score: {:.6}", gpu_result.score);
         let score_diff = (cpu_result.score - gpu_result.score).abs();
-        println!("Score diff: {:.6}", score_diff);
+        crate::test_println!("Score diff: {:.6}", score_diff);
 
-        println!("\n--- Gradient ---");
+        crate::test_println!("\n--- Gradient ---");
         for i in 0..6 {
             let cpu_g = cpu_result.gradient[i];
             let gpu_g = gpu_result.gradient[i];
             let diff = (cpu_g - gpu_g).abs();
-            println!(
+            crate::test_println!(
                 "  g[{i}]: CPU={:12.4}, GPU={:12.4}, diff={:12.4}",
                 cpu_g, gpu_g, diff
             );
         }
 
-        println!("\n--- Hessian Diagonal ---");
+        crate::test_println!("\n--- Hessian Diagonal ---");
         for i in 0..6 {
             let cpu_h = cpu_result.hessian[(i, i)];
             let gpu_h = gpu_result.hessian[i][i];
             let diff = (cpu_h - gpu_h).abs();
             let sign_match = (cpu_h * gpu_h) > 0.0;
-            println!(
+            crate::test_println!(
                 "  h[{i},{i}]: CPU={:12.2}, GPU={:12.2}, diff={:12.2}, sign_match={}",
                 cpu_h, gpu_h, diff, sign_match
             );
         }
 
-        println!("\n--- Full Hessian (upper triangle) ---");
+        crate::test_println!("\n--- Full Hessian (upper triangle) ---");
         for i in 0..6 {
             for j in i..6 {
                 let cpu_h = cpu_result.hessian[(i, j)];
                 let gpu_h = gpu_result.hessian[i][j];
                 let diff = (cpu_h - gpu_h).abs();
                 if diff > 1.0 {
-                    println!(
+                    crate::test_println!(
                         "  h[{i},{j}]: CPU={:12.2}, GPU={:12.2}, diff={:12.2}",
                         cpu_h, gpu_h, diff
                     );
@@ -1286,9 +1286,9 @@ mod tests {
         }
 
         if !sign_mismatches.is_empty() {
-            println!("\n!!! HESSIAN DIAGONAL SIGN MISMATCHES !!!");
+            crate::test_println!("\n!!! HESSIAN DIAGONAL SIGN MISMATCHES !!!");
             for (i, cpu_h, gpu_h) in &sign_mismatches {
-                println!(
+                crate::test_println!(
                     "  h[{i},{i}]: CPU={cpu_h:.2} ({}), GPU={gpu_h:.2} ({})",
                     if *cpu_h < 0.0 { "neg" } else { "pos" },
                     if *gpu_h < 0.0 { "neg" } else { "pos" }
@@ -1318,7 +1318,7 @@ mod tests {
             VoxelGrid::from_points(&target_points, resolution).expect("Failed to build voxel grid");
         let gpu_voxel_data = GpuVoxelData::from_voxel_grid(&target_grid);
 
-        println!("Target grid has {} voxels", target_grid.len());
+        crate::test_println!("Target grid has {} voxels", target_grid.len());
 
         // Single source point near the voxel mean
         let source_points = vec![[0.5, 0.5, 0.0]];
@@ -1330,7 +1330,7 @@ mod tests {
         let gauss_d1 = gauss.d1 as f32;
         let gauss_d2 = gauss.d2 as f32;
 
-        println!("Gaussian params: d1={:.4}, d2={:.4}", gauss.d1, gauss.d2);
+        crate::test_println!("Gaussian params: d1={:.4}, d2={:.4}", gauss.d1, gauss.d2);
 
         // CPU
         let cpu_result = compute_derivatives_cpu(&source_points, &target_grid, &pose, &gauss, true);
@@ -1348,29 +1348,29 @@ mod tests {
             )
             .expect("GPU derivatives failed");
 
-        println!("\n=== Single Point Test ===");
-        println!(
+        crate::test_println!("\n=== Single Point Test ===");
+        crate::test_println!(
             "CPU score: {:.6}, GPU score: {:.6}",
             cpu_result.score, gpu_result.score
         );
-        println!(
+        crate::test_println!(
             "CPU correspondences: {}, GPU correspondences: {}",
             cpu_result.num_correspondences, gpu_result.num_correspondences
         );
 
-        println!("\nGradient comparison:");
+        crate::test_println!("\nGradient comparison:");
         for i in 0..6 {
-            println!(
+            crate::test_println!(
                 "  g[{i}]: CPU={:12.6}, GPU={:12.6}",
                 cpu_result.gradient[i], gpu_result.gradient[i]
             );
         }
 
-        println!("\nHessian diagonal:");
+        crate::test_println!("\nHessian diagonal:");
         for i in 0..6 {
             let cpu_h = cpu_result.hessian[(i, i)];
             let gpu_h = gpu_result.hessian[i][i];
-            println!("  h[{i},{i}]: CPU={:12.4}, GPU={:12.4}", cpu_h, gpu_h);
+            crate::test_println!("  h[{i},{i}]: CPU={:12.4}, GPU={:12.4}", cpu_h, gpu_h);
         }
 
         // In this simple case, values should match closely

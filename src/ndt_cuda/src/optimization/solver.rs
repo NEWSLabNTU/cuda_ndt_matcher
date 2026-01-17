@@ -8,6 +8,7 @@
 //! 5. Check convergence and iterate
 
 use nalgebra::{Isometry3, Matrix6, Vector6};
+use tracing::{debug, warn};
 
 use super::full_gpu_pipeline_v2::{FullGpuPipelineV2, PipelineV2Config};
 use super::line_search::{directional_derivative, LineSearchConfig};
@@ -329,6 +330,17 @@ impl NdtOptimizer {
         let max_points = source_points.len().max(1);
         let max_voxels = target_grid.len().max(1);
 
+        debug!(
+            "align_full_gpu: {} points, {} voxels, resolution={}",
+            max_points,
+            max_voxels,
+            self.config.ndt.resolution
+        );
+
+        if max_voxels == 0 {
+            warn!("align_full_gpu: target_grid is empty!");
+        }
+
         // Configure V2 pipeline based on optimizer settings
         let config = PipelineV2Config {
             use_line_search: self.config.ndt.use_line_search,
@@ -343,6 +355,12 @@ impl NdtOptimizer {
 
         // Upload alignment data once
         let voxel_data = GpuVoxelData::from_voxel_grid(target_grid);
+        debug!(
+            "voxel_data: {} voxels, {} means, {} inv_covs",
+            voxel_data.num_voxels,
+            voxel_data.means.len(),
+            voxel_data.inv_covariances.len()
+        );
         pipeline.upload_alignment_data(
             source_points,
             &voxel_data,
@@ -376,6 +394,14 @@ impl NdtOptimizer {
                 return Err(e);
             }
         };
+
+        debug!(
+            "GPU result: score={:.2}, iters={}, converged={}, correspondences={}",
+            gpu_result.score,
+            gpu_result.iterations,
+            gpu_result.converged,
+            gpu_result.num_correspondences
+        );
 
         // Convert result
         let final_pose = pose_vector_to_isometry(&gpu_result.pose);
@@ -1270,7 +1296,7 @@ mod tests {
             })
             .collect();
         let grid = VoxelGrid::from_points(&grid_points, 2.0).unwrap();
-        println!("Grid has {} voxels", grid.len());
+        crate::test_println!("Grid has {} voxels", grid.len());
 
         // Create 500 source points
         let source_points: Vec<[f32; 3]> = (0..500)
@@ -1307,13 +1333,13 @@ mod tests {
         let gpu_elapsed = gpu_start.elapsed();
         let gpu_per_align = gpu_elapsed.as_secs_f64() * 1000.0 / ITERATIONS as f64;
 
-        println!("\n=== Performance Comparison ===");
-        println!("Source points: {}", source_points.len());
-        println!("Voxel grid: {} voxels", grid.len());
-        println!("Iterations: {}", ITERATIONS);
-        println!("CPU path: {:.2} ms per alignment", cpu_per_align);
-        println!("GPU path: {:.2} ms per alignment", gpu_per_align);
-        println!("Speedup: {:.2}x", cpu_per_align / gpu_per_align);
-        println!("==============================\n");
+        crate::test_println!("\n=== Performance Comparison ===");
+        crate::test_println!("Source points: {}", source_points.len());
+        crate::test_println!("Voxel grid: {} voxels", grid.len());
+        crate::test_println!("Iterations: {}", ITERATIONS);
+        crate::test_println!("CPU path: {:.2} ms per alignment", cpu_per_align);
+        crate::test_println!("GPU path: {:.2} ms per alignment", gpu_per_align);
+        crate::test_println!("Speedup: {:.2}x", cpu_per_align / gpu_per_align);
+        crate::test_println!("==============================\n");
     }
 }

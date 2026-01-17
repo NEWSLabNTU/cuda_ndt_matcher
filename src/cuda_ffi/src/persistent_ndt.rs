@@ -410,6 +410,7 @@ mod tests {
     fn test_is_supported() {
         let result = is_supported();
         assert!(result.is_ok(), "is_supported should not fail");
+        #[cfg(feature = "test-verbose")]
         println!("Cooperative launch supported: {}", result.unwrap());
     }
 
@@ -418,7 +419,8 @@ mod tests {
         let result = PersistentNdt::get_max_blocks();
         assert!(result.is_ok(), "get_max_blocks should not fail");
         let max_blocks = result.unwrap();
-        println!("Max cooperative blocks: {}", max_blocks);
+        #[cfg(feature = "test-verbose")]
+        println!("Max cooperative blocks: {max_blocks}");
         assert!(max_blocks > 0, "Max blocks should be positive");
     }
 
@@ -446,6 +448,7 @@ mod tests {
         let result = PersistentNdt::can_launch(10_000_000);
         assert!(result.is_ok());
         // Don't assert on the result - depends on GPU
+        #[cfg(feature = "test-verbose")]
         println!("10M points can_launch: {}", result.unwrap());
     }
 }

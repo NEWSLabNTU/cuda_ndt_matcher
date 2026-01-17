@@ -54,3 +54,5 @@ default = ["cuda"]
 cuda = []
 # Enable detailed timing instrumentation for profiling
 profiling = []
+# Enable verbose debug output in tests (println! statements)
+test-verbose = []

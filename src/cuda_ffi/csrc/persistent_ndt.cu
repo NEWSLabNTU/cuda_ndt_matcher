@@ -416,6 +416,13 @@ __global__ void persistent_ndt_kernel(
             float score = reduce_buffer[0];
             float correspondence_count = reduce_buffer[28];
 
+            // DEBUG: Print summary for iterations 0, 10, 20, 30
+            if (iter == 0 || iter == 10 || iter == 20 || iter >= 28) {
+                printf("[NDT-DEBUG] iter=%d REDUCED: score=%.1f, corr=%.0f, pose=(%.2f,%.2f,%.2f,%.4f,%.4f,%.4f)\n",
+                       iter, score, correspondence_count,
+                       g_pose[0], g_pose[1], g_pose[2], g_pose[3], g_pose[4], g_pose[5]);
+            }
+
             // Phase 18.2: Apply GNSS regularization to score, gradient, Hessian
             if (reg_enabled) {
                 float dx = reg_ref_x - g_pose[0];
@@ -460,18 +467,39 @@ __global__ void persistent_ndt_kernel(
             // Expand upper triangle to full matrix
             expand_upper_triangle_f32_to_f64(reduce_buffer + 7, H);
 
-            // Cholesky solve: H * delta = -g
+            // DEBUG: Print gradient and Hessian diagonal for iteration 0
+            if (iter == 0) {
+                printf("[NDT-DEBUG] iter=0 grad=(%.2f,%.2f,%.2f,%.2f,%.2f,%.2f)\n",
+                       g[0], g[1], g[2], g[3], g[4], g[5]);
+                printf("[NDT-DEBUG] iter=0 Hdiag=(%.2f,%.2f,%.2f,%.2f,%.2f,%.2f)\n",
+                       H[0], H[7], H[14], H[21], H[28], H[35]);
+            }
+
+            // Cholesky solve with regularization: H * delta = -g
+            // Uses Levenberg-Marquardt style regularization for indefinite Hessians
+            double delta[6];
             bool solve_success;
-            cholesky_solve_6x6_f64(H, g, &solve_success);
+            cholesky_solve_regularized_6x6_f64(H, g, delta, &solve_success);
 
             if (solve_success) {
                 for (int i = 0; i < 6; i++) {
-                    g_delta[i] = (float)g[i];
+                    g_delta[i] = (float)delta[i];
                 }
             } else {
-                // Fallback: gradient descent with small step
+                // Fallback: diagonal quasi-Newton (approximates SVD for indefinite matrices)
+                // delta[i] = -g[i] / |H[i,i]|  (use absolute value to handle mixed signs)
+                // This gives a reasonable direction even when the Hessian has mixed signs
                 for (int i = 0; i < 6; i++) {
-                    g_delta[i] = -0.001f * reduce_buffer[1 + i];
+                    double h_diag = H[i * 6 + i];
+                    double abs_h = fabs(h_diag);
+                    // Regularize small diagonals to avoid division by near-zero
+                    if (abs_h < 1e-6) abs_h = 1e-6;
+                    // For negative diagonal (normal for maximization), use -g/h
+                    // For positive diagonal (saddle point), also use -g/|h| to descend
+                    delta[i] = -g[i] / abs_h;
+                }
+                for (int i = 0; i < 6; i++) {
+                    g_delta[i] = (float)delta[i];
                 }
             }
 
@@ -523,6 +551,12 @@ __global__ void persistent_ndt_kernel(
 
                 // Scale delta to achieve desired step length
                 float scale = (delta_norm > 1e-10f) ? (step_length / delta_norm) : 0.0f;
+
+                // DEBUG: Print step info
+                if (iter == 0 || iter == 10 || iter == 20 || iter >= 28) {
+                    printf("[NDT-DEBUG] iter=%d: delta_norm=%.4f, step_len=%.4f, scale=%.4f, delta=(%.4f,%.4f,%.4f,%.6f,%.6f,%.6f)\n",
+                           iter, delta_norm, step_length, scale, g_delta[0], g_delta[1], g_delta[2], g_delta[3], g_delta[4], g_delta[5]);
+                }
 
                 for (int i = 0; i < 6; i++) {
                     g_pose[i] += scale * g_delta[i];

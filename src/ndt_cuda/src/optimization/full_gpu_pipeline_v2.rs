@@ -52,6 +52,8 @@ use cubecl::client::ComputeClient;
 use cubecl::cuda::{CudaDevice, CudaRuntime};
 use cubecl::prelude::*;
 use cubecl::server::Handle;
+#[cfg(feature = "profiling")]
+use tracing::debug;
 
 use crate::derivatives::gpu::GpuVoxelData;
 use crate::optimization::gpu_pipeline_kernels::DEFAULT_NUM_CANDIDATES;
@@ -345,6 +347,20 @@ impl FullGpuPipelineV2 {
         // Ensure hash table build is complete before any subsequent GPU operations
         // This is critical for persistent kernel which reads the hash table
         cuda_ffi::cuda_device_synchronize()?;
+
+        // Debug: count hash entries to verify table is populated
+        #[cfg(feature = "profiling")]
+        {
+            let entry_count = unsafe {
+                cuda_ffi::hash_table_count_entries(hash_table_ptr, self.hash_capacity)?
+            };
+            debug!(
+                entry_count,
+                num_voxels,
+                capacity = self.hash_capacity,
+                "Hash table populated"
+            );
+        }
 
         Ok(())
     }
@@ -771,7 +787,7 @@ mod tests {
 
         // Should complete some iterations
         assert!(result.iterations > 0, "Should run at least one iteration");
-        println!(
+        crate::test_println!(
             "Multiple points test: {} iterations, converged={}, score={}",
             result.iterations, result.converged, result.score
         );
@@ -835,7 +851,7 @@ mod tests {
             (result.avg_alpha - 0.1).abs() < 1e-6,
             "Without line search, alpha should be fixed_step_size (0.1)"
         );
-        println!(
+        crate::test_println!(
             "No line search test: {} iterations, converged={}",
             result.iterations, result.converged
         );
@@ -878,7 +894,7 @@ mod tests {
 
         // Should run with line search
         assert!(result.used_line_search);
-        println!(
+        crate::test_println!(
             "With line search test: {} iterations, converged={}, avg_alpha={}",
             result.iterations, result.converged, result.avg_alpha
         );
@@ -942,7 +958,7 @@ mod tests {
             .optimize(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 20, 0.001)
             .unwrap();
 
-        println!(
+        crate::test_println!(
             "Regularization test: {} iterations, converged={}, score={}, pose=({:.4}, {:.4})",
             result.iterations, result.converged, result.score, result.pose[0], result.pose[1]
         );
@@ -1011,7 +1027,7 @@ mod tests {
             .optimize(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 10, 0.01)
             .unwrap();
 
-        println!(
+        crate::test_println!(
             "Regularization disabled test: {} iterations, pose=({:.4}, {:.4})",
             result.iterations, result.pose[0], result.pose[1]
         );
@@ -1059,7 +1075,7 @@ mod tests {
 
         // Verify that oscillation_count field is populated (not necessarily > 0)
         // The optimization may or may not oscillate depending on the problem geometry
-        println!(
+        crate::test_println!(
             "Oscillation tracking test: {} iterations, converged={}, oscillation_count={}",
             result.iterations, result.converged, result.oscillation_count
         );
@@ -1137,7 +1153,7 @@ mod tests {
             assert_eq!(first.hessian.len(), 36);
             assert_eq!(first.newton_step.len(), 6);
 
-            println!(
+            crate::test_println!(
                 "Debug test: {} iterations, first iter score={:.4}, step_len={:.6}",
                 debug_vec.len(),
                 first.score,
@@ -1146,7 +1162,7 @@ mod tests {
 
             // Print all iterations for verification
             for iter_debug in debug_vec {
-                println!(
+                crate::test_println!(
                     "  iter={} score={:.4} step={:.6} reversed={}",
                     iter_debug.iteration,
                     iter_debug.score,
@@ -1270,11 +1286,11 @@ mod tests {
         let initial_pose = [0.1, 0.0, 0.0, 0.0, 0.0, 0.0];
         let result = pipeline.optimize(&initial_pose, 30, 0.01).unwrap();
 
-        println!(
+        crate::test_println!(
             "Persistent kernel test: {} iterations, converged={}, score={:.4}",
             result.iterations, result.converged, result.score
         );
-        println!("  Final pose: {:?}", result.pose);
+        crate::test_println!("  Final pose: {:?}", result.pose);
 
         // Basic sanity checks
         assert!(result.iterations > 0, "Should run at least one iteration");

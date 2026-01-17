@@ -66,6 +66,13 @@ extern "C" {
 
     fn voxel_hash_max_neighbors() -> u32;
 
+    fn voxel_hash_count_entries(
+        d_hash_table: *const std::ffi::c_void,
+        capacity: u32,
+        h_count: *mut u32,
+        stream: CudaStream,
+    ) -> c_int;
+
     // CUDA runtime
     fn cudaDeviceSynchronize() -> c_int;
 }
@@ -195,6 +202,22 @@ impl VoxelHash {
         ))?;
         check_cuda(cudaDeviceSynchronize())
     }
+
+    /// Count non-empty entries in hash table (for debugging).
+    pub unsafe fn count_entries(
+        d_hash_table: *const std::ffi::c_void,
+        capacity: u32,
+    ) -> Result<u32, CudaError> {
+        let mut count: u32 = 0;
+        check_cuda(voxel_hash_count_entries(
+            d_hash_table,
+            capacity,
+            &mut count,
+            std::ptr::null_mut(),
+        ))?;
+        check_cuda(cudaDeviceSynchronize())?;
+        Ok(count)
+    }
 }
 
 // ============================================================================
@@ -268,6 +291,14 @@ pub unsafe fn hash_table_query(
         d_neighbor_indices as *mut i32,
         d_neighbor_counts as *mut u32,
     )
+}
+
+/// Count non-empty entries in hash table (for debugging).
+///
+/// # Safety
+/// d_hash_table must be a valid CUDA device pointer.
+pub unsafe fn hash_table_count_entries(d_hash_table: u64, capacity: u32) -> Result<u32, CudaError> {
+    VoxelHash::count_entries(d_hash_table as *const std::ffi::c_void, capacity)
 }
 
 // ============================================================================
@@ -386,10 +417,13 @@ mod tests {
             "Query 0 should find voxel 0 first"
         );
 
-        println!(
-            "Query 0: count={}, indices={:?}",
-            neighbor_counts[0], neighbor_indices
-        );
-        println!("Query 1: count={}", neighbor_counts[1]);
+        #[cfg(feature = "test-verbose")]
+        {
+            println!(
+                "Query 0: count={}, indices={:?}",
+                neighbor_counts[0], neighbor_indices
+            );
+            println!("Query 1: count={}", neighbor_counts[1]);
+        }
     }
 }

@@ -336,4 +336,53 @@ uint32_t voxel_hash_max_neighbors() {
     return MAX_NEIGHBORS;
 }
 
+/// Count non-empty entries in hash table (for debugging).
+__global__ void count_entries_kernel(
+    const HashEntry* hash_table,
+    uint32_t capacity,
+    uint32_t* count
+) {
+    __shared__ uint32_t block_count;
+    if (threadIdx.x == 0) block_count = 0;
+    __syncthreads();
+
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < capacity) {
+        if (hash_table[idx].key != EMPTY_SLOT) {
+            atomicAdd(&block_count, 1);
+        }
+    }
+    __syncthreads();
+
+    if (threadIdx.x == 0) {
+        atomicAdd(count, block_count);
+    }
+}
+
+/// Count non-empty entries in hash table.
+CudaError voxel_hash_count_entries(
+    const void* d_hash_table,
+    uint32_t capacity,
+    uint32_t* h_count,
+    cudaStream_t stream
+) {
+    uint32_t* d_count;
+    cudaMalloc(&d_count, sizeof(uint32_t));
+    cudaMemset(d_count, 0, sizeof(uint32_t));
+
+    int threads = 256;
+    int blocks = (capacity + threads - 1) / threads;
+
+    count_entries_kernel<<<blocks, threads, 0, stream>>>(
+        (const HashEntry*)d_hash_table,
+        capacity,
+        d_count
+    );
+
+    cudaMemcpy(h_count, d_count, sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    cudaFree(d_count);
+
+    return cudaGetLastError();
+}
+
 } // extern "C"

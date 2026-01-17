@@ -32,6 +32,18 @@
 //! println!("Converged: {}, NVTL: {}", result.converged, result.nvtl);
 //! ```
 
+/// Print to stdout only when the `test-verbose` feature is enabled.
+///
+/// Use this macro in tests for debug output that is normally too verbose.
+/// Enable with: `cargo test --features test-verbose`
+#[macro_export]
+macro_rules! test_println {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "test-verbose")]
+        println!($($arg)*);
+    };
+}
+
 pub mod derivatives;
 pub mod filtering;
 pub mod multi_grid;

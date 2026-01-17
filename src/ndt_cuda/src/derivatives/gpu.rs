@@ -3036,14 +3036,14 @@ mod tests {
         // Compute Jacobians using Angular derivatives (CPU reference)
         let angular = AngularDerivatives::new(pose[3], pose[4], pose[5], false);
 
-        println!("=== Jacobian Comparison ===");
-        println!(
+        crate::test_println!("=== Jacobian Comparison ===");
+        crate::test_println!(
             "Pose: roll={:.3}, pitch={:.3}, yaw={:.3}",
             pose[3], pose[4], pose[5]
         );
 
         for (i, point) in points.iter().enumerate() {
-            println!(
+            crate::test_println!(
                 "\nPoint {i}: [{:.1}, {:.1}, {:.1}]",
                 point[0], point[1], point[2]
             );
@@ -3062,7 +3062,7 @@ mod tests {
             let cpu_dy_droll = angular_terms[0] as f32;
             let cpu_dz_droll = angular_terms[1] as f32;
 
-            println!(
+            crate::test_println!(
                 "  Roll:  GPU=[{:.4}, {:.4}], CPU=[{:.4}, {:.4}], diff=[{:.4}, {:.4}]",
                 gpu_dy_droll,
                 gpu_dz_droll,
@@ -3080,7 +3080,7 @@ mod tests {
             let cpu_dy_dpitch = angular_terms[3] as f32;
             let cpu_dz_dpitch = angular_terms[4] as f32;
 
-            println!(
+            crate::test_println!(
                 "  Pitch: GPU=[{:.4}, {:.4}, {:.4}], CPU=[{:.4}, {:.4}, {:.4}]",
                 gpu_dx_dpitch,
                 gpu_dy_dpitch,
@@ -3089,7 +3089,7 @@ mod tests {
                 cpu_dy_dpitch,
                 cpu_dz_dpitch
             );
-            println!(
+            crate::test_println!(
                 "         diff=[{:.4}, {:.4}, {:.4}]",
                 (gpu_dx_dpitch - cpu_dx_dpitch).abs(),
                 (gpu_dy_dpitch - cpu_dy_dpitch).abs(),
@@ -3104,11 +3104,11 @@ mod tests {
             let cpu_dy_dyaw = angular_terms[6] as f32;
             let cpu_dz_dyaw = angular_terms[7] as f32;
 
-            println!(
+            crate::test_println!(
                 "  Yaw:   GPU=[{:.4}, {:.4}, {:.4}], CPU=[{:.4}, {:.4}, {:.4}]",
                 gpu_dx_dyaw, gpu_dy_dyaw, gpu_dz_dyaw, cpu_dx_dyaw, cpu_dy_dyaw, cpu_dz_dyaw
             );
-            println!(
+            crate::test_println!(
                 "         diff=[{:.4}, {:.4}, {:.4}]",
                 (gpu_dx_dyaw - cpu_dx_dyaw).abs(),
                 (gpu_dy_dyaw - cpu_dy_dyaw).abs(),
@@ -3172,14 +3172,14 @@ mod tests {
         // Compute Hessians using Angular derivatives (CPU reference)
         let angular = AngularDerivatives::new(pose[3], pose[4], pose[5], true);
 
-        println!("=== Point Hessian Comparison ===");
-        println!(
+        crate::test_println!("=== Point Hessian Comparison ===");
+        crate::test_println!(
             "Pose: roll={:.3}, pitch={:.3}, yaw={:.3}",
             pose[3], pose[4], pose[5]
         );
 
         for (i, point) in points.iter().enumerate() {
-            println!(
+            crate::test_println!(
                 "\nPoint {i}: [{:.1}, {:.1}, {:.1}]",
                 point[0], point[1], point[2]
             );
@@ -3236,91 +3236,91 @@ mod tests {
             let cpu_f3 = angular_terms[14] as f32;
 
             // Print comparison
-            println!(
+            crate::test_println!(
                 "  a2: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_a2,
                 cpu_a2,
                 (gpu_a2 - cpu_a2).abs()
             );
-            println!(
+            crate::test_println!(
                 "  a3: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_a3,
                 cpu_a3,
                 (gpu_a3 - cpu_a3).abs()
             );
-            println!(
+            crate::test_println!(
                 "  b2: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_b2,
                 cpu_b2,
                 (gpu_b2 - cpu_b2).abs()
             );
-            println!(
+            crate::test_println!(
                 "  b3: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_b3,
                 cpu_b3,
                 (gpu_b3 - cpu_b3).abs()
             );
-            println!(
+            crate::test_println!(
                 "  c2: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_c2,
                 cpu_c2,
                 (gpu_c2 - cpu_c2).abs()
             );
-            println!(
+            crate::test_println!(
                 "  c3: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_c3,
                 cpu_c3,
                 (gpu_c3 - cpu_c3).abs()
             );
-            println!(
+            crate::test_println!(
                 "  d1: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_d1,
                 cpu_d1,
                 (gpu_d1 - cpu_d1).abs()
             );
-            println!(
+            crate::test_println!(
                 "  d2: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_d2,
                 cpu_d2,
                 (gpu_d2 - cpu_d2).abs()
             );
-            println!(
+            crate::test_println!(
                 "  d3: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_d3,
                 cpu_d3,
                 (gpu_d3 - cpu_d3).abs()
             );
-            println!(
+            crate::test_println!(
                 "  e1: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_e1,
                 cpu_e1,
                 (gpu_e1 - cpu_e1).abs()
             );
-            println!(
+            crate::test_println!(
                 "  e2: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_e2,
                 cpu_e2,
                 (gpu_e2 - cpu_e2).abs()
             );
-            println!(
+            crate::test_println!(
                 "  e3: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_e3,
                 cpu_e3,
                 (gpu_e3 - cpu_e3).abs()
             );
-            println!(
+            crate::test_println!(
                 "  f1: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_f1,
                 cpu_f1,
                 (gpu_f1 - cpu_f1).abs()
             );
-            println!(
+            crate::test_println!(
                 "  f2: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_f2,
                 cpu_f2,
                 (gpu_f2 - cpu_f2).abs()
             );
-            println!(
+            crate::test_println!(
                 "  f3: GPU={:.4}, CPU={:.4}, diff={:.4}",
                 gpu_f3,
                 cpu_f3,

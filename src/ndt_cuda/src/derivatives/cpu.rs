@@ -604,7 +604,7 @@ mod tests {
 
         // With multi-voxel radius search, we should have MORE correspondences
         // than source points (1 point finding multiple voxels)
-        println!(
+        crate::test_println!(
             "Source points: {}, Correspondences: {}",
             source_points.len(),
             result.num_correspondences
@@ -621,7 +621,7 @@ mod tests {
         // Let's verify radius search is finding multiple voxels:
         let transformed = [10.0f32, 10.0, 0.0];
         let nearby = target_grid.radius_search(&transformed, 2.0);
-        println!("Nearby voxels found: {}", nearby.len());
+        crate::test_println!("Nearby voxels found: {}", nearby.len());
 
         // This test confirms multi-voxel search is working
         // The actual count depends on the point cloud density

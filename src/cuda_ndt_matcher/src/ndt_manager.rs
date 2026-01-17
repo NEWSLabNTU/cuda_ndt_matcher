@@ -10,7 +10,7 @@ use geometry_msgs::msg::{Point, Pose, Quaternion};
 use nalgebra::{Isometry3, Matrix6, Quaternion as NaQuaternion, Translation3, UnitQuaternion};
 pub use ndt_cuda::AlignmentDebug;
 use ndt_cuda::NdtScanMatcher;
-use rclrs::log_debug;
+use rclrs::{log_debug, log_info, log_warn};
 
 const LOGGER_NAME: &str = "ndt_scan_matcher.ndt_manager";
 
@@ -78,7 +78,40 @@ impl NdtManager {
 
     /// Set target (map) point cloud
     pub fn set_target(&mut self, points: &[[f32; 3]]) -> Result<()> {
-        self.matcher.set_target(points)
+        log_info!(LOGGER_NAME, "Setting target with {} points", points.len());
+        let result = self.matcher.set_target(points);
+        if let Some(grid) = self.matcher.target_grid() {
+            log_info!(
+                LOGGER_NAME,
+                "Target grid created: {} voxels (resolution={})",
+                grid.len(),
+                grid.resolution()
+            );
+            // Log actual grid bounding box (min/max of all voxel means)
+            let voxels = grid.voxels();
+            if !voxels.is_empty() {
+                let (min_x, max_x) = voxels.iter().map(|v| v.mean[0]).fold(
+                    (f32::MAX, f32::MIN),
+                    |(min, max), x| (min.min(x), max.max(x)),
+                );
+                let (min_y, max_y) = voxels.iter().map(|v| v.mean[1]).fold(
+                    (f32::MAX, f32::MIN),
+                    |(min, max), y| (min.min(y), max.max(y)),
+                );
+                let (min_z, max_z) = voxels.iter().map(|v| v.mean[2]).fold(
+                    (f32::MAX, f32::MIN),
+                    |(min, max), z| (min.min(z), max.max(z)),
+                );
+                log_info!(
+                    LOGGER_NAME,
+                    "Grid bounds: X=[{:.1},{:.1}] Y=[{:.1},{:.1}] Z=[{:.1},{:.1}]",
+                    min_x, max_x, min_y, max_y, min_z, max_z
+                );
+            }
+        } else {
+            log_warn!(LOGGER_NAME, "Target grid is None after set_target!");
+        }
+        result
     }
 
     /// Check if a target has been set
@@ -161,6 +194,28 @@ impl NdtManager {
             bail!("Source point cloud is empty");
         }
 
+        // Log voxel grid state before alignment
+        if let Some(grid) = self.matcher.target_grid() {
+            // Log source point cloud bounds
+            let (min_x, max_x) = source_points.iter().map(|p| p[0]).fold(
+                (f32::MAX, f32::MIN),
+                |(min, max), x| (min.min(x), max.max(x)),
+            );
+            let (min_y, max_y) = source_points.iter().map(|p| p[1]).fold(
+                (f32::MAX, f32::MIN),
+                |(min, max), y| (min.min(y), max.max(y)),
+            );
+            log_info!(
+                LOGGER_NAME,
+                "align_with_debug: {} pts, {} voxels, source X=[{:.1},{:.1}] Y=[{:.1},{:.1}]",
+                source_points.len(),
+                grid.len(),
+                min_x, max_x, min_y, max_y
+            );
+        } else {
+            log_warn!(LOGGER_NAME, "align_with_debug: target grid is None!");
+        }
+
         // Convert initial pose to isometry
         let initial_guess = pose_to_isometry(initial_pose);
 
@@ -168,6 +223,17 @@ impl NdtManager {
         let (result, debug) =
             self.matcher
                 .align_with_debug(source_points, initial_guess, timestamp_ns)?;
+
+        // Log result
+        log_info!(
+            LOGGER_NAME,
+            "align: score={:.1}, nvtl={:.2}, iters={}, corr={}, converged={}",
+            result.score,
+            result.nvtl,
+            result.iterations,
+            result.num_correspondences,
+            result.converged
+        );
 
         // Convert result to ROS pose
         let pose = isometry_to_pose(&result.pose);

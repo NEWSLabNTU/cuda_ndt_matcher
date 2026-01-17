@@ -777,11 +777,11 @@ mod tests {
         // Compare (with some tolerance due to f32 vs f64 differences)
         // Note: The GPU uses brute-force search while CPU uses KD-tree,
         // so results may differ slightly for edge cases
-        println!(
+        crate::test_println!(
             "GPU TP: {}, CPU TP: {}",
             gpu_results[0].transform_probability, cpu_tp.transform_probability
         );
-        println!(
+        crate::test_println!(
             "GPU NVTL: {}, CPU NVTL: {}",
             gpu_results[0].nvtl, cpu_nvtl.nvtl
         );

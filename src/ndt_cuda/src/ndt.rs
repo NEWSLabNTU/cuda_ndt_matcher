@@ -18,7 +18,7 @@
 //! // Align source scan to target
 //! let result = matcher.align(&source_points, Isometry3::identity())?;
 //!
-//! println!("Converged: {}, Score: {}", result.converged, result.score);
+//! crate::test_println!("Converged: {}, Score: {}", result.converged, result.score);
 //! ```
 
 use anyhow::{bail, Result};
@@ -1500,7 +1500,7 @@ mod tests {
     macro_rules! require_cuda {
         () => {
             if !crate::runtime::is_cuda_available() {
-                eprintln!("Skipping test: CUDA not available");
+                ecrate::test_println!("Skipping test: CUDA not available");
                 return;
             }
         };
@@ -1563,7 +1563,7 @@ mod tests {
             let nvtl_gpu = matcher_gpu.evaluate_nvtl(&sensor_scan, pose).unwrap();
             let nvtl_cpu = matcher_cpu.evaluate_nvtl(&sensor_scan, pose).unwrap();
 
-            println!(
+            crate::test_println!(
                 "NVTL comparison at {:?}: GPU={:.6}, CPU={:.6}, diff={:.6}",
                 pose.translation.vector,
                 nvtl_gpu,
@@ -1630,7 +1630,7 @@ mod tests {
                 .evaluate_transform_probability(&sensor_scan, pose)
                 .unwrap();
 
-            println!(
+            crate::test_println!(
                 "Transform probability at {:?}: GPU={:.6}, CPU={:.6}, diff={:.6}",
                 pose.translation.vector,
                 tp_gpu,
@@ -1681,7 +1681,7 @@ mod tests {
         let result_gpu = matcher_gpu.align(&sensor_scan, initial_guess).unwrap();
         let result_cpu = matcher_cpu.align(&sensor_scan, initial_guess).unwrap();
 
-        println!(
+        crate::test_println!(
             "Alignment comparison:\n  GPU: pos=({:.3}, {:.3}, {:.3}), score={:.4}, nvtl={:.4}\n  CPU: pos=({:.3}, {:.3}, {:.3}), score={:.4}, nvtl={:.4}",
             result_gpu.pose.translation.x, result_gpu.pose.translation.y, result_gpu.pose.translation.z,
             result_gpu.score, result_gpu.nvtl,

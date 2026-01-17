@@ -912,7 +912,7 @@ mod tests {
         assert!(mem.total_mb() > 0.0);
         assert!(mem.total_mb() < 1000.0); // Less than 1GB
 
-        println!("Total memory: {:.2} MB", mem.total_mb());
+        crate::test_println!("Total memory: {:.2} MB", mem.total_mb());
     }
 
     #[test]

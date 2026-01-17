@@ -18,6 +18,8 @@
 //!
 //! Falls back to CPU if GPU fails.
 
+use tracing::warn;
+
 /// Result of segment detection.
 #[derive(Debug)]
 pub struct SegmentResult {
@@ -154,7 +156,7 @@ pub fn detect_segments(sorted_codes: &[u64]) -> SegmentResult {
     match detect_segments_gpu(sorted_codes) {
         Ok(result) => result,
         Err(e) => {
-            eprintln!("[segments] GPU detect_segments failed ({e}), falling back to CPU");
+            warn!(error = %e, "GPU detect_segments failed, falling back to CPU");
             detect_segments_cpu(sorted_codes)
         }
     }
