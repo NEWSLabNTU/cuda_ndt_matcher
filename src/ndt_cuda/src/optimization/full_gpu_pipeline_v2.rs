@@ -176,7 +176,7 @@ pub struct FullGpuPipelineV2 {
     // ========================================================================
     // Persistent kernel buffers (Phase 17)
     // ========================================================================
-    persistent_reduce_buffer: Handle, // [96] for persistent kernel reduction + state
+    persistent_reduce_buffer: Handle, // [160] for persistent kernel reduction + state + parallel LS
     persistent_initial_pose: Handle,  // [6] input pose for persistent kernel
     persistent_out_pose: Handle,      // [6] output pose from persistent kernel
     persistent_out_iterations: Handle, // [1] i32
@@ -512,8 +512,8 @@ impl FullGpuPipelineV2 {
         let pose_f32: [f32; 6] = initial_pose.map(|x| x as f32);
         self.persistent_initial_pose = self.client.create(f32::as_bytes(&pose_f32));
 
-        // Clear reduce buffer (96 floats for line search support)
-        let zeros = [0.0f32; 96];
+        // Clear reduce buffer (160 floats for parallel line search with per-candidate slots)
+        let zeros = [0.0f32; 160];
         self.persistent_reduce_buffer = self.client.create(f32::as_bytes(&zeros));
 
         // Force CubeCL to sync all pending operations before kernel launch

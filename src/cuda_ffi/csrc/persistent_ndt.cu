@@ -184,7 +184,7 @@ __global__ void persistent_ndt_kernel(
     extern __shared__ float smem[];
     float* partial_sums = smem;  // [29 * blockDim.x]
 
-    // Use reduce_buffer for cross-block shared state:
+    // Use reduce_buffer for cross-block shared state (160 floats):
     // [0..28]   = reduction values (score[1], gradient[6], hessian[21], correspondences[1])
     // [29]      = converged flag (as float: 0.0 = not converged, 1.0 = converged)
     // [30..35]  = current pose [6]
@@ -205,9 +205,14 @@ __global__ void persistent_ndt_kernel(
     // [84]      = best_alpha (selected step size)
     // [85]      = ls_early_term (early termination flag)
     // [86]      = alpha_sum (accumulated step sizes for avg_alpha)
-    // [87..95]  = reserved for alignment (total: 96 floats)
+    // [87..95]  = reserved
+    // === Phase 21: Parallel line search per-candidate reduction slots ===
+    // [96..103]  = per-candidate scores [8] (for parallel batch reduction)
+    // [104..111] = per-candidate correspondences [8]
+    // [112..159] = per-candidate gradients [8 * 6 = 48]
     constexpr int REDUCE_SIZE = 29;  // 1 + 6 + 21 + 1
     constexpr int MAX_LS_CANDIDATES = 8;
+    constexpr int LS_BATCH_SIZE = 4;  // Process 4 candidates per batch for early termination
 
     // Pointers into reduce_buffer for state
     float* g_converged = &reduce_buffer[29];
@@ -230,6 +235,10 @@ __global__ void persistent_ndt_kernel(
     float* g_best_alpha = &reduce_buffer[84];
     float* g_ls_early_term = &reduce_buffer[85];
     float* g_alpha_sum = &reduce_buffer[86];
+    // Phase 21: Per-candidate parallel reduction slots
+    float* g_cand_scores = &reduce_buffer[96];        // [8] per-candidate scores
+    float* g_cand_corr = &reduce_buffer[104];         // [8] per-candidate correspondences
+    float* g_cand_grads = &reduce_buffer[112];        // [48] per-candidate gradients (8 * 6)
 
     // Initialize state from input (only thread 0 of block 0)
     if (threadIdx.x == 0 && blockIdx.x == 0) {
@@ -523,173 +532,210 @@ __global__ void persistent_ndt_kernel(
         grid.sync();
 
         // --------------------------------------------------------------------
-        // PHASE C.2: Line search evaluation loop (all threads participate)
+        // PHASE C.2: Batched parallel line search (all threads participate)
+        // Evaluates candidates in batches of 4, checking Wolfe conditions after
+        // each batch for early termination. Reduces grid syncs from 2*K to 2*B
+        // where K=num_candidates and B=num_batches.
         // --------------------------------------------------------------------
 
         if (ls_enabled && *g_converged < 0.5f) {
             int num_cands = (ls_num_candidates < MAX_LS_CANDIDATES) ? ls_num_candidates : MAX_LS_CANDIDATES;
+            int num_batches = (num_cands + LS_BATCH_SIZE - 1) / LS_BATCH_SIZE;
 
-            for (int k = 0; k < num_cands; k++) {
-                // Thread 0 of block 0 sets trial pose
+            for (int batch = 0; batch < num_batches; batch++) {
+                int batch_start = batch * LS_BATCH_SIZE;
+                int batch_end = batch_start + LS_BATCH_SIZE;
+                if (batch_end > num_cands) batch_end = num_cands;
+                int batch_count = batch_end - batch_start;
+
+                // Thread 0 of block 0 clears per-candidate reduction slots for this batch
                 if (threadIdx.x == 0 && blockIdx.x == 0) {
-                    float alpha = g_alpha_candidates[k];
-                    for (int i = 0; i < 6; i++) {
-                        g_pose[i] = g_original_pose[i] + alpha * g_delta[i];
+                    for (int c = 0; c < batch_count; c++) {
+                        int cand_idx = batch_start + c;
+                        g_cand_scores[cand_idx] = 0.0f;
+                        g_cand_corr[cand_idx] = 0.0f;
+                        for (int i = 0; i < 6; i++) {
+                            g_cand_grads[cand_idx * 6 + i] = 0.0f;
+                        }
                     }
                 }
                 grid.sync();
 
-                // All threads compute score and gradient for their points
-                // (reuses Phase A code structure, but skips Hessian)
-                float my_ls_score = 0.0f;
-                float my_ls_grad[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-                float my_ls_corr = 0.0f;
+                // Each thread evaluates ALL candidates in batch for its point
+                // Thread-local accumulators for each candidate in batch
+                float my_batch_scores[LS_BATCH_SIZE] = {0.0f, 0.0f, 0.0f, 0.0f};
+                float my_batch_grads[LS_BATCH_SIZE * 6] = {0};
+                float my_batch_corr[LS_BATCH_SIZE] = {0.0f, 0.0f, 0.0f, 0.0f};
 
                 if (tid < num_points) {
                     float px = source_points[tid * 3 + 0];
                     float py = source_points[tid * 3 + 1];
                     float pz = source_points[tid * 3 + 2];
 
-                    float sr, cr, sp, cp, sy, cy;
-                    compute_sincos_inline(g_pose, &sr, &cr, &sp, &cp, &sy, &cy);
+                    // Evaluate each candidate in this batch
+                    for (int c = 0; c < batch_count; c++) {
+                        int cand_idx = batch_start + c;
+                        float alpha = g_alpha_candidates[cand_idx];
 
-                    float T[16];
-                    compute_transform_inline(g_pose, sr, cr, sp, cp, sy, cy, T);
-
-                    float tx, ty, tz;
-                    transform_point_inline(px, py, pz, T, &tx, &ty, &tz);
-
-                    int32_t neighbor_indices[MAX_NEIGHBORS];
-                    int num_neighbors = hash_query_inline(
-                        tx, ty, tz,
-                        hash_table, hash_capacity, inv_resolution, radius_sq,
-                        voxel_means, neighbor_indices
-                    );
-
-                    float J[18];
-                    compute_jacobians_inline(px, py, pz, sr, cr, sp, cp, sy, cy, J);
-
-                    // Accumulate score and gradient (skip Hessian)
-                    for (int n = 0; n < num_neighbors; n++) {
-                        int32_t vidx = neighbor_indices[n];
-                        if (vidx < 0) continue;
-
-                        float voxel_mean[3] = {
-                            voxel_means[vidx * 3 + 0],
-                            voxel_means[vidx * 3 + 1],
-                            voxel_means[vidx * 3 + 2]
-                        };
-                        float voxel_inv_cov[9];
-                        for (int i = 0; i < 9; i++) {
-                            voxel_inv_cov[i] = voxel_inv_covs[vidx * 9 + i];
+                        // Compute trial pose for this candidate
+                        float trial_pose[6];
+                        for (int i = 0; i < 6; i++) {
+                            trial_pose[i] = g_original_pose[i] + alpha * g_delta[i];
                         }
 
-                        // Compute score and gradient contribution only
-                        float dx = tx - voxel_mean[0];
-                        float dy = ty - voxel_mean[1];
-                        float dz = tz - voxel_mean[2];
+                        float sr, cr, sp, cp, sy, cy;
+                        compute_sincos_inline(trial_pose, &sr, &cr, &sp, &cp, &sy, &cy);
 
-                        // S⁻¹ * d
-                        float Sd_0 = voxel_inv_cov[0] * dx + voxel_inv_cov[1] * dy + voxel_inv_cov[2] * dz;
-                        float Sd_1 = voxel_inv_cov[3] * dx + voxel_inv_cov[4] * dy + voxel_inv_cov[5] * dz;
-                        float Sd_2 = voxel_inv_cov[6] * dx + voxel_inv_cov[7] * dy + voxel_inv_cov[8] * dz;
+                        float T[16];
+                        compute_transform_inline(trial_pose, sr, cr, sp, cp, sy, cy, T);
 
-                        // d^T * S⁻¹ * d
-                        float dSd = dx * Sd_0 + dy * Sd_1 + dz * Sd_2;
-                        float exp_val = expf(-gauss_d2 * 0.5f * dSd);
-                        my_ls_score += -gauss_d1 * exp_val;
+                        float tx, ty, tz;
+                        transform_point_inline(px, py, pz, T, &tx, &ty, &tz);
 
-                        // Gradient: d1 * d2 * exp * J^T * S⁻¹ * d
-                        float scale = gauss_d1 * gauss_d2 * exp_val;
-                        for (int j = 0; j < 6; j++) {
-                            float Jt_Sd = J[j * 3 + 0] * Sd_0 + J[j * 3 + 1] * Sd_1 + J[j * 3 + 2] * Sd_2;
-                            my_ls_grad[j] += scale * Jt_Sd;
+                        int32_t neighbor_indices[MAX_NEIGHBORS];
+                        int num_neighbors = hash_query_inline(
+                            tx, ty, tz,
+                            hash_table, hash_capacity, inv_resolution, radius_sq,
+                            voxel_means, neighbor_indices
+                        );
+
+                        float J[18];
+                        compute_jacobians_inline(px, py, pz, sr, cr, sp, cp, sy, cy, J);
+
+                        // Accumulate score and gradient for this candidate
+                        for (int n = 0; n < num_neighbors; n++) {
+                            int32_t vidx = neighbor_indices[n];
+                            if (vidx < 0) continue;
+
+                            float voxel_mean[3] = {
+                                voxel_means[vidx * 3 + 0],
+                                voxel_means[vidx * 3 + 1],
+                                voxel_means[vidx * 3 + 2]
+                            };
+                            float voxel_inv_cov[9];
+                            for (int i = 0; i < 9; i++) {
+                                voxel_inv_cov[i] = voxel_inv_covs[vidx * 9 + i];
+                            }
+
+                            float dx = tx - voxel_mean[0];
+                            float dy = ty - voxel_mean[1];
+                            float dz = tz - voxel_mean[2];
+
+                            // S⁻¹ * d
+                            float Sd_0 = voxel_inv_cov[0] * dx + voxel_inv_cov[1] * dy + voxel_inv_cov[2] * dz;
+                            float Sd_1 = voxel_inv_cov[3] * dx + voxel_inv_cov[4] * dy + voxel_inv_cov[5] * dz;
+                            float Sd_2 = voxel_inv_cov[6] * dx + voxel_inv_cov[7] * dy + voxel_inv_cov[8] * dz;
+
+                            // d^T * S⁻¹ * d
+                            float dSd = dx * Sd_0 + dy * Sd_1 + dz * Sd_2;
+                            float exp_val = expf(-gauss_d2 * 0.5f * dSd);
+                            my_batch_scores[c] += -gauss_d1 * exp_val;
+
+                            // Gradient: d1 * d2 * exp * J^T * S⁻¹ * d
+                            float scale = gauss_d1 * gauss_d2 * exp_val;
+                            for (int j = 0; j < 6; j++) {
+                                float Jt_Sd = J[j * 3 + 0] * Sd_0 + J[j * 3 + 1] * Sd_1 + J[j * 3 + 2] * Sd_2;
+                                my_batch_grads[c * 6 + j] += scale * Jt_Sd;
+                            }
+                            my_batch_corr[c] += 1.0f;
                         }
-                        my_ls_corr += 1.0f;
                     }
                 }
 
-                // Block reduction for score + gradient (7 values)
-                constexpr int LS_REDUCE_SIZE = 8;  // score(1) + gradient(6) + corr(1)
-                partial_sums[threadIdx.x * LS_REDUCE_SIZE + 0] = my_ls_score;
-                for (int i = 0; i < 6; i++) {
-                    partial_sums[threadIdx.x * LS_REDUCE_SIZE + 1 + i] = my_ls_grad[i];
-                }
-                partial_sums[threadIdx.x * LS_REDUCE_SIZE + 7] = my_ls_corr;
-                __syncthreads();
+                // Block reduction for all candidates in batch
+                // Layout: [batch_count * 8] values per thread (score + grad[6] + corr per candidate)
+                constexpr int LS_VALUES_PER_CAND = 8;  // score(1) + gradient(6) + corr(1)
+                for (int c = 0; c < batch_count; c++) {
+                    partial_sums[threadIdx.x * LS_VALUES_PER_CAND + 0] = my_batch_scores[c];
+                    for (int i = 0; i < 6; i++) {
+                        partial_sums[threadIdx.x * LS_VALUES_PER_CAND + 1 + i] = my_batch_grads[c * 6 + i];
+                    }
+                    partial_sums[threadIdx.x * LS_VALUES_PER_CAND + 7] = my_batch_corr[c];
+                    __syncthreads();
 
-                for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-                    if (threadIdx.x < stride) {
-                        for (int i = 0; i < LS_REDUCE_SIZE; i++) {
-                            partial_sums[threadIdx.x * LS_REDUCE_SIZE + i] +=
-                                partial_sums[(threadIdx.x + stride) * LS_REDUCE_SIZE + i];
+                    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+                        if (threadIdx.x < stride) {
+                            for (int i = 0; i < LS_VALUES_PER_CAND; i++) {
+                                partial_sums[threadIdx.x * LS_VALUES_PER_CAND + i] +=
+                                    partial_sums[(threadIdx.x + stride) * LS_VALUES_PER_CAND + i];
+                            }
                         }
+                        __syncthreads();
+                    }
+
+                    // Thread 0 of each block atomically adds to per-candidate global slots
+                    if (threadIdx.x == 0) {
+                        int cand_idx = batch_start + c;
+                        atomicAdd(&g_cand_scores[cand_idx], partial_sums[0]);
+                        for (int i = 0; i < 6; i++) {
+                            atomicAdd(&g_cand_grads[cand_idx * 6 + i], partial_sums[1 + i]);
+                        }
+                        atomicAdd(&g_cand_corr[cand_idx], partial_sums[7]);
                     }
                     __syncthreads();
                 }
-
-                // Thread 0 of each block atomically adds to global
-                if (threadIdx.x == 0) {
-                    atomicAdd(&reduce_buffer[0], partial_sums[0]);  // score
-                    for (int i = 0; i < 6; i++) {
-                        atomicAdd(&reduce_buffer[1 + i], partial_sums[1 + i]);  // gradient
-                    }
-                    atomicAdd(&reduce_buffer[28], partial_sums[7]);  // correspondences (reuse slot 28)
-                }
                 grid.sync();
 
-                // Thread 0 of block 0 stores results and checks early termination
+                // Thread 0 of block 0 processes results and checks Wolfe conditions
                 if (threadIdx.x == 0 && blockIdx.x == 0) {
-                    float phi_k = reduce_buffer[0];
+                    for (int c = 0; c < batch_count; c++) {
+                        int cand_idx = batch_start + c;
+                        float phi_k = g_cand_scores[cand_idx];
+                        float alpha = g_alpha_candidates[cand_idx];
 
-                    // Apply regularization if enabled
-                    if (reg_enabled) {
-                        float correspondence_count = reduce_buffer[28];
-                        float dx = reg_ref_x - g_pose[0];
-                        float dy = reg_ref_y - g_pose[1];
-                        float yaw = g_pose[5];
-                        float sin_yaw = sinf(yaw);
-                        float cos_yaw = cosf(yaw);
-                        float longitudinal = dy * sin_yaw + dx * cos_yaw;
-                        float weight = correspondence_count;
-                        phi_k += -reg_scale * weight * longitudinal * longitudinal;
+                        // Compute trial pose for regularization
+                        float trial_pose[6];
+                        for (int i = 0; i < 6; i++) {
+                            trial_pose[i] = g_original_pose[i] + alpha * g_delta[i];
+                        }
 
-                        // Gradient adjustment for dphi
-                        float grad_x_delta = reg_scale * weight * 2.0f * cos_yaw * longitudinal;
-                        float grad_y_delta = reg_scale * weight * 2.0f * sin_yaw * longitudinal;
-                        reduce_buffer[1] += grad_x_delta;
-                        reduce_buffer[2] += grad_y_delta;
-                    }
+                        // Copy gradient to local for modification
+                        float grad[6];
+                        for (int i = 0; i < 6; i++) {
+                            grad[i] = g_cand_grads[cand_idx * 6 + i];
+                        }
 
-                    g_phi_candidates[k] = phi_k;
+                        // Apply regularization if enabled
+                        if (reg_enabled) {
+                            float correspondence_count = g_cand_corr[cand_idx];
+                            float dx = reg_ref_x - trial_pose[0];
+                            float dy = reg_ref_y - trial_pose[1];
+                            float yaw = trial_pose[5];
+                            float sin_yaw = sinf(yaw);
+                            float cos_yaw = cosf(yaw);
+                            float longitudinal = dy * sin_yaw + dx * cos_yaw;
+                            float weight = correspondence_count;
+                            phi_k += -reg_scale * weight * longitudinal * longitudinal;
 
-                    // Compute dphi = gradient · delta
-                    float dphi_k = 0.0f;
-                    for (int i = 0; i < 6; i++) {
-                        dphi_k += reduce_buffer[1 + i] * g_delta[i];
-                    }
-                    g_dphi_candidates[k] = dphi_k;
+                            // Gradient adjustment for dphi
+                            grad[0] += reg_scale * weight * 2.0f * cos_yaw * longitudinal;
+                            grad[1] += reg_scale * weight * 2.0f * sin_yaw * longitudinal;
+                        }
 
-                    // Check strong Wolfe conditions for early termination
-                    float phi_0 = *g_phi_0;
-                    float dphi_0 = *g_dphi_0;
-                    float alpha = g_alpha_candidates[k];
+                        g_phi_candidates[cand_idx] = phi_k;
 
-                    // Armijo (sufficient decrease): phi(alpha) >= phi(0) + mu * alpha * dphi(0)
-                    // Note: We're maximizing, and dphi_0 should be positive for ascent
-                    bool armijo = phi_k >= phi_0 + ls_mu * alpha * dphi_0;
+                        // Compute dphi = gradient · delta
+                        float dphi_k = 0.0f;
+                        for (int i = 0; i < 6; i++) {
+                            dphi_k += grad[i] * g_delta[i];
+                        }
+                        g_dphi_candidates[cand_idx] = dphi_k;
 
-                    // Curvature (strong Wolfe): |dphi(alpha)| <= nu * |dphi(0)|
-                    bool curvature = fabsf(dphi_k) <= ls_nu * fabsf(dphi_0);
+                        // Check strong Wolfe conditions for early termination
+                        float phi_0 = *g_phi_0;
+                        float dphi_0 = *g_dphi_0;
 
-                    if (armijo && curvature) {
-                        *g_best_alpha = alpha;
-                        *g_ls_early_term = 1.0f;
-                    }
+                        // Armijo (sufficient decrease): phi(alpha) >= phi(0) + mu * alpha * dphi(0)
+                        bool armijo = phi_k >= phi_0 + ls_mu * alpha * dphi_0;
 
-                    // Clear reduce buffer for next candidate
-                    for (int i = 0; i < REDUCE_SIZE; i++) {
-                        reduce_buffer[i] = 0.0f;
+                        // Curvature (strong Wolfe): |dphi(alpha)| <= nu * |dphi(0)|
+                        bool curvature = fabsf(dphi_k) <= ls_nu * fabsf(dphi_0);
+
+                        if (armijo && curvature) {
+                            *g_best_alpha = alpha;
+                            *g_ls_early_term = 1.0f;
+                            break;  // Found first valid candidate in batch
+                        }
                     }
                 }
                 grid.sync();
@@ -698,13 +744,12 @@ __global__ void persistent_ndt_kernel(
                 if (*g_ls_early_term > 0.5f) {
                     break;
                 }
-            }  // end for each candidate
+            }  // end for each batch
 
             // More-Thuente selection if no early termination
             if (threadIdx.x == 0 && blockIdx.x == 0) {
                 if (*g_ls_early_term < 0.5f) {
                     // Simple selection: find best score among candidates
-                    // (Full More-Thuente interpolation is complex; use best score for now)
                     float best_phi = *g_phi_0;
                     float best_alpha_val = 0.0f;  // Stay at current if nothing better
                     int num_cands_mt = (ls_num_candidates < MAX_LS_CANDIDATES) ? ls_num_candidates : MAX_LS_CANDIDATES;
@@ -1084,8 +1129,9 @@ CudaError persistent_ndt_launch(
 ///         [44..46] prev_prev_pos, [47..49] prev_pos, [50] curr_osc, [51] max_osc
 ///         [52..59] phi_candidates, [60..67] dphi_candidates, [68..75] alpha_candidates,
 ///         [76..81] original_pose, [82] phi_0, [83] dphi_0, [84] best_alpha, [85] ls_early_term
+///         [96..103] per-cand scores, [104..111] per-cand corr, [112..159] per-cand grads
 uint32_t persistent_ndt_reduce_buffer_size() {
-    return 96 * sizeof(float);  // 86 needed, 96 for alignment
+    return 160 * sizeof(float);  // Extended for parallel line search
 }
 
 } // extern "C"
