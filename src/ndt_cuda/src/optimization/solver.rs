@@ -20,7 +20,7 @@ use super::types::{
     NdtConfig, NdtResult,
 };
 use crate::derivatives::{compute_derivatives_cpu_with_metric, GaussianParams, GpuVoxelData};
-use crate::scoring::{compute_nvtl, NvtlConfig};
+use crate::scoring::nvtl::compute_nvtl_simple;
 use crate::voxel_grid::VoxelGrid;
 
 /// Configuration for the optimization process.
@@ -550,15 +550,16 @@ impl NdtOptimizer {
     }
 
     /// Compute NVTL for a given pose.
+    ///
+    /// Uses radius search (like Autoware's radiusSearch) for NVTL computation.
     fn compute_nvtl(
         &self,
         source_points: &[[f32; 3]],
         target_grid: &VoxelGrid,
         pose: &Isometry3<f64>,
     ) -> f64 {
-        let config = NvtlConfig::default();
-        let result = compute_nvtl(source_points, target_grid, pose, &self.gauss, &config);
-        result.nvtl
+        // Use radius search like Autoware for NVTL computation
+        compute_nvtl_simple(source_points, target_grid, pose, &self.gauss)
     }
 
     /// Perform More-Thuente line search to find optimal step size.
@@ -720,6 +721,10 @@ impl NdtOptimizer {
 
         let mut debug = AlignmentDebug::new(timestamp_ns);
         debug.num_source_points = source_points.len();
+        debug.gauss_d1 = Some(self.gauss.d1);
+        debug.gauss_d2 = Some(self.gauss.d2);
+        debug.resolution = Some(self.config.ndt.resolution);
+        debug.outlier_ratio = Some(self.gauss.outlier_ratio);
 
         // Convert initial guess to pose vector
         let mut pose = isometry_to_pose_vector(&initial_guess);

@@ -210,6 +210,22 @@ pub struct AlignmentDebug {
     /// Timing breakdown (populated when profiling feature is enabled).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timing: Option<AlignmentTimingDebug>,
+
+    /// Gaussian parameter d1 (amplitude).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gauss_d1: Option<f64>,
+
+    /// Gaussian parameter d2 (exponent coefficient).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gauss_d2: Option<f64>,
+
+    /// NDT resolution used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<f64>,
+
+    /// Outlier ratio used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outlier_ratio: Option<f64>,
 }
 
 impl AlignmentDebug {

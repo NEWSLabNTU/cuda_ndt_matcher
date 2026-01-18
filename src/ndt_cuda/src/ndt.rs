@@ -30,7 +30,10 @@ use crate::derivatives::gpu::GpuVoxelData;
 use crate::derivatives::{DistanceMetric, GaussianParams};
 use crate::optimization::{NdtOptimizer, OptimizationConfig};
 use crate::runtime::{is_cuda_available, GpuRuntime};
-use crate::scoring::{compute_nvtl, compute_transform_probability, GpuScoringPipeline, NvtlConfig};
+use crate::scoring::{
+    compute_nvtl, compute_transform_probability, nvtl::compute_nvtl_simple, GpuScoringPipeline,
+    NvtlConfig,
+};
 use crate::voxel_grid::{VoxelGrid, VoxelGridConfig};
 
 /// Configuration for NDT scan matcher.
@@ -619,6 +622,11 @@ impl NdtScanMatcher {
         debug.final_nvtl = result.nvtl;
         debug.oscillation_count = result.oscillation_count;
         debug.num_correspondences = Some(result.num_correspondences);
+        // Gaussian parameters for debugging
+        debug.gauss_d1 = Some(self.gauss_params.d1);
+        debug.gauss_d2 = Some(self.gauss_params.d2);
+        debug.resolution = Some(self.config.resolution as f64);
+        debug.outlier_ratio = Some(self.gauss_params.outlier_ratio);
         // Note: iterations Vec is empty for GPU path (no per-iteration data)
 
         Ok((result, debug))
@@ -655,10 +663,13 @@ impl NdtScanMatcher {
             return Ok(nvtl);
         }
 
-        // Fall back to CPU
-        let config = NvtlConfig::default();
-        let result = compute_nvtl(source_points, grid, pose, &self.gauss_params, &config);
-        Ok(result.nvtl)
+        // Fall back to CPU - use radius search like Autoware
+        Ok(compute_nvtl_simple(
+            source_points,
+            grid,
+            pose,
+            &self.gauss_params,
+        ))
     }
 
     /// Evaluate transform probability at a given pose without running optimization.

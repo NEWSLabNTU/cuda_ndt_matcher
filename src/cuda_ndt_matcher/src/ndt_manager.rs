@@ -9,8 +9,9 @@ use anyhow::{bail, Result};
 use geometry_msgs::msg::{Point, Pose, Quaternion};
 use nalgebra::{Isometry3, Matrix6, Quaternion as NaQuaternion, Translation3, UnitQuaternion};
 pub use ndt_cuda::AlignmentDebug;
-use ndt_cuda::NdtScanMatcher;
+use ndt_cuda::{NdtScanMatcher, VoxelGrid};
 use rclrs::{log_debug, log_info, log_warn};
+use std::io::Write;
 
 const LOGGER_NAME: &str = "ndt_scan_matcher.ndt_manager";
 
@@ -18,6 +19,78 @@ const LOGGER_NAME: &str = "ndt_scan_matcher.ndt_manager";
 fn quaternion_to_yaw(q: &Quaternion) -> f64 {
     let unit_q = UnitQuaternion::new_normalize(NaQuaternion::new(q.w, q.x, q.y, q.z));
     unit_q.euler_angles().2
+}
+
+/// Dump voxel data to JSON file for comparison with Autoware.
+///
+/// Set NDT_DUMP_VOXELS=1 to enable.
+/// Output file: NDT_DUMP_VOXELS_FILE or /tmp/ndt_cuda_voxels.json
+fn dump_voxel_data(grid: &VoxelGrid) -> Result<()> {
+    let output_path = std::env::var("NDT_DUMP_VOXELS_FILE")
+        .unwrap_or_else(|_| "/tmp/ndt_cuda_voxels.json".to_string());
+
+    let voxels = grid.voxels();
+    log_info!(
+        LOGGER_NAME,
+        "Dumping {} voxels to {}",
+        voxels.len(),
+        output_path
+    );
+
+    let mut file = std::fs::File::create(&output_path)?;
+
+    // Write JSON header
+    writeln!(file, "{{")?;
+    writeln!(file, "  \"resolution\": {},", grid.resolution())?;
+    writeln!(file, "  \"num_voxels\": {},", voxels.len())?;
+    writeln!(file, "  \"voxels\": [")?;
+
+    for (i, voxel) in voxels.iter().enumerate() {
+        let mean = &voxel.mean;
+        let cov = &voxel.covariance;
+        let inv_cov = &voxel.inv_covariance;
+
+        // Format covariance as row-major 3x3 matrix
+        let cov_str = format!(
+            "[[{:.8},{:.8},{:.8}],[{:.8},{:.8},{:.8}],[{:.8},{:.8},{:.8}]]",
+            cov[(0, 0)],
+            cov[(0, 1)],
+            cov[(0, 2)],
+            cov[(1, 0)],
+            cov[(1, 1)],
+            cov[(1, 2)],
+            cov[(2, 0)],
+            cov[(2, 1)],
+            cov[(2, 2)]
+        );
+
+        // Format inv_covariance as row-major 3x3 matrix
+        let inv_cov_str = format!(
+            "[[{:.8},{:.8},{:.8}],[{:.8},{:.8},{:.8}],[{:.8},{:.8},{:.8}]]",
+            inv_cov[(0, 0)],
+            inv_cov[(0, 1)],
+            inv_cov[(0, 2)],
+            inv_cov[(1, 0)],
+            inv_cov[(1, 1)],
+            inv_cov[(1, 2)],
+            inv_cov[(2, 0)],
+            inv_cov[(2, 1)],
+            inv_cov[(2, 2)]
+        );
+
+        let comma = if i < voxels.len() - 1 { "," } else { "" };
+        writeln!(
+            file,
+            "    {{\"mean\": [{:.6},{:.6},{:.6}], \"cov\": {}, \"inv_cov\": {}, \"point_count\": {}}}{}",
+            mean[0], mean[1], mean[2], cov_str, inv_cov_str, voxel.point_count, comma
+        )?;
+    }
+
+    writeln!(file, "  ]")?;
+    writeln!(file, "}}")?;
+
+    log_info!(LOGGER_NAME, "Voxel dump complete: {}", output_path);
+    Ok(())
 }
 
 /// Result of NDT alignment with Hessian for covariance estimation
@@ -118,6 +191,13 @@ impl NdtManager {
                     min_z,
                     max_z
                 );
+            }
+
+            // Dump voxel data if NDT_DUMP_VOXELS is set
+            if std::env::var("NDT_DUMP_VOXELS").is_ok() {
+                if let Err(e) = dump_voxel_data(grid) {
+                    log_warn!(LOGGER_NAME, "Failed to dump voxel data: {e}");
+                }
             }
         } else {
             log_warn!(LOGGER_NAME, "Target grid is None after set_target!");
