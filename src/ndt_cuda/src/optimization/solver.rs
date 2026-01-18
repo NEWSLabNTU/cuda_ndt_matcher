@@ -718,7 +718,9 @@ impl NdtOptimizer {
         timestamp_ns: u64,
     ) -> (NdtResult, super::debug::AlignmentDebug) {
         use super::debug::{AlignmentDebug, IterationDebug};
+        use std::time::Instant;
 
+        let start_time = Instant::now();
         let mut debug = AlignmentDebug::new(timestamp_ns);
         debug.num_source_points = source_points.len();
         debug.gauss_d1 = Some(self.gauss.d1);
@@ -765,6 +767,7 @@ impl NdtOptimizer {
                     debug.total_iterations = iteration;
                     debug.set_final_pose(&pose);
                     debug.final_score = derivatives.score;
+                    debug.exe_time_ms = Some(start_time.elapsed().as_secs_f64() * 1000.0);
                     return (NdtResult::no_correspondences(initial_guess), debug);
                 }
                 break;
@@ -800,6 +803,7 @@ impl NdtOptimizer {
                     let final_pose = pose_vector_to_isometry(&best_pose);
                     let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
                     debug.final_nvtl = nvtl;
+                    debug.exe_time_ms = Some(start_time.elapsed().as_secs_f64() * 1000.0);
                     return (
                         NdtResult {
                             pose: final_pose,
@@ -834,6 +838,7 @@ impl NdtOptimizer {
                 let final_pose = pose_vector_to_isometry(&pose);
                 let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
                 debug.final_nvtl = nvtl;
+                debug.exe_time_ms = Some(start_time.elapsed().as_secs_f64() * 1000.0);
                 return (
                     NdtResult {
                         pose: final_pose,
@@ -898,6 +903,7 @@ impl NdtOptimizer {
         let final_pose = pose_vector_to_isometry(&best_pose);
         let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
         debug.final_nvtl = nvtl;
+        debug.exe_time_ms = Some(start_time.elapsed().as_secs_f64() * 1000.0);
 
         (
             NdtResult {

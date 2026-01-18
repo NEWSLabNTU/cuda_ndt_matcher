@@ -579,6 +579,9 @@ impl NdtScanMatcher {
         timestamp_ns: u64,
     ) -> Result<(AlignResult, crate::optimization::AlignmentDebug)> {
         use crate::optimization::AlignmentDebug;
+        use std::time::Instant;
+
+        let start_time = Instant::now();
 
         // Extract initial pose for debug
         let translation = initial_guess.translation.vector;
@@ -594,6 +597,7 @@ impl NdtScanMatcher {
 
         // Run GPU alignment
         let result = self.align_gpu(source_points, initial_guess)?;
+        let exe_time_ms = start_time.elapsed().as_secs_f64() * 1000.0;
 
         // Extract final pose for debug
         let final_translation = result.pose.translation.vector;
@@ -609,6 +613,7 @@ impl NdtScanMatcher {
 
         // Build debug info from GPU result
         let mut debug = AlignmentDebug::new(timestamp_ns);
+        debug.exe_time_ms = Some(exe_time_ms);
         debug.set_initial_pose(&initial_pose_arr);
         debug.set_final_pose(&final_pose_arr);
         debug.num_source_points = source_points.len();

@@ -175,6 +175,10 @@ pub struct AlignmentDebug {
     /// Timestamp in nanoseconds (from ROS header).
     pub timestamp_ns: u64,
 
+    /// Total alignment execution time in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exe_time_ms: Option<f64>,
+
     /// Initial pose guess.
     pub initial_pose: Vec<f64>,
 
