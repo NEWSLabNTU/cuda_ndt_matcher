@@ -208,3 +208,50 @@ analyze-profile dir:
 # Run CUDA NDT in CPU mode (for comparison)
 run-cuda-cpu:
     NDT_USE_GPU=0 ./scripts/run_demo.sh --cuda "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
+
+# === Debug Data Collection ===
+
+# Log output directory
+logs_dir := "logs"
+
+# Run CUDA with per-iteration debug output
+run-cuda-debug:
+    mkdir -p {{logs_dir}}
+    NDT_DEBUG=1 NDT_DEBUG_FILE={{logs_dir}}/ndt_cuda_debug.jsonl \
+        ./scripts/run_demo.sh --cuda "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
+
+# Run Autoware with per-iteration debug output
+run-builtin-debug:
+    mkdir -p {{logs_dir}}
+    NDT_DEBUG=1 NDT_DEBUG_FILE={{logs_dir}}/ndt_autoware_debug.jsonl \
+        ./scripts/run_demo.sh "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
+
+# Dump voxel grid data for comparison (CUDA)
+dump-voxels-cuda:
+    mkdir -p {{logs_dir}}
+    NDT_DUMP_VOXELS=1 NDT_DUMP_VOXELS_FILE={{logs_dir}}/ndt_cuda_voxels.json \
+        ./scripts/run_demo.sh --cuda "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
+
+# Dump voxel grid data for comparison (Autoware)
+dump-voxels-autoware:
+    mkdir -p {{logs_dir}}
+    NDT_DUMP_VOXELS=1 NDT_DUMP_VOXELS_FILE={{logs_dir}}/ndt_autoware_voxels.json \
+        ./scripts/run_demo.sh "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
+
+# Compare voxel grids between CUDA and Autoware
+compare-voxels:
+    python3 tmp/compare_voxels.py {{logs_dir}}/ndt_cuda_voxels.json {{logs_dir}}/ndt_autoware_voxels.json
+
+# === Debug Analysis ===
+
+# Analyze CUDA debug output
+analyze-debug-cuda:
+    python3 tmp/analyze_debug.py {{logs_dir}}/ndt_cuda_debug.jsonl
+
+# Analyze Autoware debug output
+analyze-debug-autoware:
+    python3 tmp/analyze_debug.py {{logs_dir}}/ndt_autoware_debug.jsonl
+
+# Analyze debug output from a specific file
+analyze-debug file:
+    python3 tmp/analyze_debug.py {{file}}
