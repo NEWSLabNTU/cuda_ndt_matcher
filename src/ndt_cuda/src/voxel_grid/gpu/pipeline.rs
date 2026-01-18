@@ -363,9 +363,22 @@ impl GpuPipelineBuffers {
             );
         }
 
+        // Compute centroid for coordinate centering (improves f32 precision)
+        // Using grid center since grid_min/grid_max are already computed
+        let centroid = [
+            (self.grid_min[0] + self.grid_max[0]) * 0.5,
+            (self.grid_min[1] + self.grid_max[1]) * 0.5,
+            (self.grid_min[2] + self.grid_max[2]) * 0.5,
+        ];
+
         // Step 5 & 6: Statistics (need points on GPU)
-        // Upload points for statistics
-        let points_gpu = self.client.create(f32::as_bytes(&points_flat));
+        // Center points around the centroid to improve f32 precision for covariance
+        // This is critical when coordinates have large absolute values (e.g., 89500)
+        let centered_points: Vec<f32> = points_flat
+            .chunks(3)
+            .flat_map(|p| [p[0] - centroid[0], p[1] - centroid[1], p[2] - centroid[2]])
+            .collect();
+        let points_gpu = self.client.create(f32::as_bytes(&centered_points));
 
         // Build proper segment_starts array: [0, boundary1, boundary2, ...]
         // detect_segments_inplace stores boundary indices (where codes change),
@@ -433,7 +446,13 @@ impl GpuPipelineBuffers {
 
         // Step 6: Download results
         let means_bytes = self.client.read_one(self.means.clone());
-        let means = f32::from_bytes(&means_bytes).to_vec();
+        let centered_means = f32::from_bytes(&means_bytes).to_vec();
+
+        // Un-center means (add centroid back)
+        let means: Vec<f32> = centered_means[..num_segments as usize * 3]
+            .chunks(3)
+            .flat_map(|m| [m[0] + centroid[0], m[1] + centroid[1], m[2] + centroid[2]])
+            .collect();
 
         let cov_sums_bytes = self.client.read_one(self.cov_sums.clone());
         let cov_sums = f32::from_bytes(&cov_sums_bytes).to_vec();
@@ -458,7 +477,7 @@ impl GpuPipelineBuffers {
 
         // Step 7: CPU finalization
         let stats = finalize_voxels_cpu(
-            means[..num_segments as usize * 3].to_vec(),
+            means,
             cov_sums[..num_segments as usize * 9].to_vec(),
             counts[..num_segments as usize].to_vec(),
             min_points_per_voxel as u32,

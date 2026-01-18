@@ -66,18 +66,19 @@ impl Voxel {
         // Compute mean
         let mean = sum / n;
 
-        // Compute standard sample covariance:
-        // Cov = (sum_sq - n * mean * mean^T) / (n - 1)
+        // Compute covariance matching Autoware's formula:
+        //   cov = (sum_sq/n - mean*mean^T) * (n-1)/n
         //
-        // This is mathematically equivalent to:
-        // Cov = Σ(x_i - mean)(x_i - mean)^T / (n - 1)
-        //
-        // Autoware uses the same formula:
         // Reference: autoware_ndt_scan_matcher/src/ndt_omp/multi_voxel_grid_covariance_omp_impl.hpp
-        // Line 436: leaf.cov_ = (leaf.cov_ - pt_sum * leaf.mean_.transpose()) / (n - 1)
-        // where pt_sum = n * mean, so pt_sum * mean^T = n * mean * mean^T
+        // Lines 476-478:
+        //   leaf.cov_ = (sum_sq - 2*(S * μ^T)) / n + μ*μ^T  // where S = sum, μ = mean
+        //             = sum_sq/n - μ*μ^T
+        //   leaf.cov_ *= (n-1)/n
+        //
+        // Note: This is NOT the standard unbiased sample covariance (which divides by n-1).
+        // It's a scaled biased estimator. Using the same formula ensures matching results.
         let mean_outer = mean * mean.transpose();
-        let covariance = (sum_sq - mean_outer * n) / (n - 1.0);
+        let covariance = (sum_sq / n - mean_outer) * ((n - 1.0) / n);
 
         // Regularize covariance to avoid singularity
         let reg = regularize_covariance(&covariance, config.eigenvalue_ratio_threshold)?;
@@ -107,6 +108,10 @@ struct RegularizedCovariance {
 /// This prevents numerical issues when inverting near-singular matrices.
 /// Small eigenvalues are clamped to `ratio_threshold * max_eigenvalue`.
 ///
+/// IMPORTANT: To match Autoware's behavior, we only reconstruct the covariance
+/// from eigenvalues if regularization was actually applied. This avoids numerical
+/// precision loss from the eigendecomposition round-trip.
+///
 /// Returns the regularized covariance, its inverse, and the principal axis
 /// (eigenvector of smallest eigenvalue), or `None` if all eigenvalues are zero.
 fn regularize_covariance(
@@ -115,17 +120,17 @@ fn regularize_covariance(
 ) -> Option<RegularizedCovariance> {
     // Symmetric eigenvalue decomposition
     let eigen = cov.symmetric_eigen();
-    let mut eigenvalues = eigen.eigenvalues;
+    let original_eigenvalues = eigen.eigenvalues;
 
-    // Find max and min eigenvalue indices
-    let max_eigenvalue = eigenvalues.iter().copied().fold(0.0_f64, f64::max);
+    // Find max eigenvalue
+    let max_eigenvalue = original_eigenvalues.iter().copied().fold(0.0_f64, f64::max);
 
     if max_eigenvalue <= 0.0 {
         return None;
     }
 
-    // Find the index of the smallest eigenvalue (before clamping)
-    let min_eigenvalue_idx = eigenvalues
+    // Find the index of the smallest eigenvalue
+    let min_eigenvalue_idx = original_eigenvalues
         .iter()
         .enumerate()
         .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
@@ -134,23 +139,44 @@ fn regularize_covariance(
 
     let min_eigenvalue_threshold = max_eigenvalue * ratio_threshold as f64;
 
-    // Clamp small eigenvalues
-    for ev in eigenvalues.iter_mut() {
+    // Check if any eigenvalue needs clamping (matching Autoware's approach)
+    let needs_regularization = original_eigenvalues
+        .iter()
+        .any(|&ev| ev < min_eigenvalue_threshold);
+
+    let eigenvectors = &eigen.eigenvectors;
+
+    // Only reconstruct covariance if regularization was applied (matching Autoware)
+    let regularized = if needs_regularization {
+        // Clamp small eigenvalues
+        let mut eigenvalues = original_eigenvalues;
+        for ev in eigenvalues.iter_mut() {
+            if *ev < min_eigenvalue_threshold {
+                *ev = min_eigenvalue_threshold;
+            }
+        }
+
+        // Reconstruct covariance: V * D * V^T
+        let diag = Matrix3::from_diagonal(&eigenvalues);
+        eigenvectors * diag * eigenvectors.transpose()
+    } else {
+        // Keep original covariance (avoiding numerical precision loss)
+        *cov
+    };
+
+    // For the inverse, we always need to use the clamped eigenvalues for numerical stability
+    let mut eigenvalues_for_inv = original_eigenvalues;
+    for ev in eigenvalues_for_inv.iter_mut() {
         if *ev < min_eigenvalue_threshold {
             *ev = min_eigenvalue_threshold;
         }
     }
 
-    // Reconstruct covariance: V * D * V^T
-    let eigenvectors = &eigen.eigenvectors;
-    let diag = Matrix3::from_diagonal(&eigenvalues);
-    let regularized = eigenvectors * diag * eigenvectors.transpose();
-
     // Compute inverse: V * D^{-1} * V^T
     let inv_eigenvalues = Vector3::new(
-        1.0 / eigenvalues[0],
-        1.0 / eigenvalues[1],
-        1.0 / eigenvalues[2],
+        1.0 / eigenvalues_for_inv[0],
+        1.0 / eigenvalues_for_inv[1],
+        1.0 / eigenvalues_for_inv[2],
     );
     let inv_diag = Matrix3::from_diagonal(&inv_eigenvalues);
     let inverse = eigenvectors * inv_diag * eigenvectors.transpose();
