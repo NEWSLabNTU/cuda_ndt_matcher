@@ -1,0 +1,124 @@
+# Autoware NDT Comparison Testing
+#
+# This justfile manages the patched autoware_ndt_scan_matcher for comparison testing.
+# Run from project root with: just run-builtin, just dump-voxels-autoware, etc.
+
+# Project root (two levels up)
+project_root := "../../"
+
+# Autoware setup from main project
+autoware_setup := project_root + "external/autoware_repo/install/setup.bash"
+
+# Package source directory (submodule)
+ndt_package := "autoware_universe/localization/autoware_ndt_scan_matcher"
+
+# Build directories (local to this comparison folder)
+build_dir := "build"
+install_dir := "install"
+log_dir := "log"
+
+# Paths for demo runs (relative to project root)
+sample_map_dir := project_root + "data/sample-map"
+sample_rosbag := project_root + "data/sample-rosbag-fixed"
+rosbag_output_dir := project_root + "rosbag"
+logs_dir := project_root + "logs"
+
+# NDT topics to record
+ndt_topics := "/localization/pose_estimator/pose \
+    /localization/pose_estimator/pose_with_covariance \
+    /localization/pose_estimator/ndt_marker \
+    /localization/pose_estimator/points_aligned \
+    /localization/pose_estimator/monte_carlo_initial_pose_marker \
+    /localization/pose_estimator/transform_probability \
+    /localization/pose_estimator/nearest_voxel_transformation_likelihood \
+    /localization/pose_estimator/iteration_num \
+    /localization/pose_estimator/exe_time_ms \
+    /localization/pose_estimator/initial_pose_with_covariance \
+    /localization/pose_estimator/initial_to_result_distance \
+    /localization/pose_estimator/initial_to_result_relative_pose \
+    /localization/pose_twist_fusion_filter/biased_pose_with_covariance \
+    /localization/util/downsample/pointcloud"
+
+# Show available recipes
+default:
+    @just --list
+
+# === Build ===
+
+# Build the patched autoware_ndt_scan_matcher package
+build:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    source {{autoware_setup}}
+    echo "Building autoware_ndt_scan_matcher from submodule..."
+    colcon build \
+        --base-paths {{ndt_package}} \
+        --build-base {{build_dir}} \
+        --install-base {{install_dir}} \
+        --log-base {{log_dir}} \
+        --symlink-install \
+        --cmake-args -DCMAKE_BUILD_TYPE=Release
+    echo "Build complete."
+
+# Clean build artifacts
+clean:
+    rm -rf {{build_dir}} {{install_dir}} {{log_dir}}
+
+# === Run Autoware Builtin NDT ===
+
+# Start Autoware builtin NDT demo (simulation + rosbag + recording)
+run:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    cd {{project_root}}
+    ./scripts/run_demo.sh \
+        "$(realpath {{sample_map_dir}})" \
+        "$(realpath {{sample_rosbag}})" \
+        "{{rosbag_output_dir}}" \
+        {{ndt_topics}}
+
+# Run Autoware with per-iteration debug output (requires build first)
+run-debug:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    cd {{project_root}}
+    mkdir -p {{logs_dir}}
+    NDT_DEBUG=1 \
+    NDT_DEBUG_FILE={{logs_dir}}/ndt_autoware_debug.jsonl \
+        ./scripts/run_demo.sh \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}" \
+            {{ndt_topics}}
+
+# === Debug Data Collection ===
+
+# Dump voxel grid data from Autoware (requires build first)
+dump-voxels:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    cd {{project_root}}
+    mkdir -p {{logs_dir}}
+    NDT_DUMP_VOXELS=1 \
+    NDT_DUMP_VOXELS_FILE={{logs_dir}}/ndt_autoware_voxels.json \
+        ./scripts/run_demo.sh \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}" \
+            {{ndt_topics}}
+
+# Analyze Autoware debug output
+analyze-debug:
+    python3 {{project_root}}/tmp/analyze_debug.py {{logs_dir}}/ndt_autoware_debug.jsonl
+
+# === Submodule Management ===
+
+# Show git status of the submodule
+status:
+    @echo "Submodule status:"
+    @cd autoware_universe && git log -1 --oneline
+    @cd autoware_universe && git status -s
+
+# Update submodule to latest
+update:
+    git submodule update --remote autoware_universe

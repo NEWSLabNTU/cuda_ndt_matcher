@@ -1,0 +1,8 @@
+# Colcon build artifacts
+build/
+install/
+log/
+
+# Temporary files
+*.pyc
+__pycache__/
