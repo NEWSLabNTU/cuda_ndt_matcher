@@ -218,25 +218,19 @@ impl MapUpdateModule {
             );
         }
 
-        // Rebuild map with points within radius
+        // Combine all points from loaded tiles (matching Autoware's behavior).
+        // Note: Unlike CUDA's previous implementation, we do NOT filter by distance from
+        // current position. Autoware uses all points from loaded tiles, and the tile
+        // loading service already handles the spatial selection via map_radius.
         let tiles = self.tiles.read();
-        let mut combined_points = Vec::new();
-        let radius_sq = (self.params.map_radius as f32).powi(2);
+        let total_points: usize = tiles.values().map(|t| t.points.len()).sum();
+        let mut combined_points = Vec::with_capacity(total_points);
 
         for tile in tiles.values() {
-            for point in &tile.points {
-                let dx = point[0] - current_position.x as f32;
-                let dy = point[1] - current_position.y as f32;
-                let dist_sq = dx * dx + dy * dy;
-
-                if dist_sq <= radius_sq {
-                    combined_points.push(*point);
-                }
-            }
+            combined_points.extend_from_slice(&tile.points);
         }
 
         let tiles_loaded = tiles.len();
-        let total_points = combined_points.len();
         drop(tiles);
 
         // Update cached map
@@ -248,9 +242,9 @@ impl MapUpdateModule {
 
         log_debug!(
             LOGGER_NAME,
-            "Map updated: {} points within {:.0}m radius (took {:.1}ms)",
+            "Map updated: {} points from {} tiles (took {:.1}ms)",
             total_points,
-            self.params.map_radius,
+            tiles_loaded,
             update_time_ms
         );
 
