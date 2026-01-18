@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Run NDT demo with simulation, rosbag playback, and recording
-# Usage: run_demo.sh [--cuda] <map_dir> <rosbag> <output_dir> <topics...>
+# Usage: run_demo.sh [--cuda] <map_dir> <rosbag> <output_dir>
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 AUTOWARE_SETUP="$PROJECT_DIR/external/autoware_repo/install/setup.bash"
+COMPARISON_SETUP="$PROJECT_DIR/tests/comparison/install/setup.bash"
+
+# Source NDT topics
+source "$SCRIPT_DIR/ndt_topics.sh"
 
 # Parse --cuda flag
 USE_CUDA=""
@@ -19,8 +23,6 @@ fi
 MAP_DIR="$1"
 ROSBAG="$2"
 OUTPUT_DIR="$3"
-shift 3
-TOPICS="$*"
 
 # Create output directory and generate bag name
 mkdir -p "$OUTPUT_DIR"
@@ -43,9 +45,13 @@ if [[ -n "$USE_CUDA" ]]; then
     export NDT_DEBUG_VPP=1  # Enable voxel-per-point distribution logging
     echo "CUDA NDT debug enabled: $NDT_DEBUG_FILE (VPP debug on)"
 else
-    export NDT_AUTOWARE_DEBUG=1
-    export NDT_AUTOWARE_DEBUG_FILE="${NDT_AUTOWARE_DEBUG_FILE:-/tmp/ndt_autoware_debug.jsonl}"
-    echo "Autoware NDT debug enabled: $NDT_AUTOWARE_DEBUG_FILE"
+    # For builtin mode, use patched Autoware if available
+    if [[ -f "$COMPARISON_SETUP" ]]; then
+        echo "Using patched Autoware from: tests/comparison/install/"
+        export NDT_DEBUG=1
+        export NDT_DEBUG_FILE="${NDT_DEBUG_FILE:-/tmp/ndt_autoware_debug.jsonl}"
+        echo "Autoware NDT debug enabled: $NDT_DEBUG_FILE"
+    fi
 fi
 
 # Run simulation, bag play, and recording in parallel
@@ -54,6 +60,6 @@ fi
 parallel --halt now,done=1 --line-buffer ::: \
     "$SCRIPT_DIR/run_ndt_simulation.sh $USE_CUDA '$MAP_DIR'" \
     "sleep 30 && source '$AUTOWARE_SETUP' && ros2 bag play '$ROSBAG'" \
-    "sleep 35 && source '$AUTOWARE_SETUP' && ros2 bag record -o '$BAG_NAME' $TOPICS"
+    "sleep 35 && source '$AUTOWARE_SETUP' && ros2 bag record -o '$BAG_NAME' ${NDT_TOPICS[*]}"
 
 echo "Demo finished. Recording saved to: $BAG_NAME"

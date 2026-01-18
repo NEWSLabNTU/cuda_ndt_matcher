@@ -23,22 +23,6 @@ sample_rosbag := project_root + "data/sample-rosbag-fixed"
 rosbag_output_dir := project_root + "rosbag"
 logs_dir := project_root + "logs"
 
-# NDT topics to record
-ndt_topics := "/localization/pose_estimator/pose \
-    /localization/pose_estimator/pose_with_covariance \
-    /localization/pose_estimator/ndt_marker \
-    /localization/pose_estimator/points_aligned \
-    /localization/pose_estimator/monte_carlo_initial_pose_marker \
-    /localization/pose_estimator/transform_probability \
-    /localization/pose_estimator/nearest_voxel_transformation_likelihood \
-    /localization/pose_estimator/iteration_num \
-    /localization/pose_estimator/exe_time_ms \
-    /localization/pose_estimator/initial_pose_with_covariance \
-    /localization/pose_estimator/initial_to_result_distance \
-    /localization/pose_estimator/initial_to_result_relative_pose \
-    /localization/pose_twist_fusion_filter/biased_pose_with_covariance \
-    /localization/util/downsample/pointcloud"
-
 # Show available recipes
 default:
     @just --list
@@ -74,8 +58,7 @@ run:
     ./scripts/run_demo.sh \
         "$(realpath {{sample_map_dir}})" \
         "$(realpath {{sample_rosbag}})" \
-        "{{rosbag_output_dir}}" \
-        {{ndt_topics}}
+        "{{rosbag_output_dir}}"
 
 # Run Autoware with per-iteration debug output (requires build first)
 run-debug:
@@ -88,8 +71,7 @@ run-debug:
         ./scripts/run_demo.sh \
             "$(realpath {{sample_map_dir}})" \
             "$(realpath {{sample_rosbag}})" \
-            "{{rosbag_output_dir}}" \
-            {{ndt_topics}}
+            "{{rosbag_output_dir}}"
 
 # === Debug Data Collection ===
 
@@ -104,8 +86,7 @@ dump-voxels:
         ./scripts/run_demo.sh \
             "$(realpath {{sample_map_dir}})" \
             "$(realpath {{sample_rosbag}})" \
-            "{{rosbag_output_dir}}" \
-            {{ndt_topics}}
+            "{{rosbag_output_dir}}"
 
 # Analyze Autoware debug output
 analyze-debug:

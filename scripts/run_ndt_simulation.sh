@@ -6,6 +6,7 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+COMPARISON_SETUP="$PROJECT_DIR/tests/comparison/install/setup.bash"
 
 USE_CUDA="false"
 RVIZ="true"
@@ -47,6 +48,12 @@ USE_INITIAL_POSE="true"
 
 # Source the local workspace setup
 source "$PROJECT_DIR/install/setup.bash"
+
+# For builtin mode, overlay patched Autoware if available
+if [[ "$USE_CUDA" == "false" && -f "$COMPARISON_SETUP" ]]; then
+    echo "Overlaying patched Autoware from: tests/comparison/install/"
+    source "$COMPARISON_SETUP"
+fi
 
 # Export NDT_DEBUG if CUDA mode and not already set
 if [[ "$USE_CUDA" == "true" && -z "${NDT_DEBUG:-}" ]]; then
