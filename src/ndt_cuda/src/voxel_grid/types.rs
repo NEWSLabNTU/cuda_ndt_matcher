@@ -67,18 +67,16 @@ impl Voxel {
         let mean = sum / n;
 
         // Compute covariance matching Autoware's formula:
-        //   cov = (sum_sq/n - mean*mean^T) * (n-1)/n
+        //   cov = (sum_sq - n*mean*mean^T) / (n-1)
         //
         // Reference: autoware_ndt_scan_matcher/src/ndt_omp/multi_voxel_grid_covariance_omp_impl.hpp
-        // Lines 476-478:
-        //   leaf.cov_ = (sum_sq - 2*(S * μ^T)) / n + μ*μ^T  // where S = sum, μ = mean
-        //             = sum_sq/n - μ*μ^T
-        //   leaf.cov_ *= (n-1)/n
+        // Line 436:
+        //   leaf.cov_ = (leaf.cov_ - pt_sum * leaf.mean_.transpose()) / (leaf.nr_points_ - 1);
+        //   where leaf.cov_ = sum_sq, pt_sum = n*mean
         //
-        // Note: This is NOT the standard unbiased sample covariance (which divides by n-1).
-        // It's a scaled biased estimator. Using the same formula ensures matching results.
+        // This is the standard unbiased sample covariance formula.
         let mean_outer = mean * mean.transpose();
-        let covariance = (sum_sq / n - mean_outer) * ((n - 1.0) / n);
+        let covariance = (sum_sq - mean_outer * n) / (n - 1.0);
 
         // Regularize covariance to avoid singularity
         let reg = regularize_covariance(&covariance, config.eigenvalue_ratio_threshold)?;
