@@ -25,6 +25,7 @@ This document outlines the plan to implement custom CUDA kernels for NDT scan ma
 | Phase 17: Kernel Optimization     | ✅ Complete  | Persistent kernel with cooperative groups                |
 | Phase 18: Persistent Full Features| ✅ Complete  | All 5 features complete including line search (Option A) |
 | Phase 19: Cleanup & Enhancements  | ✅ Complete  | Struct cleanup, alpha tracking, per-iteration debug      |
+| Phase 22: Batch Multi-Alignment   | ✅ Complete  | All sub-phases complete including 22.5 ROS integration   |
 
 **Core NDT algorithm is fully implemented on CPU and matches Autoware's pclomp.**
 **GPU runtime uses persistent kernel (single launch) for all optimization.**
@@ -58,6 +59,7 @@ buffer writes are complete before the cooperative kernel reads from them.
 - [Phase 17: Kernel Optimization](phase-17-kernel-optimization.md) ✅ - Persistent kernel with cooperative groups
 - [Phase 18: Persistent Kernel Features](phase-18-persistent-kernel-features.md) ✅ - All 5 features: Hessian, regularization, correspondences, oscillation, line search
 - [Phase 19: Cleanup & Enhancements](phase-19-cleanup.md) ✅ - Struct cleanup, alpha tracking, per-iteration debug
+- [Phase 22: Batch Multi-Alignment](phase-22-batch-alignment.md) ⚠️ - Non-cooperative kernel for parallel multi-scan alignment
 - [Implementation Notes](implementation-notes.md) - Dependencies, risks, references
 
 ## Background
