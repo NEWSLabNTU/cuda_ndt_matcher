@@ -40,6 +40,7 @@ use crate::voxel_grid::cpu::build_voxel_grid_cpu;
 
 /// JSON representation of a voxel dump file (from CUDA or Autoware).
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)] // num_voxels is parsed from JSON but not used
 struct VoxelDumpJson {
     resolution: f32,
     num_voxels: usize,

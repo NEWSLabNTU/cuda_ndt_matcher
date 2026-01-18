@@ -38,11 +38,12 @@ use cubecl::client::ComputeClient;
 use cubecl::cuda::{CudaDevice, CudaRuntime};
 use cubecl::prelude::*;
 use cubecl::server::Handle;
+use tracing::debug;
 
 use super::morton::{compute_morton_codes_kernel, pack_morton_codes_kernel};
 use super::statistics::{
-    accumulate_segment_covariances_kernel, accumulate_segment_sums_kernel, compute_means_kernel,
-    finalize_voxels_cpu,
+    accumulate_segment_covariances_kernel, accumulate_segment_sums_kernel,
+    compute_covariance_sums_cpu, compute_means_kernel, finalize_voxels_cpu,
 };
 
 /// Type alias for CUDA compute client.
@@ -459,6 +460,80 @@ impl GpuPipelineBuffers {
 
         let counts_bytes = self.client.read_one(self.counts.clone());
         let counts = u32::from_bytes(&counts_bytes).to_vec();
+
+        // DEBUG: Compare GPU vs CPU covariance computation
+        if std::env::var("NDT_DEBUG_COV").is_ok() {
+            // Download sorted_indices
+            let sorted_indices_bytes = self.client.read_one(self.sorted_indices.clone());
+            let sorted_indices: Vec<u32> = sorted_indices_bytes
+                .chunks(4)
+                .take(num_points)
+                .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+                .collect();
+
+            // Build segment_ids from segment_starts
+            // segment_ids[i] = which segment point i belongs to
+            let mut segment_ids = vec![0u32; num_points];
+            for seg_idx in 0..num_segments as usize {
+                let start = full_segment_starts[seg_idx] as usize;
+                let end = if seg_idx + 1 < num_segments as usize {
+                    full_segment_starts[seg_idx + 1] as usize
+                } else {
+                    num_points
+                };
+                for id in segment_ids.iter_mut().take(end).skip(start) {
+                    *id = seg_idx as u32;
+                }
+            }
+
+            // Run CPU reference covariance computation
+            let cpu_cov_sums = compute_covariance_sums_cpu(
+                &centered_points,
+                &sorted_indices,
+                &segment_ids,
+                &centered_means[..num_segments as usize * 3],
+                num_segments,
+            );
+
+            // Compare GPU vs CPU cov_sums
+            let mut max_diff = 0.0f32;
+            let mut max_diff_seg = 0usize;
+            let mut total_gpu_trace = 0.0f32;
+            let mut total_cpu_trace = 0.0f32;
+
+            for seg in 0..num_segments as usize {
+                let gpu_trace = cov_sums[seg * 9] + cov_sums[seg * 9 + 4] + cov_sums[seg * 9 + 8];
+                let cpu_trace =
+                    cpu_cov_sums[seg * 9] + cpu_cov_sums[seg * 9 + 4] + cpu_cov_sums[seg * 9 + 8];
+                total_gpu_trace += gpu_trace;
+                total_cpu_trace += cpu_trace;
+
+                for i in 0..9 {
+                    let diff = (cov_sums[seg * 9 + i] - cpu_cov_sums[seg * 9 + i]).abs();
+                    if diff > max_diff {
+                        max_diff = diff;
+                        max_diff_seg = seg;
+                    }
+                }
+            }
+
+            let ratio = if total_cpu_trace > 0.0 {
+                total_gpu_trace / total_cpu_trace
+            } else {
+                0.0
+            };
+
+            debug!(
+                num_segments,
+                num_points,
+                total_gpu_trace,
+                total_cpu_trace,
+                ratio,
+                max_diff,
+                max_diff_seg,
+                "NDT_DEBUG_COV: GPU vs CPU covariance comparison"
+            );
+        }
 
         // Download segment codes for coordinate decoding
         let sorted_codes_bytes = self.client.read_one(self.sorted_codes.clone());
