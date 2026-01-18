@@ -6,6 +6,10 @@ edition = "2021"
 [dependencies]
 anyhow.workspace = true
 ctrlc.workspace = true
+
+# Serialization for debug output
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 arc-swap.workspace = true
 parking_lot.workspace = true
 nalgebra.workspace = true

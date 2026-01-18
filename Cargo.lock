@@ -971,6 +971,8 @@ dependencies = [
  "rand_distr",
  "rclrs",
  "sensor_msgs",
+ "serde",
+ "serde_json",
  "std_msgs",
  "std_srvs",
  "tf2_msgs",

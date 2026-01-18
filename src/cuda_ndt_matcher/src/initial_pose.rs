@@ -20,8 +20,65 @@ use crate::tpe::{
 use geometry_msgs::msg::{Point, Pose, PoseWithCovariance, PoseWithCovarianceStamped, Quaternion};
 use nalgebra::{Quaternion as NaQuaternion, UnitQuaternion};
 use rclrs::log_debug;
+use serde::Serialize;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::time::Instant;
 
 const LOGGER_NAME: &str = "ndt_scan_matcher.initial_pose";
+
+/// Debug output for pose initialization (written to JSONL when NDT_DEBUG=1)
+#[derive(Debug, Clone, Serialize)]
+pub struct InitPoseDebug {
+    /// Entry type discriminator for JSONL parsing
+    #[serde(rename = "type")]
+    pub entry_type: &'static str,
+    /// Total pose initialization time in milliseconds
+    pub total_time_ms: f64,
+    /// Time for random startup phase (first n_startup_trials)
+    pub startup_time_ms: f64,
+    /// Time for TPE-guided phase
+    pub guided_time_ms: f64,
+    /// Total particles evaluated
+    pub num_particles: usize,
+    /// Particles in startup phase
+    pub num_startup: usize,
+    /// Best score progression (running max as particles are evaluated)
+    pub best_score_trajectory: Vec<f64>,
+    /// Per-particle alignment time in milliseconds
+    pub per_particle_time_ms: Vec<f64>,
+    /// Final best particle score (NVTL)
+    pub final_score: f64,
+    /// Final best particle iteration count
+    pub final_iterations: i32,
+    /// Whether result is reliable (score >= threshold)
+    pub reliable: bool,
+}
+
+impl InitPoseDebug {
+    /// Convert to JSON string
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+}
+
+/// Write init debug entry to the debug file
+fn write_init_debug(debug: &InitPoseDebug) {
+    if std::env::var("NDT_DEBUG").is_err() {
+        return;
+    }
+    if let Ok(json) = debug.to_json() {
+        let debug_file = std::env::var("NDT_DEBUG_FILE")
+            .unwrap_or_else(|_| "/tmp/ndt_cuda_debug.jsonl".to_string());
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&debug_file)
+        {
+            let _ = writeln!(file, "{json}");
+        }
+    }
+}
 
 /// Result of initial pose estimation
 #[derive(Debug, Clone)]
@@ -119,12 +176,20 @@ pub fn estimate_initial_pose(
     // Evaluate particles
     let mut particles = Vec::with_capacity(params.particles_num as usize);
 
+    // Debug tracking
+    let debug_enabled = std::env::var("NDT_DEBUG").is_ok();
+    let total_start = Instant::now();
+    let mut per_particle_times: Vec<f64> = Vec::new();
+    let mut best_score_trajectory: Vec<f64> = Vec::new();
+    let mut running_best_score = f64::NEG_INFINITY;
+
     // ========================================================================
     // Startup Phase: Batch evaluate first n_startup_trials particles
     // ========================================================================
     // During startup, TPE samples randomly, so we can batch-evaluate all
     // startup particles at once using GPU acceleration.
     let startup_count = (params.n_startup_trials as usize).min(params.particles_num as usize);
+    let startup_start = Instant::now();
 
     if startup_count > 0 {
         log_debug!(
@@ -149,6 +214,10 @@ pub fn estimate_initial_pose(
         };
 
         // Process batch results
+        // Note: batch alignment time is amortized across all particles
+        let batch_time_ms = startup_start.elapsed().as_secs_f64() * 1000.0;
+        let per_particle_batch_time = batch_time_ms / batch_results.len().max(1) as f64;
+
         for (i, align_result) in batch_results.into_iter().enumerate() {
             let candidate_pose = &startup_poses[i];
 
@@ -188,13 +257,24 @@ pub fn estimate_initial_pose(
                 input: result_input,
                 score: transform_probability,
             });
+
+            // Debug tracking
+            if debug_enabled {
+                per_particle_times.push(per_particle_batch_time);
+                if selection_score > running_best_score {
+                    running_best_score = selection_score;
+                }
+                best_score_trajectory.push(running_best_score);
+            }
         }
     }
+    let startup_time_ms = startup_start.elapsed().as_secs_f64() * 1000.0;
 
     // ========================================================================
     // Guided Phase: Sequential evaluation for remaining particles
     // ========================================================================
     let remaining = params.particles_num as usize - particles.len();
+    let guided_start = Instant::now();
     if remaining > 0 {
         log_debug!(
             LOGGER_NAME,
@@ -203,6 +283,8 @@ pub fn estimate_initial_pose(
     }
 
     for _ in 0..remaining {
+        let particle_start = Instant::now();
+
         // Get next candidate pose from TPE
         let input = tpe.get_next_input();
 
@@ -277,7 +359,18 @@ pub fn estimate_initial_pose(
             input: result_input,
             score: transform_probability,
         });
+
+        // Debug tracking
+        if debug_enabled {
+            let particle_time_ms = particle_start.elapsed().as_secs_f64() * 1000.0;
+            per_particle_times.push(particle_time_ms);
+            if selection_score > running_best_score {
+                running_best_score = selection_score;
+            }
+            best_score_trajectory.push(running_best_score);
+        }
     }
+    let guided_time_ms = guided_start.elapsed().as_secs_f64() * 1000.0;
 
     // Select best particle (highest score)
     let best_particle = select_best_particle(&particles)
@@ -298,6 +391,27 @@ pub fn estimate_initial_pose(
     // Build result
     // NVTL score is "higher = better" (Autoware threshold is around 2.3)
     let nvtl_threshold = 2.3;
+    let reliable = best_particle.score >= nvtl_threshold;
+
+    // Write debug output
+    if debug_enabled {
+        let total_time_ms = total_start.elapsed().as_secs_f64() * 1000.0;
+        let debug = InitPoseDebug {
+            entry_type: "init",
+            total_time_ms,
+            startup_time_ms,
+            guided_time_ms,
+            num_particles: particles.len(),
+            num_startup: startup_count,
+            best_score_trajectory,
+            per_particle_time_ms: per_particle_times,
+            final_score: best_particle.score,
+            final_iterations: best_particle.iterations,
+            reliable,
+        };
+        write_init_debug(&debug);
+    }
+
     let result = InitialPoseResult {
         pose_with_covariance: PoseWithCovarianceStamped {
             header: initial_pose_with_cov.header.clone(),
@@ -308,7 +422,7 @@ pub fn estimate_initial_pose(
             },
         },
         score: best_particle.score,
-        reliable: best_particle.score >= nvtl_threshold,
+        reliable,
         particles,
     };
 
