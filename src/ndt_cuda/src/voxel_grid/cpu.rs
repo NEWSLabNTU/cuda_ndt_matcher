@@ -18,6 +18,8 @@ struct VoxelAccumulator {
     sum_sq: Matrix3<f64>,
     /// Number of points accumulated.
     count: usize,
+    /// Optional: indices of points in this voxel (for debugging).
+    point_indices: Vec<usize>,
 }
 
 impl VoxelAccumulator {
@@ -27,6 +29,12 @@ impl VoxelAccumulator {
         self.sum += v;
         self.sum_sq += v * v.transpose();
         self.count += 1;
+    }
+
+    /// Add a point with its index (for debugging).
+    fn add_point_with_index(&mut self, point: &[f32; 3], index: usize) {
+        self.add_point(point);
+        self.point_indices.push(index);
     }
 }
 
@@ -64,6 +72,111 @@ pub fn build_voxel_grid_cpu(
         .collect();
 
     voxels.into_iter().collect()
+}
+
+/// Result of building voxel grid with point tracking.
+#[derive(Debug)]
+pub struct VoxelGridWithPoints {
+    /// Voxel data (same as build_voxel_grid_cpu)
+    pub voxels: HashMap<VoxelCoord, Voxel>,
+    /// Points assigned to each voxel (by coordinate)
+    pub point_indices: HashMap<VoxelCoord, Vec<usize>>,
+}
+
+/// Build a voxel grid with per-voxel point tracking.
+///
+/// This is used for debugging to see which points are assigned to each voxel.
+/// More expensive than `build_voxel_grid_cpu` due to index tracking.
+pub fn build_voxel_grid_with_points(
+    points: &[[f32; 3]],
+    config: &VoxelGridConfig,
+) -> VoxelGridWithPoints {
+    // Phase 1: Accumulate points into voxels with index tracking
+    let mut accumulators: HashMap<VoxelCoord, VoxelAccumulator> = HashMap::new();
+
+    for (idx, point) in points.iter().enumerate() {
+        let coord = VoxelCoord::from_point(point, config.resolution);
+        accumulators
+            .entry(coord)
+            .or_default()
+            .add_point_with_index(point, idx);
+    }
+
+    // Phase 2: Convert to voxels and extract point indices
+    let mut voxels = HashMap::new();
+    let mut point_indices = HashMap::new();
+
+    for (coord, acc) in accumulators {
+        if let Some(voxel) = Voxel::from_statistics(&acc.sum, &acc.sum_sq, acc.count, config) {
+            voxels.insert(coord, voxel);
+            point_indices.insert(coord, acc.point_indices);
+        }
+    }
+
+    VoxelGridWithPoints {
+        voxels,
+        point_indices,
+    }
+}
+
+/// Dump point assignments to JSON file for debugging.
+///
+/// For each voxel, outputs the list of point indices and the actual point coordinates.
+pub fn dump_point_assignments(
+    points: &[[f32; 3]],
+    config: &VoxelGridConfig,
+    output_path: &str,
+) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let result = build_voxel_grid_with_points(points, config);
+
+    let mut file = std::fs::File::create(output_path)?;
+
+    writeln!(file, "{{")?;
+    writeln!(file, "  \"resolution\": {},", config.resolution)?;
+    writeln!(file, "  \"total_points\": {},", points.len())?;
+    writeln!(file, "  \"num_voxels\": {},", result.voxels.len())?;
+    writeln!(file, "  \"voxels\": [")?;
+
+    let mut entries: Vec<_> = result.voxels.iter().collect();
+    entries.sort_by(|a, b| {
+        a.0.x
+            .cmp(&b.0.x)
+            .then(a.0.y.cmp(&b.0.y))
+            .then(a.0.z.cmp(&b.0.z))
+    });
+
+    for (i, (coord, voxel)) in entries.iter().enumerate() {
+        let indices = result.point_indices.get(coord).unwrap();
+
+        // Get first few point coordinates for verification
+        let sample_points: Vec<String> = indices
+            .iter()
+            .take(5)
+            .map(|&idx| {
+                let p = points[idx];
+                format!("[{:.4},{:.4},{:.4}]", p[0], p[1], p[2])
+            })
+            .collect();
+
+        let comma = if i < entries.len() - 1 { "," } else { "" };
+        writeln!(
+            file,
+            "    {{\"coord\": [{},{},{}], \"mean\": [{:.6},{:.6},{:.6}], \"point_count\": {}, \"indices\": {:?}, \"sample_points\": [{}]}}{}",
+            coord.x, coord.y, coord.z,
+            voxel.mean.x, voxel.mean.y, voxel.mean.z,
+            voxel.point_count,
+            indices,
+            sample_points.join(","),
+            comma
+        )?;
+    }
+
+    writeln!(file, "  ]")?;
+    writeln!(file, "}}")?;
+
+    Ok(())
 }
 
 /// Compute voxel ID from coordinates (for GPU compatibility testing).
