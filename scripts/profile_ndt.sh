@@ -28,7 +28,7 @@ USE_PERF=false
 USE_NSYS=false
 OUTPUT_DIR=""
 SKIP_RUN=false
-SAMPLE_MAP_DIR="$PROJECT_DIR/data/sample-map-rosbag"
+SAMPLE_MAP_DIR="$PROJECT_DIR/data/sample-map"
 SAMPLE_ROSBAG="$PROJECT_DIR/data/sample-rosbag-fixed"
 
 # Parse arguments

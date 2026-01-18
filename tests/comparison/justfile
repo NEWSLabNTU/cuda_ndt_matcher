@@ -15,13 +15,7 @@ ndt_package := "autoware_universe/localization/autoware_ndt_scan_matcher"
 # Build directories (local to this comparison folder)
 build_dir := "build"
 install_dir := "install"
-log_dir := "log"
 
-# Paths for demo runs (relative to project root)
-sample_map_dir := project_root + "data/sample-map"
-sample_rosbag := project_root + "data/sample-rosbag-fixed"
-rosbag_output_dir := project_root + "rosbag"
-logs_dir := project_root + "logs"
 
 # Show available recipes
 default:
@@ -39,14 +33,13 @@ build:
         --base-paths {{ndt_package}} \
         --build-base {{build_dir}} \
         --install-base {{install_dir}} \
-        --log-base {{log_dir}} \
         --symlink-install \
         --cmake-args -DCMAKE_BUILD_TYPE=Release
     echo "Build complete."
 
 # Clean build artifacts
 clean:
-    rm -rf {{build_dir}} {{install_dir}} {{log_dir}}
+    rm -rf {{build_dir}} {{install_dir}} log
 
 # === Run Autoware Builtin NDT ===
 
@@ -56,22 +49,22 @@ run:
     set -eo pipefail
     cd {{project_root}}
     ./scripts/run_demo.sh \
-        "$(realpath {{sample_map_dir}})" \
-        "$(realpath {{sample_rosbag}})" \
-        "{{rosbag_output_dir}}"
+        "$(realpath data/sample-map)" \
+        "$(realpath data/sample-rosbag-fixed)" \
+        "rosbag"
 
 # Run Autoware with per-iteration debug output (requires build first)
 run-debug:
     #!/usr/bin/env bash
     set -eo pipefail
     cd {{project_root}}
-    mkdir -p {{logs_dir}}
+    mkdir -p logs
     NDT_DEBUG=1 \
-    NDT_DEBUG_FILE={{logs_dir}}/ndt_autoware_debug.jsonl \
+    NDT_DEBUG_FILE=logs/ndt_autoware_debug.jsonl \
         ./scripts/run_demo.sh \
-            "$(realpath {{sample_map_dir}})" \
-            "$(realpath {{sample_rosbag}})" \
-            "{{rosbag_output_dir}}"
+            "$(realpath data/sample-map)" \
+            "$(realpath data/sample-rosbag-fixed)" \
+            "rosbag"
 
 # === Debug Data Collection ===
 
@@ -80,17 +73,19 @@ dump-voxels:
     #!/usr/bin/env bash
     set -eo pipefail
     cd {{project_root}}
-    mkdir -p {{logs_dir}}
+    mkdir -p logs
     NDT_DUMP_VOXELS=1 \
-    NDT_DUMP_VOXELS_FILE={{logs_dir}}/ndt_autoware_voxels.json \
+    NDT_DUMP_VOXELS_FILE=logs/ndt_autoware_voxels.json \
         ./scripts/run_demo.sh \
-            "$(realpath {{sample_map_dir}})" \
-            "$(realpath {{sample_rosbag}})" \
-            "{{rosbag_output_dir}}"
+            "$(realpath data/sample-map)" \
+            "$(realpath data/sample-rosbag-fixed)" \
+            "rosbag"
 
 # Analyze Autoware debug output
 analyze-debug:
-    python3 {{project_root}}/tmp/analyze_debug.py {{logs_dir}}/ndt_autoware_debug.jsonl
+    #!/usr/bin/env bash
+    cd {{project_root}}
+    python3 tmp/analyze_debug.py logs/ndt_autoware_debug.jsonl
 
 # === Submodule Management ===
 

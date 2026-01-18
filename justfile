@@ -7,19 +7,10 @@ manifest := "Cargo.toml"
 # Paths for testing
 autoware_setup := "external/autoware_repo/install/setup.bash"
 local_setup := "install/setup.bash"
-sample_map_dir := "data/sample-map-rosbag"
+sample_map_dir := "data/sample-map"
 sample_rosbag := "data/sample-rosbag-fixed"
 rosbag_output_dir := "rosbag"
 ground_truth_dir := "tests/fixtures/ground_truth"
-
-# NDT output/debug topics to record
-ndt_output_topics := "/localization/pose_estimator/pose /localization/pose_estimator/pose_with_covariance /localization/pose_estimator/ndt_marker /localization/pose_estimator/points_aligned /localization/pose_estimator/monte_carlo_initial_pose_marker /localization/pose_estimator/transform_probability /localization/pose_estimator/nearest_voxel_transformation_likelihood /localization/pose_estimator/iteration_num /localization/pose_estimator/exe_time_ms /localization/pose_estimator/initial_pose_with_covariance /localization/pose_estimator/initial_to_result_distance /localization/pose_estimator/initial_to_result_relative_pose"
-
-# NDT input topics (for debugging)
-ndt_input_topics := "/localization/pose_twist_fusion_filter/biased_pose_with_covariance /localization/util/downsample/pointcloud"
-
-# All NDT topics (input + output)
-ndt_topics := ndt_output_topics + " " + ndt_input_topics
 
 # Show available recipes
 default:
@@ -29,7 +20,11 @@ default:
 build:
     #!/usr/bin/env bash
     source {{autoware_setup}}
-    colcon build --base-paths src --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --cargo-args --release
+    colcon build \
+        --base-paths src \
+        --symlink-install \
+        --cmake-args -DCMAKE_BUILD_TYPE=Release \
+        --cargo-args --release
 
 # Clean all build artifacts
 clean:
@@ -72,14 +67,22 @@ test-rust:
     #!/usr/bin/env bash
     source {{local_setup}}
     # Note: --test-threads=2 needed to avoid CubeCL GPU state race conditions
-    cargo test --manifest-path {{manifest}} --config {{cargo_config}} --all-targets -- --test-threads=2
+    cargo test \
+        --manifest-path {{manifest}} \
+        --config {{cargo_config}} \
+        --all-targets \
+        -- --test-threads=2
 
 # Test ndt_cuda crate only
 test-ndt-cuda:
     #!/usr/bin/env bash
     source {{local_setup}}
     # Note: --test-threads=2 needed to avoid CubeCL GPU state race conditions
-    cargo test --manifest-path {{manifest}} --config {{cargo_config}} -p ndt_cuda -- --test-threads=2
+    cargo test \
+        --manifest-path {{manifest}} \
+        --config {{cargo_config}} \
+        -p ndt_cuda \
+        -- --test-threads=2
 
 # Test cuda_ffi crate only
 test-cuda-ffi:
@@ -144,7 +147,10 @@ refresh-ground-truth: ensure-sample-data
     #!/usr/bin/env bash
     set -eo pipefail
     echo "Refreshing ground truth data..."
-    rm -rf "{{ground_truth_dir}}/rosbag" "{{ground_truth_dir}}/debug.jsonl" "{{ground_truth_dir}}/metadata.json"
+    rm -rf \
+        "{{ground_truth_dir}}/rosbag" \
+        "{{ground_truth_dir}}/debug.jsonl" \
+        "{{ground_truth_dir}}/metadata.json"
     ./scripts/collect_ground_truth.sh
 
 # Run all quality checks (lint + test)
@@ -160,13 +166,16 @@ play-rosbag:
     source {{autoware_setup}}
     ros2 bag play -l $(realpath {{sample_rosbag}})
 
-# Start Autoware builtin NDT demo (simulation + rosbag + recording)
+# Start Autoware builtin NDT demo (delegates to tests/comparison)
 run-builtin:
-    ./scripts/run_demo.sh "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
+    cd tests/comparison && just run
 
 # Start CUDA NDT demo (simulation + rosbag + recording)
 run-cuda:
-    ./scripts/run_demo.sh --cuda "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
+    ./scripts/run_demo.sh --cuda \
+        "$(realpath {{sample_map_dir}})" \
+        "$(realpath {{sample_rosbag}})" \
+        "{{rosbag_output_dir}}"
 
 # Enable NDT matching via service call
 enable-ndt:
@@ -207,7 +216,21 @@ analyze-profile dir:
 
 # Run CUDA NDT in CPU mode (for comparison)
 run-cuda-cpu:
-    NDT_USE_GPU=0 ./scripts/run_demo.sh --cuda "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
+    NDT_USE_GPU=0 \
+        ./scripts/run_demo.sh --cuda \
+        "$(realpath {{sample_map_dir}})" \
+        "$(realpath {{sample_rosbag}})" \
+        "{{rosbag_output_dir}}"
+
+# === Comparison Testing ===
+
+# Build patched Autoware for comparison (required for debug output)
+build-comparison:
+    cd tests/comparison && just build
+
+# Clean comparison build artifacts
+clean-comparison:
+    cd tests/comparison && just clean
 
 # === Debug Data Collection ===
 
@@ -217,30 +240,36 @@ logs_dir := "logs"
 # Run CUDA with per-iteration debug output
 run-cuda-debug:
     mkdir -p {{logs_dir}}
-    NDT_DEBUG=1 NDT_DEBUG_FILE={{logs_dir}}/ndt_cuda_debug.jsonl \
-        ./scripts/run_demo.sh --cuda "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
+    NDT_DEBUG=1 \
+    NDT_DEBUG_FILE={{logs_dir}}/ndt_cuda_debug.jsonl \
+        ./scripts/run_demo.sh --cuda \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}"
 
-# Run Autoware with per-iteration debug output
+# Run Autoware with per-iteration debug output (requires build-comparison first)
 run-builtin-debug:
-    mkdir -p {{logs_dir}}
-    NDT_DEBUG=1 NDT_DEBUG_FILE={{logs_dir}}/ndt_autoware_debug.jsonl \
-        ./scripts/run_demo.sh "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
+    cd tests/comparison && just run-debug
 
 # Dump voxel grid data for comparison (CUDA)
 dump-voxels-cuda:
     mkdir -p {{logs_dir}}
-    NDT_DUMP_VOXELS=1 NDT_DUMP_VOXELS_FILE={{logs_dir}}/ndt_cuda_voxels.json \
-        ./scripts/run_demo.sh --cuda "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
+    NDT_DUMP_VOXELS=1 \
+    NDT_DUMP_VOXELS_FILE={{logs_dir}}/ndt_cuda_voxels.json \
+        ./scripts/run_demo.sh --cuda \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}"
 
-# Dump voxel grid data for comparison (Autoware)
+# Dump voxel grid data for comparison (Autoware, requires build-comparison first)
 dump-voxels-autoware:
-    mkdir -p {{logs_dir}}
-    NDT_DUMP_VOXELS=1 NDT_DUMP_VOXELS_FILE={{logs_dir}}/ndt_autoware_voxels.json \
-        ./scripts/run_demo.sh "$(realpath {{sample_map_dir}})" "$(realpath {{sample_rosbag}})" "{{rosbag_output_dir}}" {{ndt_topics}}
+    cd tests/comparison && just dump-voxels
 
 # Compare voxel grids between CUDA and Autoware
 compare-voxels:
-    python3 tmp/compare_voxels.py {{logs_dir}}/ndt_cuda_voxels.json {{logs_dir}}/ndt_autoware_voxels.json
+    python3 tmp/compare_voxels.py \
+        {{logs_dir}}/ndt_cuda_voxels.json \
+        {{logs_dir}}/ndt_autoware_voxels.json
 
 # === Debug Analysis ===
 
@@ -250,7 +279,7 @@ analyze-debug-cuda:
 
 # Analyze Autoware debug output
 analyze-debug-autoware:
-    python3 tmp/analyze_debug.py {{logs_dir}}/ndt_autoware_debug.jsonl
+    cd tests/comparison && just analyze-debug
 
 # Analyze debug output from a specific file
 analyze-debug file:
