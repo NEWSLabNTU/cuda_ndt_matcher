@@ -33,6 +33,7 @@ fn main() {
         "csrc/voxel_hash.cu",
         "csrc/persistent_ndt.cu",
         "csrc/batch_persistent_ndt.cu",
+        "csrc/async_stream.cu",
     ];
 
     for source in &cuda_sources {
@@ -56,6 +57,7 @@ fn main() {
     println!("cargo:rustc-link-lib=static=voxel_hash");
     println!("cargo:rustc-link-lib=static=persistent_ndt");
     println!("cargo:rustc-link-lib=static=batch_persistent_ndt");
+    println!("cargo:rustc-link-lib=static=async_stream");
 
     // Rerun if CUDA sources change
     for source in &cuda_sources {

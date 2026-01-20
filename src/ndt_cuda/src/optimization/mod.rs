@@ -8,6 +8,7 @@
 //!
 //! Based on Magnusson 2009, Chapter 6.
 
+pub mod async_pipeline;
 pub mod batch_pipeline;
 pub mod debug;
 pub mod full_gpu_pipeline_v2;
@@ -48,3 +49,6 @@ pub use types::{ConvergenceStatus, NdtConfig, NdtResult};
 pub use batch_pipeline::{
     AlignmentRequest, BatchAlignmentResult, BatchGpuPipeline, BatchPipelineConfig,
 };
+
+// Async batch pipeline with double buffering (Phase 23.1)
+pub use async_pipeline::AsyncBatchPipeline;

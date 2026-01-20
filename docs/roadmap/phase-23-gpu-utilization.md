@@ -125,7 +125,7 @@ This phase focuses on improving GPU utilization and reducing per-iteration laten
 
 ### Phase 23.1: Async Streams + Double Buffering
 
-**Status:** Not Started
+**Status:** ✅ Complete
 
 **Files:**
 - `src/cuda_ffi/src/async_batch.rs` (new)

@@ -21,6 +21,7 @@
 //! let segments = detector.detect_segments(&sorted_keys)?;
 //! ```
 
+pub mod async_stream;
 pub mod batch_persistent_ndt;
 pub mod batched_solve;
 pub mod persistent_ndt;
@@ -55,9 +56,15 @@ pub use voxel_hash::{
 // Batch persistent NDT kernel (parallel multi-scan alignment)
 pub use batch_persistent_ndt::{
     batch_ndt_blocks_per_slot, batch_ndt_reduce_buffer_size, batch_ndt_total_blocks,
-    batch_persistent_ndt_init_barriers_raw, batch_persistent_ndt_launch_raw,
-    batch_persistent_ndt_sync_raw, batch_reduce_buffer_size, batch_shared_mem_size,
-    BatchPersistentNdt,
+    batch_persistent_ndt_init_barriers_async_raw, batch_persistent_ndt_init_barriers_raw,
+    batch_persistent_ndt_launch_async_raw, batch_persistent_ndt_launch_raw,
+    batch_persistent_ndt_stream_sync_raw, batch_persistent_ndt_sync_raw, batch_reduce_buffer_size,
+    batch_shared_mem_size, BatchPersistentNdt,
+};
+
+// Async stream utilities (pinned memory, streams, events)
+pub use async_stream::{
+    AsyncDeviceBuffer, CudaEvent, CudaStream, PinnedBuffer, RawCudaEvent, RawCudaStream,
 };
 
 /// Device-to-device memory copy using CUDA.
