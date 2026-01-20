@@ -77,6 +77,87 @@ __constant__ int8_t BATCH_NEIGHBOR_OFFSETS[27][3] = {
 };
 
 // ============================================================================
+// Texture-enabled helper functions
+// ============================================================================
+
+// Read voxel mean from texture memory
+__device__ __forceinline__ void tex_read_voxel_mean(
+    cudaTextureObject_t tex_means,
+    int32_t vidx,
+    float* mean_out
+) {
+    mean_out[0] = tex1Dfetch<float>(tex_means, vidx * 3 + 0);
+    mean_out[1] = tex1Dfetch<float>(tex_means, vidx * 3 + 1);
+    mean_out[2] = tex1Dfetch<float>(tex_means, vidx * 3 + 2);
+}
+
+// Read voxel inverse covariance from texture memory
+__device__ __forceinline__ void tex_read_voxel_inv_cov(
+    cudaTextureObject_t tex_inv_covs,
+    int32_t vidx,
+    float* inv_cov_out
+) {
+    #pragma unroll
+    for (int i = 0; i < 9; i++) {
+        inv_cov_out[i] = tex1Dfetch<float>(tex_inv_covs, vidx * 9 + i);
+    }
+}
+
+// Texture-enabled hash query
+__device__ __forceinline__ int batch_hash_query_textured(
+    float qx, float qy, float qz,
+    const BatchHashEntry* hash_table,
+    uint32_t capacity,
+    float inv_resolution,
+    float radius_sq,
+    cudaTextureObject_t tex_voxel_means,
+    int32_t* neighbor_indices
+) {
+    int32_t gx = batch_pos_to_grid(qx, inv_resolution);
+    int32_t gy = batch_pos_to_grid(qy, inv_resolution);
+    int32_t gz = batch_pos_to_grid(qz, inv_resolution);
+
+    int count = 0;
+
+    for (uint32_t n = 0; n < 27 && count < MAX_NEIGHBORS; n++) {
+        int32_t nx = gx + BATCH_NEIGHBOR_OFFSETS[n][0];
+        int32_t ny = gy + BATCH_NEIGHBOR_OFFSETS[n][1];
+        int32_t nz = gz + BATCH_NEIGHBOR_OFFSETS[n][2];
+
+        int64_t key = batch_pack_key(nx, ny, nz);
+        uint32_t slot = batch_hash_key(key, capacity);
+
+        for (uint32_t i = 0; i < capacity && count < MAX_NEIGHBORS; i++) {
+            uint32_t probe_slot = (slot + i) % capacity;
+            int64_t stored_key = hash_table[probe_slot].key;
+
+            if (stored_key == BATCH_EMPTY_SLOT) break;
+
+            if (stored_key == key) {
+                int32_t voxel_idx = hash_table[probe_slot].value;
+
+                // Read mean from texture
+                float mx = tex1Dfetch<float>(tex_voxel_means, voxel_idx * 3 + 0);
+                float my = tex1Dfetch<float>(tex_voxel_means, voxel_idx * 3 + 1);
+                float mz = tex1Dfetch<float>(tex_voxel_means, voxel_idx * 3 + 2);
+
+                float dx = qx - mx;
+                float dy = qy - my;
+                float dz = qz - mz;
+                float dist_sq = dx * dx + dy * dy + dz * dz;
+
+                if (dist_sq <= radius_sq) {
+                    neighbor_indices[count++] = voxel_idx;
+                }
+                break;
+            }
+        }
+    }
+
+    return count;
+}
+
+// ============================================================================
 // Hash query (inline, same as persistent_ndt.cu)
 // ============================================================================
 
@@ -868,6 +949,667 @@ __global__ void batch_persistent_ndt_kernel(
 }
 
 // ============================================================================
+// Texture-enabled Batch Persistent NDT Kernel
+// ============================================================================
+
+__global__ void batch_persistent_ndt_kernel_textured(
+    // Texture objects for voxel data (read via texture cache)
+    cudaTextureObject_t tex_voxel_means,
+    cudaTextureObject_t tex_voxel_inv_covs,
+
+    // Hash table (still raw pointer - not worth texturing)
+    const BatchHashEntry* __restrict__ hash_table,
+    uint32_t hash_capacity,
+    float gauss_d1,
+    float gauss_d2,
+    float resolution,
+
+    // Per-slot input data
+    const float* __restrict__ all_source_points,
+    const float* __restrict__ all_initial_poses,
+    const int* __restrict__ points_per_slot,
+
+    // Per-slot working memory
+    float* __restrict__ all_reduce_buffers,
+    int* __restrict__ barrier_counters,
+    int* __restrict__ barrier_senses,
+
+    // Per-slot outputs
+    float* __restrict__ all_out_poses,
+    int* __restrict__ all_out_iterations,
+    uint32_t* __restrict__ all_out_converged,
+    float* __restrict__ all_out_scores,
+    float* __restrict__ all_out_hessians,
+    uint32_t* __restrict__ all_out_correspondences,
+    uint32_t* __restrict__ all_out_oscillations,
+    float* __restrict__ all_out_alpha_sums,
+
+    // Control parameters
+    int num_slots,
+    int blocks_per_slot,
+    int max_points_per_slot,
+    int max_iterations,
+    float epsilon_sq,
+
+    // Line search parameters
+    int ls_enabled,
+    int ls_num_candidates,
+    float ls_mu,
+    float ls_nu,
+    float fixed_step_size,
+
+    // Regularization parameters
+    const float* __restrict__ reg_ref_x,
+    const float* __restrict__ reg_ref_y,
+    float reg_scale,
+    int reg_enabled
+) {
+    // ========================================================================
+    // Determine slot assignment
+    // ========================================================================
+
+    int slot_id = blockIdx.x / blocks_per_slot;
+    int local_block_id = blockIdx.x % blocks_per_slot;
+
+    if (slot_id >= num_slots) return;
+
+    // ========================================================================
+    // Get per-slot pointers
+    // ========================================================================
+
+    int num_points = points_per_slot[slot_id];
+    const float* source_points = all_source_points + slot_id * max_points_per_slot * 3;
+    float* reduce_buffer = all_reduce_buffers + slot_id * BATCH_REDUCE_BUFFER_SIZE;
+    volatile int* my_barrier_counter = &barrier_counters[slot_id];
+    volatile int* my_barrier_sense = &barrier_senses[slot_id];
+
+    float my_reg_ref_x = reg_enabled && reg_ref_x ? reg_ref_x[slot_id] : 0.0f;
+    float my_reg_ref_y = reg_enabled && reg_ref_y ? reg_ref_y[slot_id] : 0.0f;
+
+    // ========================================================================
+    // Shared memory for block-level reduction
+    // ========================================================================
+
+    extern __shared__ float smem[];
+    float* partial_sums = smem;
+
+    // ========================================================================
+    // Reduce buffer layout (same as non-textured version)
+    // ========================================================================
+
+    float* g_converged = &reduce_buffer[29];
+    float* g_pose = &reduce_buffer[30];
+    float* g_delta = &reduce_buffer[36];
+    float* g_final_score = &reduce_buffer[42];
+    float* g_total_corr = &reduce_buffer[43];
+    float* g_prev_prev_pos = &reduce_buffer[44];
+    float* g_prev_pos = &reduce_buffer[47];
+    float* g_curr_osc_count = &reduce_buffer[50];
+    float* g_max_osc_count = &reduce_buffer[51];
+    float* g_phi_candidates = &reduce_buffer[52];
+    float* g_dphi_candidates = &reduce_buffer[60];
+    float* g_alpha_candidates = &reduce_buffer[68];
+    float* g_original_pose = &reduce_buffer[76];
+    float* g_phi_0 = &reduce_buffer[82];
+    float* g_dphi_0 = &reduce_buffer[83];
+    float* g_best_alpha = &reduce_buffer[84];
+    float* g_ls_early_term = &reduce_buffer[85];
+    float* g_alpha_sum = &reduce_buffer[86];
+    float* g_cand_scores = &reduce_buffer[96];
+    float* g_cand_corr = &reduce_buffer[104];
+    float* g_cand_grads = &reduce_buffer[112];
+
+    // ========================================================================
+    // Initialize state (only first block in slot, thread 0)
+    // ========================================================================
+
+    if (local_block_id == 0 && threadIdx.x == 0) {
+        const float* initial_pose = all_initial_poses + slot_id * 6;
+        for (int i = 0; i < 6; i++) {
+            g_pose[i] = initial_pose[i];
+        }
+        *g_converged = 0.0f;
+        *g_final_score = 0.0f;
+        *g_total_corr = 0.0f;
+
+        g_prev_prev_pos[0] = initial_pose[0];
+        g_prev_prev_pos[1] = initial_pose[1];
+        g_prev_prev_pos[2] = initial_pose[2];
+        g_prev_pos[0] = initial_pose[0];
+        g_prev_pos[1] = initial_pose[1];
+        g_prev_pos[2] = initial_pose[2];
+        *g_curr_osc_count = 0.0f;
+        *g_max_osc_count = 0.0f;
+        *g_alpha_sum = 0.0f;
+
+        for (int i = 0; i < BATCH_REDUCE_SIZE; i++) {
+            reduce_buffer[i] = 0.0f;
+        }
+    }
+
+    slot_barrier(my_barrier_counter, my_barrier_sense, blocks_per_slot);
+
+    // ========================================================================
+    // Pre-computed constants
+    // ========================================================================
+
+    float inv_resolution = 1.0f / resolution;
+    float radius_sq = resolution * resolution;
+
+    // ========================================================================
+    // Newton iteration loop
+    // ========================================================================
+
+    int iter;
+    for (iter = 0; iter < max_iterations; iter++) {
+
+        // --------------------------------------------------------------------
+        // PHASE A: Per-point computation (texture reads)
+        // --------------------------------------------------------------------
+
+        uint32_t slot_tid = local_block_id * blockDim.x + threadIdx.x;
+
+        float my_score = 0.0f;
+        float my_grad[6] = {0};
+        float my_hess[21] = {0};
+        float my_correspondences = 0.0f;
+
+        if (slot_tid < (uint32_t)num_points) {
+            float px = source_points[slot_tid * 3 + 0];
+            float py = source_points[slot_tid * 3 + 1];
+            float pz = source_points[slot_tid * 3 + 2];
+
+            float sr, cr, sp, cp, sy, cy;
+            compute_sincos_inline(g_pose, &sr, &cr, &sp, &cp, &sy, &cy);
+
+            float T[16];
+            compute_transform_inline(g_pose, sr, cr, sp, cp, sy, cy, T);
+
+            float tx, ty, tz;
+            transform_point_inline(px, py, pz, T, &tx, &ty, &tz);
+
+            int32_t neighbor_indices[MAX_NEIGHBORS];
+            int num_neighbors = batch_hash_query_textured(
+                tx, ty, tz,
+                hash_table, hash_capacity, inv_resolution, radius_sq,
+                tex_voxel_means, neighbor_indices
+            );
+
+            float J[18];
+            compute_jacobians_inline(px, py, pz, sr, cr, sp, cp, sy, cy, J);
+
+            float pH[15];
+            compute_point_hessians_inline(px, py, pz, sr, cr, sp, cp, sy, cy, pH);
+
+            for (int n = 0; n < num_neighbors; n++) {
+                int32_t vidx = neighbor_indices[n];
+                if (vidx < 0) continue;
+
+                // Read voxel data from texture memory
+                float voxel_mean[3];
+                tex_read_voxel_mean(tex_voxel_means, vidx, voxel_mean);
+
+                float voxel_inv_cov[9];
+                tex_read_voxel_inv_cov(tex_voxel_inv_covs, vidx, voxel_inv_cov);
+
+                float score_contrib;
+                float grad_contrib[6];
+                float hess_contrib[21];
+
+                compute_ndt_contribution(
+                    tx, ty, tz,
+                    voxel_mean, voxel_inv_cov,
+                    J, pH,
+                    gauss_d1, gauss_d2,
+                    &score_contrib, grad_contrib, hess_contrib
+                );
+
+                my_score += score_contrib;
+                for (int i = 0; i < 6; i++) my_grad[i] += grad_contrib[i];
+                for (int i = 0; i < 21; i++) my_hess[i] += hess_contrib[i];
+                my_correspondences += 1.0f;
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // PHASE B: Block reduction (same as non-textured)
+        // --------------------------------------------------------------------
+
+        partial_sums[threadIdx.x * BATCH_REDUCE_SIZE + 0] = my_score;
+        for (int i = 0; i < 6; i++) {
+            partial_sums[threadIdx.x * BATCH_REDUCE_SIZE + 1 + i] = my_grad[i];
+        }
+        for (int i = 0; i < 21; i++) {
+            partial_sums[threadIdx.x * BATCH_REDUCE_SIZE + 7 + i] = my_hess[i];
+        }
+        partial_sums[threadIdx.x * BATCH_REDUCE_SIZE + 28] = my_correspondences;
+        __syncthreads();
+
+        for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+            if (threadIdx.x < stride) {
+                for (int i = 0; i < BATCH_REDUCE_SIZE; i++) {
+                    partial_sums[threadIdx.x * BATCH_REDUCE_SIZE + i] +=
+                        partial_sums[(threadIdx.x + stride) * BATCH_REDUCE_SIZE + i];
+                }
+            }
+            __syncthreads();
+        }
+
+        if (threadIdx.x == 0) {
+            for (int i = 0; i < BATCH_REDUCE_SIZE; i++) {
+                atomicAdd(&reduce_buffer[i], partial_sums[i]);
+            }
+        }
+
+        slot_barrier(my_barrier_counter, my_barrier_sense, blocks_per_slot);
+
+        // --------------------------------------------------------------------
+        // PHASE C: Newton solve (single thread per slot) - same as non-textured
+        // --------------------------------------------------------------------
+
+        if (local_block_id == 0 && threadIdx.x == 0) {
+            float score = reduce_buffer[0];
+            float correspondence_count = reduce_buffer[28];
+
+            *g_final_score = score;
+            *g_total_corr += correspondence_count;
+
+            float grad[6];
+            for (int i = 0; i < 6; i++) {
+                grad[i] = reduce_buffer[1 + i];
+            }
+
+            float H[36];
+            int ut_idx = 0;
+            for (int i = 0; i < 6; i++) {
+                for (int j = i; j < 6; j++) {
+                    float val = reduce_buffer[7 + ut_idx];
+                    H[i * 6 + j] = val;
+                    H[j * 6 + i] = val;
+                    ut_idx++;
+                }
+            }
+
+            float* out_hessian = all_out_hessians + slot_id * 36;
+            for (int i = 0; i < 36; i++) {
+                out_hessian[i] = H[i];
+            }
+
+            if (reg_enabled && correspondence_count > 0) {
+                float dx = my_reg_ref_x - g_pose[0];
+                float dy = my_reg_ref_y - g_pose[1];
+                float yaw = g_pose[5];
+                float sin_yaw = sinf(yaw);
+                float cos_yaw = cosf(yaw);
+                float longitudinal = dy * sin_yaw + dx * cos_yaw;
+                float weight = correspondence_count;
+                score += -reg_scale * weight * longitudinal * longitudinal;
+
+                grad[0] += reg_scale * weight * 2.0f * cos_yaw * longitudinal;
+                grad[1] += reg_scale * weight * 2.0f * sin_yaw * longitudinal;
+
+                float d2L_dx2 = 2.0f * reg_scale * weight * cos_yaw * cos_yaw;
+                float d2L_dy2 = 2.0f * reg_scale * weight * sin_yaw * sin_yaw;
+                float d2L_dxdy = 2.0f * reg_scale * weight * cos_yaw * sin_yaw;
+
+                H[0] += d2L_dx2;
+                H[7] += d2L_dy2;
+                H[1] += d2L_dxdy;
+                H[6] += d2L_dxdy;
+
+                *g_final_score = score;
+            }
+
+            double g_f64[6];
+            double H_f64[36];
+
+            for (int i = 0; i < 6; i++) {
+                g_f64[i] = (double)grad[i];
+            }
+
+            for (int i = 0; i < 36; i++) {
+                H_f64[i] = (double)H[i];
+            }
+
+            bool solve_success;
+            cholesky_solve_6x6_f64(H_f64, g_f64, &solve_success);
+
+            if (!solve_success || correspondence_count < 1.0f) {
+                *g_converged = 1.0f;
+            } else {
+                for (int i = 0; i < 6; i++) {
+                    g_delta[i] = (float)g_f64[i];
+                }
+
+                float delta_sq = 0.0f;
+                for (int i = 0; i < 6; i++) {
+                    delta_sq += g_delta[i] * g_delta[i];
+                }
+                if (delta_sq < epsilon_sq) {
+                    *g_converged = 1.0f;
+                }
+            }
+
+            if (ls_enabled && *g_converged < 0.5f) {
+                for (int i = 0; i < 6; i++) {
+                    g_original_pose[i] = g_pose[i];
+                }
+                *g_phi_0 = score;
+
+                float dphi_0 = 0.0f;
+                for (int i = 0; i < 6; i++) {
+                    dphi_0 += grad[i] * g_delta[i];
+                }
+                *g_dphi_0 = dphi_0;
+
+                float phi = 1.618033988749895f;
+                float alpha = 1.0f;
+                for (int k = 0; k < ls_num_candidates && k < BATCH_MAX_LS_CANDIDATES; k++) {
+                    g_alpha_candidates[k] = (k == 0) ? 1.0f : alpha;
+                    alpha /= phi;
+                }
+
+                *g_best_alpha = fixed_step_size;
+                *g_ls_early_term = 0.0f;
+            } else if (*g_converged < 0.5f) {
+                constexpr float STEP_MIN = 0.005f;
+                float delta_norm_sq = 0.0f;
+                for (int i = 0; i < 6; i++) {
+                    delta_norm_sq += g_delta[i] * g_delta[i];
+                }
+                float delta_norm = sqrtf(delta_norm_sq);
+                float step_length = delta_norm;
+                if (step_length > fixed_step_size) step_length = fixed_step_size;
+                if (step_length < STEP_MIN) step_length = STEP_MIN;
+
+                float scale = (delta_norm > 1e-10f) ? (step_length / delta_norm) : 0.0f;
+                for (int i = 0; i < 6; i++) {
+                    g_pose[i] += scale * g_delta[i];
+                }
+                *g_alpha_sum += step_length;
+            }
+
+            for (int i = 0; i < BATCH_REDUCE_SIZE; i++) {
+                reduce_buffer[i] = 0.0f;
+            }
+        }
+
+        slot_barrier(my_barrier_counter, my_barrier_sense, blocks_per_slot);
+
+        // --------------------------------------------------------------------
+        // PHASE C.2: Line search with texture reads
+        // --------------------------------------------------------------------
+
+        if (ls_enabled && *g_converged < 0.5f) {
+            int num_cands = (ls_num_candidates < BATCH_MAX_LS_CANDIDATES) ?
+                            ls_num_candidates : BATCH_MAX_LS_CANDIDATES;
+            int num_batches = (num_cands + BATCH_LS_BATCH_SIZE - 1) / BATCH_LS_BATCH_SIZE;
+
+            for (int batch = 0; batch < num_batches; batch++) {
+                int batch_start = batch * BATCH_LS_BATCH_SIZE;
+                int batch_end = batch_start + BATCH_LS_BATCH_SIZE;
+                if (batch_end > num_cands) batch_end = num_cands;
+                int batch_count = batch_end - batch_start;
+
+                if (local_block_id == 0 && threadIdx.x == 0) {
+                    for (int c = 0; c < batch_count; c++) {
+                        int cand_idx = batch_start + c;
+                        g_cand_scores[cand_idx] = 0.0f;
+                        g_cand_corr[cand_idx] = 0.0f;
+                        for (int i = 0; i < 6; i++) {
+                            g_cand_grads[cand_idx * 6 + i] = 0.0f;
+                        }
+                    }
+                }
+                slot_barrier(my_barrier_counter, my_barrier_sense, blocks_per_slot);
+
+                float my_batch_scores[BATCH_LS_BATCH_SIZE] = {0};
+                float my_batch_grads[BATCH_LS_BATCH_SIZE * 6] = {0};
+                float my_batch_corr[BATCH_LS_BATCH_SIZE] = {0};
+
+                if (slot_tid < (uint32_t)num_points) {
+                    float px = source_points[slot_tid * 3 + 0];
+                    float py = source_points[slot_tid * 3 + 1];
+                    float pz = source_points[slot_tid * 3 + 2];
+
+                    for (int c = 0; c < batch_count; c++) {
+                        int cand_idx = batch_start + c;
+                        float alpha = g_alpha_candidates[cand_idx];
+
+                        float trial_pose[6];
+                        for (int i = 0; i < 6; i++) {
+                            trial_pose[i] = g_original_pose[i] + alpha * g_delta[i];
+                        }
+
+                        float sr, cr, sp, cp, sy, cy;
+                        compute_sincos_inline(trial_pose, &sr, &cr, &sp, &cp, &sy, &cy);
+
+                        float T[16];
+                        compute_transform_inline(trial_pose, sr, cr, sp, cp, sy, cy, T);
+
+                        float tx, ty, tz;
+                        transform_point_inline(px, py, pz, T, &tx, &ty, &tz);
+
+                        int32_t neighbor_indices[MAX_NEIGHBORS];
+                        int num_neighbors = batch_hash_query_textured(
+                            tx, ty, tz,
+                            hash_table, hash_capacity, inv_resolution, radius_sq,
+                            tex_voxel_means, neighbor_indices
+                        );
+
+                        float J[18];
+                        compute_jacobians_inline(px, py, pz, sr, cr, sp, cp, sy, cy, J);
+
+                        for (int n = 0; n < num_neighbors; n++) {
+                            int32_t vidx = neighbor_indices[n];
+                            if (vidx < 0) continue;
+
+                            // Read voxel data from texture memory
+                            float voxel_mean[3];
+                            tex_read_voxel_mean(tex_voxel_means, vidx, voxel_mean);
+
+                            float voxel_inv_cov[9];
+                            tex_read_voxel_inv_cov(tex_voxel_inv_covs, vidx, voxel_inv_cov);
+
+                            float dx = tx - voxel_mean[0];
+                            float dy = ty - voxel_mean[1];
+                            float dz = tz - voxel_mean[2];
+
+                            float Sd_0 = voxel_inv_cov[0] * dx + voxel_inv_cov[1] * dy + voxel_inv_cov[2] * dz;
+                            float Sd_1 = voxel_inv_cov[3] * dx + voxel_inv_cov[4] * dy + voxel_inv_cov[5] * dz;
+                            float Sd_2 = voxel_inv_cov[6] * dx + voxel_inv_cov[7] * dy + voxel_inv_cov[8] * dz;
+
+                            float dSd = dx * Sd_0 + dy * Sd_1 + dz * Sd_2;
+                            float exp_val = expf(-gauss_d2 * 0.5f * dSd);
+                            my_batch_scores[c] += -gauss_d1 * exp_val;
+
+                            float scale = gauss_d1 * gauss_d2 * exp_val;
+                            for (int j = 0; j < 6; j++) {
+                                float Jt_Sd = J[j * 3 + 0] * Sd_0 + J[j * 3 + 1] * Sd_1 + J[j * 3 + 2] * Sd_2;
+                                my_batch_grads[c * 6 + j] += scale * Jt_Sd;
+                            }
+                            my_batch_corr[c] += 1.0f;
+                        }
+                    }
+                }
+
+                constexpr int LS_VALUES_PER_CAND = 8;
+                for (int c = 0; c < batch_count; c++) {
+                    partial_sums[threadIdx.x * LS_VALUES_PER_CAND + 0] = my_batch_scores[c];
+                    for (int i = 0; i < 6; i++) {
+                        partial_sums[threadIdx.x * LS_VALUES_PER_CAND + 1 + i] = my_batch_grads[c * 6 + i];
+                    }
+                    partial_sums[threadIdx.x * LS_VALUES_PER_CAND + 7] = my_batch_corr[c];
+                    __syncthreads();
+
+                    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+                        if (threadIdx.x < stride) {
+                            for (int i = 0; i < LS_VALUES_PER_CAND; i++) {
+                                partial_sums[threadIdx.x * LS_VALUES_PER_CAND + i] +=
+                                    partial_sums[(threadIdx.x + stride) * LS_VALUES_PER_CAND + i];
+                            }
+                        }
+                        __syncthreads();
+                    }
+
+                    if (threadIdx.x == 0) {
+                        int cand_idx = batch_start + c;
+                        atomicAdd(&g_cand_scores[cand_idx], partial_sums[0]);
+                        for (int i = 0; i < 6; i++) {
+                            atomicAdd(&g_cand_grads[cand_idx * 6 + i], partial_sums[1 + i]);
+                        }
+                        atomicAdd(&g_cand_corr[cand_idx], partial_sums[7]);
+                    }
+                    __syncthreads();
+                }
+
+                slot_barrier(my_barrier_counter, my_barrier_sense, blocks_per_slot);
+
+                if (local_block_id == 0 && threadIdx.x == 0) {
+                    for (int c = 0; c < batch_count; c++) {
+                        int cand_idx = batch_start + c;
+                        float phi_k = g_cand_scores[cand_idx];
+                        float alpha = g_alpha_candidates[cand_idx];
+
+                        float trial_pose[6];
+                        for (int i = 0; i < 6; i++) {
+                            trial_pose[i] = g_original_pose[i] + alpha * g_delta[i];
+                        }
+
+                        float grad[6];
+                        for (int i = 0; i < 6; i++) {
+                            grad[i] = g_cand_grads[cand_idx * 6 + i];
+                        }
+
+                        if (reg_enabled) {
+                            float corr = g_cand_corr[cand_idx];
+                            float dx = my_reg_ref_x - trial_pose[0];
+                            float dy = my_reg_ref_y - trial_pose[1];
+                            float yaw = trial_pose[5];
+                            float sin_yaw = sinf(yaw);
+                            float cos_yaw = cosf(yaw);
+                            float longitudinal = dy * sin_yaw + dx * cos_yaw;
+                            float weight = corr;
+                            phi_k += -reg_scale * weight * longitudinal * longitudinal;
+                            grad[0] += reg_scale * weight * 2.0f * cos_yaw * longitudinal;
+                            grad[1] += reg_scale * weight * 2.0f * sin_yaw * longitudinal;
+                        }
+
+                        g_phi_candidates[cand_idx] = phi_k;
+
+                        float dphi_k = 0.0f;
+                        for (int i = 0; i < 6; i++) {
+                            dphi_k += grad[i] * g_delta[i];
+                        }
+                        g_dphi_candidates[cand_idx] = dphi_k;
+
+                        bool armijo = phi_k >= *g_phi_0 + ls_mu * alpha * (*g_dphi_0);
+                        bool curvature = fabsf(dphi_k) <= ls_nu * fabsf(*g_dphi_0);
+
+                        if (armijo && curvature) {
+                            *g_best_alpha = alpha;
+                            *g_ls_early_term = 1.0f;
+                            break;
+                        }
+                    }
+                }
+
+                slot_barrier(my_barrier_counter, my_barrier_sense, blocks_per_slot);
+
+                if (*g_ls_early_term > 0.5f) break;
+            }
+
+            if (local_block_id == 0 && threadIdx.x == 0) {
+                if (*g_ls_early_term < 0.5f) {
+                    float best_phi = *g_phi_0;
+                    float best_alpha_val = 0.0f;
+                    int num_cands_mt = (ls_num_candidates < BATCH_MAX_LS_CANDIDATES) ?
+                                       ls_num_candidates : BATCH_MAX_LS_CANDIDATES;
+                    for (int k = 0; k < num_cands_mt; k++) {
+                        if (g_phi_candidates[k] > best_phi) {
+                            best_phi = g_phi_candidates[k];
+                            best_alpha_val = g_alpha_candidates[k];
+                        }
+                    }
+                    *g_best_alpha = best_alpha_val;
+                }
+
+                float alpha = *g_best_alpha;
+                for (int i = 0; i < 6; i++) {
+                    g_pose[i] = g_original_pose[i] + alpha * g_delta[i];
+                }
+                *g_alpha_sum += alpha;
+            }
+
+            slot_barrier(my_barrier_counter, my_barrier_sense, blocks_per_slot);
+        }
+
+        // --------------------------------------------------------------------
+        // PHASE C.3: Oscillation detection and convergence
+        // --------------------------------------------------------------------
+
+        if (local_block_id == 0 && threadIdx.x == 0) {
+            if (iter >= 1) {
+                float curr_x = g_pose[0];
+                float curr_y = g_pose[1];
+                float curr_z = g_pose[2];
+
+                float curr_vec_x = curr_x - g_prev_pos[0];
+                float curr_vec_y = curr_y - g_prev_pos[1];
+                float curr_vec_z = curr_z - g_prev_pos[2];
+
+                float prev_vec_x = g_prev_pos[0] - g_prev_prev_pos[0];
+                float prev_vec_y = g_prev_pos[1] - g_prev_prev_pos[1];
+                float prev_vec_z = g_prev_pos[2] - g_prev_prev_pos[2];
+
+                float dot_product = curr_vec_x * prev_vec_x + curr_vec_y * prev_vec_y + curr_vec_z * prev_vec_z;
+
+                if (dot_product < 0.0f) {
+                    *g_curr_osc_count += 1.0f;
+                    if (*g_curr_osc_count > *g_max_osc_count) {
+                        *g_max_osc_count = *g_curr_osc_count;
+                    }
+                } else {
+                    *g_curr_osc_count = 0.0f;
+                }
+            }
+
+            g_prev_prev_pos[0] = g_prev_pos[0];
+            g_prev_prev_pos[1] = g_prev_pos[1];
+            g_prev_prev_pos[2] = g_prev_pos[2];
+            g_prev_pos[0] = g_pose[0];
+            g_prev_pos[1] = g_pose[1];
+            g_prev_pos[2] = g_pose[2];
+
+            for (int i = 0; i < BATCH_REDUCE_SIZE; i++) {
+                reduce_buffer[i] = 0.0f;
+            }
+        }
+
+        slot_barrier(my_barrier_counter, my_barrier_sense, blocks_per_slot);
+
+        if (*g_converged > 0.5f) break;
+    }
+
+    // ========================================================================
+    // Write final outputs
+    // ========================================================================
+
+    if (local_block_id == 0 && threadIdx.x == 0) {
+        float* out_pose = all_out_poses + slot_id * 6;
+        for (int i = 0; i < 6; i++) {
+            out_pose[i] = g_pose[i];
+        }
+        all_out_iterations[slot_id] = iter + 1;
+        all_out_converged[slot_id] = (*g_converged > 0.5f) ? 1 : 0;
+        all_out_scores[slot_id] = *g_final_score;
+        all_out_correspondences[slot_id] = (uint32_t)(*g_total_corr);
+        all_out_oscillations[slot_id] = (uint32_t)(*g_max_osc_count);
+        all_out_alpha_sums[slot_id] = *g_alpha_sum;
+    }
+}
+
+// ============================================================================
 // Host API
 // ============================================================================
 
@@ -1055,6 +1797,87 @@ CudaError batch_persistent_ndt_launch_async(
 /// Synchronize a specific stream (wait for stream completion)
 CudaError batch_persistent_ndt_stream_sync(cudaStream_t stream) {
     return cudaStreamSynchronize(stream);
+}
+
+/// Launch batch persistent NDT kernel with texture memory for voxel data
+///
+/// This version uses texture objects for voxel_means and voxel_inv_covs,
+/// which may provide better cache performance for scattered reads.
+int batch_persistent_ndt_launch_with_textures(
+    // Texture objects (instead of raw pointers)
+    cudaTextureObject_t tex_voxel_means,
+    cudaTextureObject_t tex_voxel_inv_covs,
+
+    // Hash table (still raw pointer - not worth texturing)
+    const void* hash_table,
+    uint32_t hash_capacity,
+    float gauss_d1,
+    float gauss_d2,
+    float resolution,
+
+    // Per-slot input (same as before)
+    const float* all_source_points,
+    const float* all_initial_poses,
+    const int* points_per_slot,
+
+    // Per-slot working memory
+    float* all_reduce_buffers,
+    int* barrier_counters,
+    int* barrier_senses,
+
+    // Per-slot outputs
+    float* all_out_poses,
+    int* all_out_iterations,
+    uint32_t* all_out_converged,
+    float* all_out_scores,
+    float* all_out_hessians,
+    uint32_t* all_out_correspondences,
+    uint32_t* all_out_oscillations,
+    float* all_out_alpha_sums,
+
+    // Control
+    int num_slots,
+    int blocks_per_slot,
+    int max_points_per_slot,
+    int max_iterations,
+    float epsilon,
+
+    // Line search
+    int ls_enabled,
+    int ls_num_candidates,
+    float ls_mu,
+    float ls_nu,
+    float fixed_step_size,
+
+    // Regularization
+    const float* reg_ref_x,
+    const float* reg_ref_y,
+    float reg_scale,
+    int reg_enabled,
+
+    // Stream
+    cudaStream_t stream
+) {
+    int total_blocks = num_slots * blocks_per_slot;
+    size_t shared_mem = BATCH_BLOCK_SIZE * BATCH_REDUCE_SIZE * sizeof(float);
+    float epsilon_sq = epsilon * epsilon;
+
+    batch_persistent_ndt_kernel_textured<<<total_blocks, BATCH_BLOCK_SIZE, shared_mem, stream>>>(
+        tex_voxel_means, tex_voxel_inv_covs,
+        (const BatchHashEntry*)hash_table, hash_capacity,
+        gauss_d1, gauss_d2, resolution,
+        all_source_points, all_initial_poses, points_per_slot,
+        all_reduce_buffers, barrier_counters, barrier_senses,
+        all_out_poses, all_out_iterations, all_out_converged,
+        all_out_scores, all_out_hessians,
+        all_out_correspondences, all_out_oscillations, all_out_alpha_sums,
+        num_slots, blocks_per_slot, max_points_per_slot,
+        max_iterations, epsilon_sq,
+        ls_enabled, ls_num_candidates, ls_mu, ls_nu, fixed_step_size,
+        reg_ref_x, reg_ref_y, reg_scale, reg_enabled
+    );
+
+    return cudaGetLastError();
 }
 
 } // extern "C"

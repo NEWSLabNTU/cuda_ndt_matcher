@@ -28,6 +28,7 @@ pub mod persistent_ndt;
 pub mod radix_sort;
 pub mod segment_detect;
 pub mod segmented_reduce;
+pub mod texture;
 pub mod voxel_hash;
 
 pub use batched_solve::{BatchedCholeskySolver, CusolverDnHandle, CusolverError};
@@ -65,6 +66,12 @@ pub use batch_persistent_ndt::{
 // Async stream utilities (pinned memory, streams, events)
 pub use async_stream::{
     AsyncDeviceBuffer, CudaEvent, CudaStream, PinnedBuffer, RawCudaEvent, RawCudaStream,
+};
+
+// Texture memory for voxel data
+pub use texture::{
+    batch_persistent_ndt_launch_textured_raw, texture_handle_size, CudaTextureObject, TextureError,
+    TexturedBatchNdtParams, VoxelInvCovsTexture, VoxelMeansTexture,
 };
 
 /// Device-to-device memory copy using CUDA.
