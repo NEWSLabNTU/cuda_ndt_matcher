@@ -47,6 +47,7 @@ use std_srvs::srv::{SetBool, Trigger};
 use tf2_msgs::msg::TFMessage;
 use tier4_debug_msgs::msg::{Float32Stamped, Int32Stamped};
 use tier4_localization_msgs::srv::PoseWithCovarianceStamped as PoseWithCovSrv;
+use visualization::ParticleMarkerConfig;
 use visualization_msgs::msg::{Marker, MarkerArray};
 
 // Type aliases
@@ -1595,114 +1596,6 @@ impl NdtScanMatcherNode {
         MarkerArray { markers }
     }
 
-    /// Create visualization markers for Monte Carlo particles.
-    ///
-    /// Visualizes the initial pose estimation particles:
-    /// - Initial poses: small blue spheres
-    /// - Result poses: spheres colored by score (red=low, green=high)
-    /// - Best particle: larger green sphere
-    fn create_monte_carlo_markers(
-        header: &Header,
-        particles: &[crate::particle::Particle],
-        best_score: f64,
-    ) -> MarkerArray {
-        let mut markers = Vec::new();
-        let mut id = 0;
-
-        // Find score range for color normalization
-        let min_score = particles
-            .iter()
-            .map(|p| p.score)
-            .fold(f64::INFINITY, f64::min);
-        let max_score = particles
-            .iter()
-            .map(|p| p.score)
-            .fold(f64::NEG_INFINITY, f64::max);
-        let score_range = (max_score - min_score).max(0.001); // Avoid division by zero
-
-        for particle in particles {
-            // Normalize score to 0-1 range for color
-            let normalized_score = (particle.score - min_score) / score_range;
-            let is_best = (particle.score - best_score).abs() < 1e-10;
-
-            // Initial pose marker (small blue sphere)
-            markers.push(Marker {
-                header: header.clone(),
-                ns: "monte_carlo_initial".to_string(),
-                id,
-                type_: 2,  // SPHERE
-                action: 0, // ADD
-                pose: particle.initial_pose.clone(),
-                scale: geometry_msgs::msg::Vector3 {
-                    x: 0.15,
-                    y: 0.15,
-                    z: 0.15,
-                },
-                color: std_msgs::msg::ColorRGBA {
-                    r: 0.3,
-                    g: 0.5,
-                    b: 1.0,
-                    a: 0.6,
-                },
-                lifetime: builtin_interfaces::msg::Duration {
-                    sec: 10,
-                    nanosec: 0,
-                },
-                frame_locked: false,
-                points: vec![],
-                colors: vec![],
-                texture_resource: String::new(),
-                texture: sensor_msgs::msg::CompressedImage::default(),
-                uv_coordinates: vec![],
-                text: String::new(),
-                mesh_resource: String::new(),
-                mesh_file: visualization_msgs::msg::MeshFile::default(),
-                mesh_use_embedded_materials: false,
-            });
-            id += 1;
-
-            // Result pose marker (sphere colored by score)
-            let size = if is_best { 0.4 } else { 0.2 };
-            markers.push(Marker {
-                header: header.clone(),
-                ns: "monte_carlo_result".to_string(),
-                id,
-                type_: 2,  // SPHERE
-                action: 0, // ADD
-                pose: particle.result_pose.clone(),
-                scale: geometry_msgs::msg::Vector3 {
-                    x: size,
-                    y: size,
-                    z: size,
-                },
-                color: std_msgs::msg::ColorRGBA {
-                    // Color gradient: red (low score) -> green (high score)
-                    r: (1.0 - normalized_score) as f32,
-                    g: normalized_score as f32,
-                    b: 0.0,
-                    a: if is_best { 1.0 } else { 0.7 },
-                },
-                lifetime: builtin_interfaces::msg::Duration {
-                    sec: 10,
-                    nanosec: 0,
-                },
-                frame_locked: false,
-                points: vec![],
-                colors: vec![],
-                texture_resource: String::new(),
-                texture: sensor_msgs::msg::CompressedImage::default(),
-                uv_coordinates: vec![],
-                text: String::new(),
-                mesh_resource: String::new(),
-                mesh_file: visualization_msgs::msg::MeshFile::default(),
-                mesh_use_embedded_materials: false,
-            });
-            id += 1;
-        }
-
-        MarkerArray { markers }
-    }
-
     /// Publish TF transform from map frame to ndt_base_frame.
     ///
     /// This matches Autoware's `publish_tf()` behavior in ndt_scan_matcher_core.cpp:
@@ -1831,9 +1724,13 @@ impl NdtScanMatcherNode {
             result.particles.len()
         );
 
-        // Publish Monte Carlo particle visualization
-        let markers =
-            Self::create_monte_carlo_markers(&initial_pose.header, &result.particles, result.score);
+        // Publish Monte Carlo particle visualization with multiple color schemes
+        let markers = visualization::create_monte_carlo_markers_enhanced(
+            &initial_pose.header,
+            &result.particles,
+            result.score,
+            &ParticleMarkerConfig::default(),
+        );
         if let Err(e) = monte_carlo_pub.publish(&markers) {
             log_debug!(NODE_NAME, "Failed to publish Monte Carlo markers: {e}");
         }
