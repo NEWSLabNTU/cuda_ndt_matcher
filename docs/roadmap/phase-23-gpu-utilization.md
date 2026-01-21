@@ -215,13 +215,13 @@ This phase focuses on improving GPU utilization and reducing per-iteration laten
 
 ### Phase 23.2: Texture Memory for Voxel Data
 
-**Status:** Not Started
+**Status:** ✅ Complete
 
 **Files:**
-- `src/cuda_ffi/csrc/texture_voxels.cu` (new)
-- `src/cuda_ffi/csrc/persistent_ndt.cu` (update)
-- `src/cuda_ffi/csrc/batch_persistent_ndt.cu` (update)
-- `src/cuda_ffi/src/texture.rs` (new)
+- `src/cuda_ffi/csrc/texture_voxels.cu` (new) - Texture object creation/destruction C API
+- `src/cuda_ffi/csrc/batch_persistent_ndt.cu` (update) - Added texture-enabled kernel variant
+- `src/cuda_ffi/src/texture.rs` (new) - Rust RAII wrappers and FFI bindings
+- `src/cuda_ffi/build.rs` (update) - Added texture_voxels.cu compilation
 
 **Tasks:**
 
@@ -284,12 +284,11 @@ This phase focuses on improving GPU utilization and reducing per-iteration laten
 
 ### Phase 23.3: Warp-Level Reduction
 
-**Status:** Not Started
+**Status:** ✅ Complete
 
 **Files:**
-- `src/cuda_ffi/csrc/warp_reduce.cuh` (new)
-- `src/cuda_ffi/csrc/persistent_ndt.cu` (update)
-- `src/cuda_ffi/csrc/batch_persistent_ndt.cu` (update)
+- `src/cuda_ffi/csrc/warp_reduce.cuh` (new) - Warp shuffle reduction primitives
+- `src/cuda_ffi/csrc/batch_persistent_ndt.cu` (update) - Warp-optimized kernel variant
 
 **Tasks:**
 
@@ -354,12 +353,12 @@ This phase focuses on improving GPU utilization and reducing per-iteration laten
 
 ### Phase 23.4: Warp-Cooperative Newton Solve
 
-**Status:** Not Started
+**Status:** ✅ Complete
 
 **Files:**
-- `src/cuda_ffi/csrc/warp_cholesky.cuh` (new)
-- `src/cuda_ffi/csrc/persistent_ndt.cu` (update)
-- `src/cuda_ffi/csrc/batch_persistent_ndt.cu` (update)
+- `src/cuda_ffi/csrc/warp_cholesky.cuh` (new) - Warp-parallel Cholesky solve with fallback
+- `src/cuda_ffi/csrc/batch_persistent_ndt.cu` (update) - Warp-optimized kernel uses warp solve
+- `src/cuda_ffi/src/batch_persistent_ndt.rs` (update) - FFI for warp-optimized kernel
 
 **Tasks:**
 
@@ -511,58 +510,58 @@ This phase focuses on improving GPU utilization and reducing per-iteration laten
 
 ### Per-Phase Impact
 
-| Phase | Component | Expected Speedup | Cumulative |
-|-------|-----------|------------------|------------|
-| 23.1 | Async streams | 1.2x throughput | 1.2x |
-| 23.2 | Texture memory | 1.3-1.5x | 1.5-1.8x |
-| 23.3 | Warp reduction | 1.3x (reduction) | 1.6-2.0x |
-| 23.4 | Warp Newton | 1.2x | 1.9-2.4x |
-| 23.5 | Voxel cache | 1.1x | 2.0-2.6x |
-| 23.6 | Early-exit | 1.3x (late iters) | 2.2-2.8x |
+| Phase | Component      | Expected Speedup  | Cumulative |
+|-------|----------------|-------------------|------------|
+| 23.1  | Async streams  | 1.2x throughput   | 1.2x       |
+| 23.2  | Texture memory | 1.3-1.5x          | 1.5-1.8x   |
+| 23.3  | Warp reduction | 1.3x (reduction)  | 1.6-2.0x   |
+| 23.4  | Warp Newton    | 1.2x              | 1.9-2.4x   |
+| 23.5  | Voxel cache    | 1.1x              | 2.0-2.6x   |
+| 23.6  | Early-exit     | 1.3x (late iters) | 2.2-2.8x   |
 
 ### Target Performance
 
-| Metric | Current | Target | Improvement |
-|--------|---------|--------|-------------|
-| Per-iteration time | 5.1ms | 2.0-2.5ms | 2-2.5x |
-| Total alignment | 18.45ms | 7-9ms | 2-2.5x |
-| vs Autoware | 2.1x slower | Parity or faster | - |
+| Metric             | Current     | Target           | Improvement |
+|--------------------|-------------|------------------|-------------|
+| Per-iteration time | 5.1ms       | 2.0-2.5ms        | 2-2.5x      |
+| Total alignment    | 18.45ms     | 7-9ms            | 2-2.5x      |
+| vs Autoware        | 2.1x slower | Parity or faster | -           |
 
 ## Memory Overhead
 
 ### Phase 23.1 (Async Streams)
 
-| Buffer | Size | Notes |
-|--------|------|-------|
+| Buffer           | Size      | Notes                    |
+|------------------|-----------|--------------------------|
 | Pinned host (×2) | 2 × 500KB | Points + poses + results |
-| Device (×2) | 2 × 500KB | Double buffering |
-| Streams + Events | ~1KB | Handle overhead |
-| **Total** | ~2MB | Negligible |
+| Device (×2)      | 2 × 500KB | Double buffering         |
+| Streams + Events | ~1KB      | Handle overhead          |
+| **Total**        | ~2MB      | Negligible               |
 
 ### Phase 23.2 (Texture Memory)
 
-| Resource | Size | Notes |
-|----------|------|-------|
-| Texture objects | ~100 bytes | Handles only |
-| Texture cache | Hardware | No additional allocation |
-| **Total** | ~100 bytes | Negligible |
+| Resource        | Size       | Notes                    |
+|-----------------|------------|--------------------------|
+| Texture objects | ~100 bytes | Handles only             |
+| Texture cache   | Hardware   | No additional allocation |
+| **Total**       | ~100 bytes | Negligible               |
 
 ### Phase 23.5 (Voxel Cache)
 
-| Buffer | Size | Notes |
-|--------|------|-------|
+| Buffer        | Size           | Notes                           |
+|---------------|----------------|---------------------------------|
 | Shared memory | ~3KB per block | 64 voxels × (12 + 36 + 4) bytes |
-| **Total** | ~3KB | Reduces available shared mem |
+| **Total**     | ~3KB           | Reduces available shared mem    |
 
 ## Risks and Mitigations
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| Texture cache thrashing | Reduced benefit | Benchmark with real workloads; fall back if no improvement |
-| Warp divergence in reduction | Performance loss | Ensure uniform control flow; use predication |
-| Cholesky instability | Incorrect results | Fallback to Jacobi SVD for indefinite cases |
-| Shared memory pressure | Lower occupancy | Phase 23.3 reduces shared mem usage; monitor occupancy |
-| Async complexity | Race conditions | Thorough testing; use events for synchronization |
+| Risk                         | Impact            | Mitigation                                                 |
+|------------------------------|-------------------|------------------------------------------------------------|
+| Texture cache thrashing      | Reduced benefit   | Benchmark with real workloads; fall back if no improvement |
+| Warp divergence in reduction | Performance loss  | Ensure uniform control flow; use predication               |
+| Cholesky instability         | Incorrect results | Fallback to Jacobi SVD for indefinite cases                |
+| Shared memory pressure       | Lower occupancy   | Phase 23.3 reduces shared mem usage; monitor occupancy     |
+| Async complexity             | Race conditions   | Thorough testing; use events for synchronization           |
 
 ## Success Criteria
 
