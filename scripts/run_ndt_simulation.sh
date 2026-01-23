@@ -6,6 +6,7 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+AUTOWARE_ACTIVATE="$SCRIPT_DIR/activate_autoware.sh"
 COMPARISON_SETUP="$PROJECT_DIR/tests/comparison/install/setup.bash"
 
 USE_CUDA="false"
@@ -46,7 +47,8 @@ fi
 # Without this, the EKF initializes to an unknown state
 USE_INITIAL_POSE="true"
 
-# Source the local workspace setup
+# Source Autoware environment first, then local workspace as overlay
+source "$AUTOWARE_ACTIVATE"
 source "$PROJECT_DIR/install/setup.bash"
 
 # For builtin mode, overlay patched Autoware if available

@@ -6,8 +6,8 @@
 # Project root (two levels up)
 project_root := "../../"
 
-# Autoware setup from main project
-autoware_setup := project_root + "external/autoware_repo/install/setup.bash"
+# Autoware activation script
+autoware_activate := project_root + "scripts/activate_autoware.sh"
 
 # Package source directory (submodule)
 ndt_package := "autoware_core/localization/autoware_ndt_scan_matcher"
@@ -27,7 +27,7 @@ default:
 build:
     #!/usr/bin/env bash
     set -eo pipefail
-    source {{autoware_setup}}
+    source {{autoware_activate}}
     echo "Building autoware_ndt_scan_matcher from submodule..."
     colcon build \
         --base-paths {{ndt_package}} \

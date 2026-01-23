@@ -17,6 +17,7 @@ set -euo pipefail
 # Get script directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+AUTOWARE_ACTIVATE="${SCRIPT_DIR}/activate_autoware.sh"
 DATA_DIR="${PROJECT_ROOT}/data"
 
 # Google Drive file IDs
@@ -132,7 +133,7 @@ main() {
     else
         info "Fixing /clock timestamps in rosbag..."
         # Source ROS environment for the fix script
-        source "${PROJECT_ROOT}/external/autoware_repo/install/setup.bash"
+        source "${AUTOWARE_ACTIVATE}"
         python3 "${SCRIPT_DIR}/fix_rosbag_clock.py" \
             "${DATA_DIR}/sample-rosbag" \
             "${fixed_rosbag}" \

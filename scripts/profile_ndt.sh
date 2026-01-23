@@ -18,7 +18,7 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-AUTOWARE_SETUP="$PROJECT_DIR/external/autoware_repo/install/setup.bash"
+AUTOWARE_ACTIVATE="$SCRIPT_DIR/activate_autoware.sh"
 LOCAL_SETUP="$PROJECT_DIR/install/setup.bash"
 
 # Default options
@@ -84,7 +84,7 @@ echo "Nsys: $USE_NSYS"
 echo ""
 
 # Source ROS environment
-source "$AUTOWARE_SETUP"
+source "$AUTOWARE_ACTIVATE"
 if [[ -f "$LOCAL_SETUP" ]]; then
     source "$LOCAL_SETUP"
 fi

@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-AUTOWARE_SETUP="$PROJECT_DIR/external/autoware_repo/install/setup.bash"
+AUTOWARE_ACTIVATE="$SCRIPT_DIR/activate_autoware.sh"
 COMPARISON_SETUP="$PROJECT_DIR/tests/comparison/install/setup.bash"
 
 # Source NDT topics
@@ -59,7 +59,7 @@ fi
 # This ensures cleanup when ros2 bag play completes (since -l flag removed)
 parallel --halt now,done=1 --line-buffer ::: \
     "$SCRIPT_DIR/run_ndt_simulation.sh $USE_CUDA '$MAP_DIR'" \
-    "sleep 30 && source '$AUTOWARE_SETUP' && ros2 bag play '$ROSBAG'" \
-    "sleep 35 && source '$AUTOWARE_SETUP' && ros2 bag record -o '$BAG_NAME' ${NDT_TOPICS[*]}"
+    "sleep 30 && source '$AUTOWARE_ACTIVATE' && ros2 bag play '$ROSBAG'" \
+    "sleep 35 && source '$AUTOWARE_ACTIVATE' && ros2 bag record -o '$BAG_NAME' ${NDT_TOPICS[*]}"
 
 echo "Demo finished. Recording saved to: $BAG_NAME"

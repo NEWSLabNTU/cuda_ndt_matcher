@@ -10,6 +10,7 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+AUTOWARE_ACTIVATE="$SCRIPT_DIR/activate_autoware.sh"
 GROUND_TRUTH_DIR="$PROJECT_DIR/tests/fixtures/ground_truth"
 
 echo "=== Collecting Ground Truth Data ==="
@@ -64,5 +65,5 @@ echo "Contents:"
 ls -la "$GROUND_TRUTH_DIR"
 echo ""
 echo "Rosbag info:"
-source "$PROJECT_DIR/external/autoware_repo/install/setup.bash"
+source "$AUTOWARE_ACTIVATE"
 ros2 bag info "$GROUND_TRUTH_DIR/rosbag"
