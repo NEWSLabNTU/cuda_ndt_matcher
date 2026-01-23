@@ -2,7 +2,9 @@
 
 Feature comparison between `cuda_ndt_matcher` and Autoware's `ndt_scan_matcher`.
 
-**Last Updated**: 2026-01-13 (Added test coverage section)
+**Target Version**: Autoware 1.5.0 (`autoware_core` repository)
+
+**Last Updated**: 2026-01-24 (Updated target to Autoware 1.5.0)
 
 ---
 
@@ -597,9 +599,14 @@ just test -- --nocapture     # Run with output
 
 ## Summary: What's Missing
 
+### Target Version Note
+
+This comparison targets **Autoware 1.5.0**, where `ndt_scan_matcher` was moved from `autoware_universe` to `autoware_core`. The reference implementation is at:
+- `tests/comparison/autoware_core/localization/autoware_ndt_scan_matcher/`
+
 ### Functional Gaps
 
-All functional features are implemented. Convergence gating and diagnostic keys now match Autoware behavior.
+All functional features are implemented. Convergence gating and diagnostic keys match Autoware 1.5.0 behavior.
 
 ### Debug/Visualization Gaps (no runtime impact)
 
@@ -611,6 +618,15 @@ None - all debug publishers are implemented.
 |-----------------------|-------------------------------------------|
 | DIRECT search methods | KDTREE is better, recommended by Autoware |
 | OpenMP thread config  | Rayon handles automatically               |
+
+### Autoware 1.5.0 Specific Notes
+
+| Feature                 | Autoware 1.5.0               | CUDA NDT                   | Notes                                      |
+|-------------------------|------------------------------|----------------------------|--------------------------------------------|
+| Package location        | `autoware_core`              | N/A                        | Moved from `autoware_universe` in 0.48.0   |
+| `search_method` param   | KDTREE (default)             | KDTREE only                | DIRECT methods removed from default config |
+| `use_line_search` param | Available (default: false)   | Available (default: false) | Same behavior                              |
+| Diagnostic interface    | `autoware_utils_diagnostics` | Custom impl                | Same output format                         |
 
 ---
 
@@ -787,7 +803,9 @@ Per batch (M poses):
 
 ## Completion Summary
 
-**Feature parity**: Complete. The CUDA implementation is a drop-in replacement for Autoware's `ndt_scan_matcher`.
+**Target**: Autoware 1.5.0 (`autoware_core/localization/autoware_ndt_scan_matcher`)
+
+**Feature parity**: Complete. The CUDA implementation is a drop-in replacement for Autoware 1.5.0's `ndt_scan_matcher`.
 
 **GPU acceleration**: All compute-heavy operations run on GPU:
 - Voxel grid construction (zero-copy pipeline)
