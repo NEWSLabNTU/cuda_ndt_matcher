@@ -1051,4 +1051,404 @@ mod tests {
         assert_eq!(num_blocks(512), 2);
         assert_eq!(num_blocks(100000), 391);
     }
+
+    #[test]
+    fn test_profile_new() {
+        let profile = GraphNdtProfile::new();
+        assert_eq!(profile.init.name, "init");
+        assert_eq!(profile.compute.name, "compute");
+        assert_eq!(profile.solve.name, "solve");
+        assert_eq!(profile.linesearch.name, "linesearch");
+        assert_eq!(profile.update.name, "update");
+        assert_eq!(profile.iterations, 0);
+        assert_eq!(profile.total_ms, 0.0);
+    }
+
+    #[test]
+    fn test_kernel_timing_avg() {
+        let mut timing = KernelTiming {
+            name: "test",
+            total_ms: 10.0,
+            count: 5,
+        };
+        assert!((timing.avg_ms() - 2.0).abs() < 0.001);
+
+        // Edge case: zero count
+        timing.count = 0;
+        assert_eq!(timing.avg_ms(), 0.0);
+    }
+
+    #[test]
+    fn test_profile_per_iteration() {
+        let mut profile = GraphNdtProfile::new();
+        profile.compute.total_ms = 10.0;
+        profile.compute.count = 5;
+        profile.solve.total_ms = 2.0;
+        profile.solve.count = 5;
+        profile.update.total_ms = 1.0;
+        profile.update.count = 5;
+        profile.iterations = 5;
+
+        // kernel_total = 10 + 2 + 1 = 13
+        assert!((profile.kernel_total_ms() - 13.0).abs() < 0.001);
+        // per_iteration = 13 / 5 = 2.6
+        assert!((profile.per_iteration_ms() - 2.6).abs() < 0.001);
+    }
+
+    // ========================================================================
+    // Phase 24.5: Kernel validation tests
+    // ========================================================================
+
+    use crate::async_stream::AsyncDeviceBuffer;
+
+    /// Helper to allocate GPU buffers for kernel testing.
+    /// Uses AsyncDeviceBuffer for RAII memory management.
+    struct TestBuffers {
+        source_points: AsyncDeviceBuffer,
+        voxel_means: AsyncDeviceBuffer,
+        voxel_inv_covs: AsyncDeviceBuffer,
+        hash_table: AsyncDeviceBuffer,
+        initial_pose: AsyncDeviceBuffer,
+        state_buffer: AsyncDeviceBuffer,
+        reduce_buffer: AsyncDeviceBuffer,
+        ls_buffer: AsyncDeviceBuffer,
+        output_buffer: AsyncDeviceBuffer,
+    }
+
+    impl TestBuffers {
+        fn new(num_points: usize, num_voxels: usize) -> Result<Self, CudaError> {
+            Ok(Self {
+                source_points: AsyncDeviceBuffer::new(num_points * 3 * 4)?,
+                voxel_means: AsyncDeviceBuffer::new(num_voxels * 3 * 4)?,
+                voxel_inv_covs: AsyncDeviceBuffer::new(num_voxels * 9 * 4)?,
+                hash_table: AsyncDeviceBuffer::new(16384 * 16)?, // Hash entry is 16 bytes
+                initial_pose: AsyncDeviceBuffer::new(6 * 4)?,
+                state_buffer: AsyncDeviceBuffer::new(STATE_BUFFER_SIZE * 4)?,
+                reduce_buffer: AsyncDeviceBuffer::new(REDUCE_BUFFER_SIZE * 4)?,
+                ls_buffer: AsyncDeviceBuffer::new(LS_BUFFER_SIZE * 4)?,
+                output_buffer: AsyncDeviceBuffer::new(OUTPUT_BUFFER_SIZE * 4)?,
+            })
+        }
+
+        // Accessor methods to get u64 pointers for FFI calls
+        fn source_points(&self) -> u64 {
+            self.source_points.as_u64()
+        }
+        fn voxel_means(&self) -> u64 {
+            self.voxel_means.as_u64()
+        }
+        fn voxel_inv_covs(&self) -> u64 {
+            self.voxel_inv_covs.as_u64()
+        }
+        fn hash_table(&self) -> u64 {
+            self.hash_table.as_u64()
+        }
+        fn initial_pose(&self) -> u64 {
+            self.initial_pose.as_u64()
+        }
+        fn state_buffer(&self) -> u64 {
+            self.state_buffer.as_u64()
+        }
+        fn reduce_buffer(&self) -> u64 {
+            self.reduce_buffer.as_u64()
+        }
+        fn ls_buffer(&self) -> u64 {
+            self.ls_buffer.as_u64()
+        }
+        fn output_buffer(&self) -> u64 {
+            self.output_buffer.as_u64()
+        }
+    }
+    // Drop is automatically handled by AsyncDeviceBuffer's Drop implementation
+
+    #[test]
+    fn test_k1_init_kernel() {
+        // Test that K1 (init kernel) runs without error
+        let buffers = TestBuffers::new(100, 10).expect("Failed to allocate test buffers");
+
+        // Upload initial pose
+        let pose = [1.0f32, 2.0, 3.0, 0.1, 0.2, 0.3];
+        unsafe {
+            check_cuda(cudaMemcpy(
+                buffers.initial_pose() as *mut std::ffi::c_void,
+                pose.as_ptr() as *const std::ffi::c_void,
+                6 * 4,
+                1, // cudaMemcpyHostToDevice
+            ))
+            .expect("Failed to upload pose");
+        }
+
+        // Launch init kernel
+        let result = unsafe {
+            graph_ndt_launch_init_raw(
+                buffers.initial_pose(),
+                buffers.state_buffer(),
+                buffers.reduce_buffer(),
+                buffers.ls_buffer(),
+                None,
+            )
+        };
+        assert!(result.is_ok(), "K1 init kernel should succeed");
+
+        // Verify state buffer was initialized
+        unsafe {
+            check_cuda(cudaDeviceSynchronize()).expect("Sync failed");
+        }
+
+        // Read back state buffer and verify pose was copied
+        let mut state = [0.0f32; STATE_BUFFER_SIZE];
+        unsafe {
+            check_cuda(cudaMemcpy(
+                state.as_mut_ptr() as *mut std::ffi::c_void,
+                buffers.state_buffer() as *const std::ffi::c_void,
+                STATE_BUFFER_SIZE * 4,
+                2, // cudaMemcpyDeviceToHost
+            ))
+            .expect("Failed to read state");
+        }
+
+        // First 6 floats should be the pose
+        assert!((state[0] - 1.0).abs() < 0.001, "X should be initialized");
+        assert!((state[1] - 2.0).abs() < 0.001, "Y should be initialized");
+        assert!((state[2] - 3.0).abs() < 0.001, "Z should be initialized");
+    }
+
+    #[test]
+    fn test_k2_compute_kernel() {
+        // Test that K2 (compute kernel) runs without error on empty data
+        let buffers = TestBuffers::new(100, 10).expect("Failed to allocate test buffers");
+
+        let config = GraphNdtConfig::new(0.55, 0.5, 2.0, 0.01, 100, 10, 16384, 30);
+
+        // Initialize state first
+        unsafe {
+            graph_ndt_launch_init_raw(
+                buffers.initial_pose(),
+                buffers.state_buffer(),
+                buffers.reduce_buffer(),
+                buffers.ls_buffer(),
+                None,
+            )
+            .expect("Init failed");
+            check_cuda(cudaDeviceSynchronize()).expect("Sync failed");
+        }
+
+        // Launch compute kernel
+        let result = unsafe {
+            graph_ndt_launch_compute_raw(
+                buffers.source_points(),
+                buffers.voxel_means(),
+                buffers.voxel_inv_covs(),
+                buffers.hash_table(),
+                &config,
+                buffers.state_buffer(),
+                buffers.reduce_buffer(),
+                None,
+            )
+        };
+        assert!(result.is_ok(), "K2 compute kernel should succeed");
+
+        unsafe {
+            check_cuda(cudaDeviceSynchronize()).expect("Sync failed");
+        }
+    }
+
+    #[test]
+    fn test_k3_solve_kernel() {
+        // Test that K3 (solve kernel) runs without error
+        let buffers = TestBuffers::new(100, 10).expect("Failed to allocate test buffers");
+
+        let config = GraphNdtConfig::new(0.55, 0.5, 2.0, 0.01, 100, 10, 16384, 30);
+
+        // Initialize state first
+        unsafe {
+            graph_ndt_launch_init_raw(
+                buffers.initial_pose(),
+                buffers.state_buffer(),
+                buffers.reduce_buffer(),
+                buffers.ls_buffer(),
+                None,
+            )
+            .expect("Init failed");
+            check_cuda(cudaDeviceSynchronize()).expect("Sync failed");
+        }
+
+        // Launch solve kernel
+        let result = unsafe {
+            graph_ndt_launch_solve_raw(
+                &config,
+                buffers.state_buffer(),
+                buffers.reduce_buffer(),
+                buffers.ls_buffer(),
+                buffers.output_buffer(),
+                None,
+            )
+        };
+        assert!(result.is_ok(), "K3 solve kernel should succeed");
+
+        unsafe {
+            check_cuda(cudaDeviceSynchronize()).expect("Sync failed");
+        }
+    }
+
+    #[test]
+    fn test_k4_linesearch_kernel() {
+        // Test that K4 (line search kernel) runs without error
+        let buffers = TestBuffers::new(100, 10).expect("Failed to allocate test buffers");
+
+        let config = GraphNdtConfig::new(0.55, 0.5, 2.0, 0.01, 100, 10, 16384, 30)
+            .with_line_search(true, 8, 1e-4, 0.9);
+
+        // Initialize state first
+        unsafe {
+            graph_ndt_launch_init_raw(
+                buffers.initial_pose(),
+                buffers.state_buffer(),
+                buffers.reduce_buffer(),
+                buffers.ls_buffer(),
+                None,
+            )
+            .expect("Init failed");
+            check_cuda(cudaDeviceSynchronize()).expect("Sync failed");
+        }
+
+        // Launch line search kernel
+        let result = unsafe {
+            graph_ndt_launch_linesearch_raw(
+                buffers.source_points(),
+                buffers.voxel_means(),
+                buffers.voxel_inv_covs(),
+                buffers.hash_table(),
+                &config,
+                buffers.state_buffer(),
+                buffers.ls_buffer(),
+                None,
+            )
+        };
+        assert!(result.is_ok(), "K4 line search kernel should succeed");
+
+        unsafe {
+            check_cuda(cudaDeviceSynchronize()).expect("Sync failed");
+        }
+    }
+
+    #[test]
+    fn test_k5_update_kernel() {
+        // Test that K5 (update kernel) runs without error
+        let buffers = TestBuffers::new(100, 10).expect("Failed to allocate test buffers");
+
+        let config = GraphNdtConfig::new(0.55, 0.5, 2.0, 0.01, 100, 10, 16384, 30);
+
+        // Initialize state first
+        unsafe {
+            graph_ndt_launch_init_raw(
+                buffers.initial_pose(),
+                buffers.state_buffer(),
+                buffers.reduce_buffer(),
+                buffers.ls_buffer(),
+                None,
+            )
+            .expect("Init failed");
+            check_cuda(cudaDeviceSynchronize()).expect("Sync failed");
+        }
+
+        // Launch update kernel
+        let result = unsafe {
+            graph_ndt_launch_update_raw(
+                &config,
+                buffers.state_buffer(),
+                buffers.reduce_buffer(),
+                buffers.ls_buffer(),
+                buffers.output_buffer(),
+                0, // No debug buffer
+                None,
+            )
+        };
+        assert!(result.is_ok(), "K5 update kernel should succeed");
+
+        unsafe {
+            check_cuda(cudaDeviceSynchronize()).expect("Sync failed");
+        }
+
+        // Verify iteration count was incremented
+        let iterations = unsafe { graph_ndt_get_iterations(buffers.state_buffer()) };
+        assert!(iterations.is_ok(), "Should be able to read iterations");
+        assert_eq!(iterations.unwrap(), 1, "Should have run 1 iteration");
+    }
+
+    #[test]
+    fn test_full_iteration_sequence() {
+        // Test that a full iteration (K2 -> K3 -> K5) runs correctly
+        let buffers = TestBuffers::new(100, 10).expect("Failed to allocate test buffers");
+
+        let config = GraphNdtConfig::new(0.55, 0.5, 2.0, 0.01, 100, 10, 16384, 30)
+            .with_line_search(false, 0, 0.0, 0.0)
+            .with_fixed_step(0.1);
+
+        // K1: Initialize
+        unsafe {
+            graph_ndt_launch_init_raw(
+                buffers.initial_pose(),
+                buffers.state_buffer(),
+                buffers.reduce_buffer(),
+                buffers.ls_buffer(),
+                None,
+            )
+            .expect("Init failed");
+            check_cuda(cudaDeviceSynchronize()).expect("Sync failed");
+        }
+
+        // Run 3 iterations
+        for i in 0..3 {
+            unsafe {
+                graph_ndt_run_iteration_raw(
+                    buffers.source_points(),
+                    buffers.voxel_means(),
+                    buffers.voxel_inv_covs(),
+                    buffers.hash_table(),
+                    &config,
+                    buffers.state_buffer(),
+                    buffers.reduce_buffer(),
+                    buffers.ls_buffer(),
+                    buffers.output_buffer(),
+                    0,
+                    None,
+                )
+                .expect("Iteration failed");
+                check_cuda(cudaDeviceSynchronize()).expect("Sync failed");
+            }
+
+            let iterations = unsafe { graph_ndt_get_iterations(buffers.state_buffer()) };
+            assert_eq!(
+                iterations.unwrap(),
+                i + 1,
+                "Iteration count should be {}",
+                i + 1
+            );
+        }
+    }
+
+    #[test]
+    fn test_convergence_flag() {
+        // Test that convergence flag can be read
+        let buffers = TestBuffers::new(100, 10).expect("Failed to allocate test buffers");
+
+        // Initialize state
+        unsafe {
+            graph_ndt_launch_init_raw(
+                buffers.initial_pose(),
+                buffers.state_buffer(),
+                buffers.reduce_buffer(),
+                buffers.ls_buffer(),
+                None,
+            )
+            .expect("Init failed");
+            check_cuda(cudaDeviceSynchronize()).expect("Sync failed");
+        }
+
+        // Initially should not be converged
+        let converged = unsafe { graph_ndt_check_converged(buffers.state_buffer()) };
+        assert!(converged.is_ok(), "Should be able to read convergence");
+        assert!(!converged.unwrap(), "Should not be converged initially");
+    }
 }
