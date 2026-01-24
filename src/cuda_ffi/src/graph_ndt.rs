@@ -317,7 +317,7 @@ pub fn linesearch_shared_mem_size() -> usize {
 
 /// Calculate number of blocks needed for given point count.
 pub fn num_blocks(num_points: usize) -> usize {
-    (num_points + BLOCK_SIZE - 1) / BLOCK_SIZE
+    num_points.div_ceil(BLOCK_SIZE)
 }
 
 // ============================================================================

@@ -1,51 +1,37 @@
-//! Full GPU Newton Pipeline V2 with Integrated Line Search.
+//! Full GPU Newton Pipeline V2 with Graph-Based Kernels.
 //!
-//! This module implements Phase 15.11: a complete GPU Newton optimization pipeline
-//! with minimal CPU-GPU data transfers during iterations.
+//! This module implements a complete GPU Newton optimization pipeline using
+//! separated kernels that can work on all CUDA GPUs, including those with
+//! limited SM count (e.g., Jetson Orin) where cooperative launch fails.
 //!
-//! # Architecture
+//! # Architecture (Phase 24)
+//!
+//! The optimization is split into 5 separate kernels:
+//! - K1: Init - Initialize state from initial pose
+//! - K2: Compute - Per-point score/gradient/Hessian + block reduction
+//! - K3: Solve - Newton solve + regularization
+//! - K4: LineSearch - Parallel line search evaluation (optional)
+//! - K5: Update - Apply step, check convergence
 //!
 //! ```text
 //! Once at start (upload ~500 KB):
 //!   Upload: source_points [N×3], voxel_data [V×12], initial_pose [6]
 //!
-//! GPU Iteration Loop:
-//!   PHASE A: Compute Newton direction δ = -H⁻¹g
-//!     1. compute_sin_cos_kernel(pose → sin_cos)
-//!     2. compute_transform_from_sincos_kernel(sin_cos, pose → transform)
-//!     3. compute_jacobians_kernel(sin_cos → jacobians)
-//!     4. compute_point_hessians_kernel(sin_cos → point_hessians)
-//!     5. transform_points_kernel(transform → transformed)
-//!     6. voxel_hash_query(→ neighbors) [O(27) instead of O(V)]
-//!     7. score/gradient/hessian_v2 kernels (→ scores, grads, hess)
-//!     8. CUB segmented reduce (→ score[1], gradient[6], H[36])
-//!     9. cuSOLVER solve (H, -g → delta) [requires f64, small download]
-//!
-//!   PHASE B: Batched line search
-//!     10. dot_product_6_kernel(gradient · delta → dphi_0)
-//!     11. generate_candidates_kernel(→ candidates[K])
-//!     12. batch_transform_kernel(pose, delta, candidates → K transforms)
-//!     13. batch_score_gradient_kernel(→ batch_scores[K×N], batch_dir_derivs[K×N])
-//!     14. CUB reduce per candidate (→ phi[K], dphi[K])
-//!     15. more_thuente_kernel(phi_0, dphi_0, phi, dphi → best_alpha)
-//!
-//!   PHASE C: Update state
-//!     16. update_pose_kernel(pose += best_alpha × delta)
-//!     17. Download pose for oscillation tracking (24 bytes)
-//!     18. check_convergence_kernel(→ converged_flag)
-//!     19. Download converged_flag (4 bytes)
+//! GPU Kernels per iteration:
+//!   K2: ndt_graph_compute_kernel - Per-point compute + block reduction + atomic global
+//!   K3: ndt_graph_solve_kernel - Newton solve (Cholesky/SVD), regularization
+//!   K4: ndt_graph_linesearch_kernel - Evaluate candidates (if enabled)
+//!   K5: ndt_graph_update_kernel - Apply step, check convergence, prepare next iter
 //!
 //! Once at end:
-//!   CPU: Compute oscillation count from pose history
-//!   Download: final_pose (already in history), score, H [~300 bytes]
+//!   Download: final_pose, score, H, correspondences, oscillation count
 //! ```
 //!
-//! # Transfer Analysis
+//! # Benefits over Cooperative Kernel
 //!
-//! | Phase | Transfer Size | Notes |
-//! |-------|---------------|-------|
-//! | Phase 14 (legacy) | ~490 KB/iter | J/PH combine roundtrip |
-//! | Phase 15 V2 | ~224 bytes/iter | Newton solve (f32→f64) + pose (oscillation) + convergence |
+//! - Works on all CUDA GPUs (no cooperative launch limit)
+//! - Same algorithm and numerical results
+//! - Slightly higher launch overhead (~10-20μs/iter) but eliminates grid size restrictions
 
 use anyhow::Result;
 use cubecl::client::ComputeClient;
@@ -129,11 +115,11 @@ impl Default for PipelineV2Config {
     }
 }
 
-/// Full GPU Newton Pipeline V2 using persistent kernel.
+/// Full GPU Newton Pipeline V2 using graph-based kernels.
 ///
-/// This pipeline uses a single cooperative kernel launch for the entire
-/// Newton optimization loop, minimizing kernel launch overhead and
-/// CPU-GPU synchronization.
+/// This pipeline uses separated kernels (K1-K5) that can run on all CUDA GPUs,
+/// including those with limited SM count where cooperative launch fails.
+/// The kernels are executed sequentially with implicit synchronization.
 pub struct FullGpuPipelineV2 {
     client: CudaClient,
     #[allow(dead_code)]
@@ -174,26 +160,21 @@ pub struct FullGpuPipelineV2 {
     config: PipelineV2Config,
 
     // ========================================================================
-    // Persistent kernel buffers (Phase 17)
+    // Graph-based kernel buffers (Phase 24)
     // ========================================================================
-    persistent_reduce_buffer: Handle, // [160] for persistent kernel reduction + state + parallel LS
-    persistent_initial_pose: Handle,  // [6] input pose for persistent kernel
-    persistent_out_pose: Handle,      // [6] output pose from persistent kernel
-    persistent_out_iterations: Handle, // [1] i32
-    persistent_out_converged: Handle, // [1] u32
-    persistent_out_score: Handle,     // [1] f32
-    persistent_out_hessian: Handle,   // [36] f32
-    persistent_out_correspondences: Handle, // [1] u32 - Phase 18.3
-    persistent_out_oscillation: Handle, // [1] u32 - Phase 18.4
-    persistent_out_alpha_sum: Handle, // [1] f32 - Phase 19.3
+    graph_initial_pose: Handle,  // [6] input pose for graph kernels
+    graph_state_buffer: Handle,  // [102] persistent state across iterations
+    graph_reduce_buffer: Handle, // [29] per-iteration reduction accumulator
+    graph_ls_buffer: Handle,     // [68] line search state
+    graph_output_buffer: Handle, // [48] final output
 
     // Phase 19.4: Debug buffer (only allocated when debug-iteration feature is enabled)
     #[cfg(feature = "debug-iteration")]
-    persistent_debug_buffer: Option<Handle>, // [max_iterations * 50] f32
+    graph_debug_buffer: Option<Handle>, // [max_iterations * 50] f32
     #[cfg(feature = "debug-iteration")]
     max_iterations_for_debug: u32, // Cached for buffer sizing
 
-    // Regularization state for persistent kernel - Phase 18.2
+    // Regularization state - Phase 18.2
     regularization_ref_x: f32,
     regularization_ref_y: f32,
 }
@@ -235,17 +216,16 @@ impl FullGpuPipelineV2 {
         let hash_table_bytes = cuda_ffi::hash_table_size(hash_capacity)?;
         let hash_table = client.empty(hash_table_bytes);
 
-        // Persistent kernel buffers (Phase 17)
-        let persistent_reduce_buffer = client.empty(cuda_ffi::persistent_ndt_buffer_size());
-        let persistent_initial_pose = client.empty(6 * std::mem::size_of::<f32>());
-        let persistent_out_pose = client.empty(6 * std::mem::size_of::<f32>());
-        let persistent_out_iterations = client.empty(std::mem::size_of::<i32>());
-        let persistent_out_converged = client.empty(std::mem::size_of::<u32>());
-        let persistent_out_score = client.empty(std::mem::size_of::<f32>());
-        let persistent_out_hessian = client.empty(36 * std::mem::size_of::<f32>());
-        let persistent_out_correspondences = client.empty(std::mem::size_of::<u32>());
-        let persistent_out_oscillation = client.empty(std::mem::size_of::<u32>());
-        let persistent_out_alpha_sum = client.empty(std::mem::size_of::<f32>());
+        // Graph-based kernel buffers (Phase 24)
+        let graph_initial_pose = client.empty(6 * std::mem::size_of::<f32>());
+        let graph_state_buffer =
+            client.empty(cuda_ffi::GRAPH_NDT_STATE_BUFFER_SIZE * std::mem::size_of::<f32>());
+        let graph_reduce_buffer =
+            client.empty(cuda_ffi::GRAPH_NDT_REDUCE_BUFFER_SIZE * std::mem::size_of::<f32>());
+        let graph_ls_buffer =
+            client.empty(cuda_ffi::GRAPH_NDT_LS_BUFFER_SIZE * std::mem::size_of::<f32>());
+        let graph_output_buffer =
+            client.empty(cuda_ffi::GRAPH_NDT_OUTPUT_BUFFER_SIZE * std::mem::size_of::<f32>());
 
         Ok(Self {
             client,
@@ -264,18 +244,13 @@ impl FullGpuPipelineV2 {
             gauss_d1: 0.0,
             gauss_d2: 0.0,
             config,
-            persistent_reduce_buffer,
-            persistent_initial_pose,
-            persistent_out_pose,
-            persistent_out_iterations,
-            persistent_out_converged,
-            persistent_out_score,
-            persistent_out_hessian,
-            persistent_out_correspondences,
-            persistent_out_oscillation,
-            persistent_out_alpha_sum,
+            graph_initial_pose,
+            graph_state_buffer,
+            graph_reduce_buffer,
+            graph_ls_buffer,
+            graph_output_buffer,
             #[cfg(feature = "debug-iteration")]
-            persistent_debug_buffer: None, // Allocated on-demand in optimize()
+            graph_debug_buffer: None, // Allocated on-demand in optimize()
             #[cfg(feature = "debug-iteration")]
             max_iterations_for_debug: 0,
             regularization_ref_x: 0.0,
@@ -410,14 +385,13 @@ impl FullGpuPipelineV2 {
         use super::debug::IterationDebug;
 
         let buffer = self
-            .persistent_debug_buffer
+            .graph_debug_buffer
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Debug buffer not allocated"))?;
         let bytes = self.client.read_one(buffer.clone());
         let floats = f32::from_bytes(&bytes);
 
-        const FLOATS_PER_ITER: usize =
-            cuda_ffi::persistent_ndt::PersistentNdt::DEBUG_FLOATS_PER_ITER;
+        const FLOATS_PER_ITER: usize = cuda_ffi::GRAPH_NDT_DEBUG_FLOATS_PER_ITER;
 
         // Cap iterations to what the buffer can hold to prevent out-of-bounds access
         let max_parseable = floats.len() / FLOATS_PER_ITER;
@@ -491,10 +465,10 @@ impl FullGpuPipelineV2 {
         full
     }
 
-    /// Run full GPU Newton optimization using the persistent kernel.
+    /// Run full GPU Newton optimization using graph-based kernels.
     ///
-    /// This runs the entire Newton optimization loop in a single kernel launch,
-    /// eliminating per-iteration CPU-GPU transfers. Supports all features:
+    /// This runs the Newton optimization loop using separated kernels (K1-K5)
+    /// that work on all CUDA GPUs. Supports all features:
     /// - Line search with Strong Wolfe conditions (if enabled in config)
     /// - GNSS regularization (if enabled)
     /// - Oscillation detection
@@ -534,137 +508,142 @@ impl FullGpuPipelineV2 {
 
         // Upload initial pose
         let pose_f32: [f32; 6] = initial_pose.map(|x| x as f32);
-        self.persistent_initial_pose = self.client.create(f32::as_bytes(&pose_f32));
+        self.graph_initial_pose = self.client.create(f32::as_bytes(&pose_f32));
 
-        // Clear reduce buffer (160 floats for parallel line search with per-candidate slots)
-        let zeros = [0.0f32; 160];
-        self.persistent_reduce_buffer = self.client.create(f32::as_bytes(&zeros));
+        // Recreate buffers to ensure fresh memory (avoids CubeCL caching issues)
+        let state_zeros = [0.0f32; cuda_ffi::GRAPH_NDT_STATE_BUFFER_SIZE];
+        let reduce_zeros = [0.0f32; cuda_ffi::GRAPH_NDT_REDUCE_BUFFER_SIZE];
+        let ls_zeros = [0.0f32; cuda_ffi::GRAPH_NDT_LS_BUFFER_SIZE];
+        let output_zeros = [0.0f32; cuda_ffi::GRAPH_NDT_OUTPUT_BUFFER_SIZE];
+
+        self.graph_state_buffer = self.client.create(f32::as_bytes(&state_zeros));
+        self.graph_reduce_buffer = self.client.create(f32::as_bytes(&reduce_zeros));
+        self.graph_ls_buffer = self.client.create(f32::as_bytes(&ls_zeros));
+        self.graph_output_buffer = self.client.create(f32::as_bytes(&output_zeros));
 
         // Force CubeCL to sync all pending operations before kernel launch
-        // by reading from a buffer (this ensures all previous writes are flushed)
-        let _ = self.client.read_one(self.persistent_reduce_buffer.clone());
-
-        // Recreate output buffers to ensure fresh memory (avoids CubeCL caching issues)
-        let zeros6 = [0.0f32; 6];
-        let zero_i32 = [0i32; 1];
-        let zero_u32 = [0u32; 1];
-        let zeros36 = [0.0f32; 36];
-        self.persistent_out_pose = self.client.create(f32::as_bytes(&zeros6));
-        self.persistent_out_iterations = self.client.create(i32::as_bytes(&zero_i32));
-        self.persistent_out_converged = self.client.create(u32::as_bytes(&zero_u32));
-        self.persistent_out_score = self.client.create(f32::as_bytes(&[0.0f32]));
-        self.persistent_out_hessian = self.client.create(f32::as_bytes(&zeros36));
-        self.persistent_out_correspondences = self.client.create(u32::as_bytes(&zero_u32));
-        self.persistent_out_oscillation = self.client.create(u32::as_bytes(&zero_u32));
-        self.persistent_out_alpha_sum = self.client.create(f32::as_bytes(&[0.0f32]));
+        let _ = self.client.read_one(self.graph_state_buffer.clone());
 
         // Phase 19.4: Allocate debug buffer (only when debug-iteration feature is enabled)
         #[cfg(feature = "debug-iteration")]
-        let (debug_enabled, debug_ptr) = {
+        let debug_ptr = {
             let buffer_size = max_iterations as usize
-                * cuda_ffi::persistent_ndt::PersistentNdt::DEBUG_FLOATS_PER_ITER
+                * cuda_ffi::GRAPH_NDT_DEBUG_FLOATS_PER_ITER
                 * std::mem::size_of::<f32>();
-            self.persistent_debug_buffer = Some(self.client.empty(buffer_size));
+            self.graph_debug_buffer = Some(self.client.empty(buffer_size));
             self.max_iterations_for_debug = max_iterations;
-            (
-                true,
-                self.raw_ptr(self.persistent_debug_buffer.as_ref().unwrap()),
-            )
+            self.raw_ptr(self.graph_debug_buffer.as_ref().unwrap())
         };
         #[cfg(not(feature = "debug-iteration"))]
-        let (debug_enabled, debug_ptr) = (false, 0u64);
+        let debug_ptr = 0u64;
 
-        // Ensure all CubeCL operations are complete before cooperative kernel launch.
-        // This ensures:
-        // 1. All CubeCL buffer writes (source points, voxels, hash table) are complete
-        // 2. Hash table from upload_alignment_data is fully visible
-        // 3. All output buffers are initialized
-        // Without this, the cooperative kernel may read uninitialized hash table
-        // causing it to loop through all slots (slow) or produce wrong results
+        // Ensure all CubeCL operations are complete before kernel launches
         cuda_ffi::cuda_device_synchronize()?;
 
-        // Launch persistent kernel with all features (Phase 17-18)
-        unsafe {
-            cuda_ffi::persistent_ndt_launch_raw(
-                self.raw_ptr(&self.source_points),
-                self.raw_ptr(&self.voxel_means),
-                self.raw_ptr(&self.voxel_inv_covs),
-                self.raw_ptr(&self.hash_table),
-                self.gauss_d1,
-                self.gauss_d2,
-                self.resolution,
-                self.num_points,
-                self.num_voxels,
-                self.hash_capacity,
-                max_iterations as i32,
-                transformation_epsilon as f32,
+        // Build configuration for graph kernels
+        let config = cuda_ffi::GraphNdtConfig::new(
+            self.gauss_d1,
+            self.gauss_d2,
+            self.resolution,
+            transformation_epsilon as f32,
+            self.num_points as u32,
+            self.num_voxels as u32,
+            self.hash_capacity,
+            max_iterations as i32,
+        );
+
+        // Apply configuration options
+        let config = if self.config.regularization_enabled {
+            config.with_regularization(
                 self.regularization_ref_x,
                 self.regularization_ref_y,
                 self.config.regularization_scale_factor,
-                self.config.regularization_enabled,
-                self.config.use_line_search,
-                8,                           // ls_num_candidates (default)
-                1e-4,                        // ls_mu (Armijo constant)
-                0.9,                         // ls_nu (curvature constant)
-                self.config.fixed_step_size, // Step size when line search disabled
-                self.raw_ptr(&self.persistent_initial_pose),
-                self.raw_ptr(&self.persistent_reduce_buffer),
-                self.raw_ptr(&self.persistent_out_pose),
-                self.raw_ptr(&self.persistent_out_iterations),
-                self.raw_ptr(&self.persistent_out_converged),
-                self.raw_ptr(&self.persistent_out_score),
-                self.raw_ptr(&self.persistent_out_hessian),
-                self.raw_ptr(&self.persistent_out_correspondences),
-                self.raw_ptr(&self.persistent_out_oscillation),
-                self.raw_ptr(&self.persistent_out_alpha_sum),
-                debug_enabled,
-                debug_ptr,
+            )
+        } else {
+            config
+        };
+
+        let config = if self.config.use_line_search {
+            config.with_line_search(true, 8, self.config.armijo_mu, self.config.wolfe_nu)
+        } else {
+            config.with_fixed_step(self.config.fixed_step_size)
+        };
+
+        #[cfg(feature = "debug-iteration")]
+        let config = config.with_debug(true);
+        #[cfg(not(feature = "debug-iteration"))]
+        let config = config.with_debug(false);
+
+        // Get raw device pointers
+        let d_source_points = self.raw_ptr(&self.source_points);
+        let d_voxel_means = self.raw_ptr(&self.voxel_means);
+        let d_voxel_inv_covs = self.raw_ptr(&self.voxel_inv_covs);
+        let d_hash_table = self.raw_ptr(&self.hash_table);
+        let d_initial_pose = self.raw_ptr(&self.graph_initial_pose);
+        let d_state_buffer = self.raw_ptr(&self.graph_state_buffer);
+        let d_reduce_buffer = self.raw_ptr(&self.graph_reduce_buffer);
+        let d_ls_buffer = self.raw_ptr(&self.graph_ls_buffer);
+        let d_output_buffer = self.raw_ptr(&self.graph_output_buffer);
+
+        // K1: Initialize state from initial pose
+        unsafe {
+            cuda_ffi::graph_ndt_launch_init_raw(
+                d_initial_pose,
+                d_state_buffer,
+                d_reduce_buffer,
+                d_ls_buffer,
+                None, // Use default stream
             )?;
         }
+        cuda_ffi::cuda_device_synchronize()?;
 
-        // Download results
-        let pose_bytes = self.client.read_one(self.persistent_out_pose.clone());
-        let pose_f32 = f32::from_bytes(&pose_bytes);
-        let pose: [f64; 6] = std::array::from_fn(|i| pose_f32[i] as f64);
+        // Iteration loop with K2-K5
+        for _ in 0..max_iterations {
+            unsafe {
+                cuda_ffi::graph_ndt_run_iteration_raw(
+                    d_source_points,
+                    d_voxel_means,
+                    d_voxel_inv_covs,
+                    d_hash_table,
+                    &config,
+                    d_state_buffer,
+                    d_reduce_buffer,
+                    d_ls_buffer,
+                    d_output_buffer,
+                    debug_ptr,
+                    None, // Use default stream
+                )?;
+            }
+            cuda_ffi::cuda_device_synchronize()?;
 
-        let iter_bytes = self.client.read_one(self.persistent_out_iterations.clone());
-        let iterations = i32::from_bytes(&iter_bytes)[0] as u32;
-
-        let converged_bytes = self.client.read_one(self.persistent_out_converged.clone());
-        let converged = u32::from_bytes(&converged_bytes)[0] != 0;
-
-        let score_bytes = self.client.read_one(self.persistent_out_score.clone());
-        let score = f32::from_bytes(&score_bytes)[0] as f64;
-
-        let hess_bytes = self.client.read_one(self.persistent_out_hessian.clone());
-        let hessian_flat = f32::from_bytes(&hess_bytes);
-        let mut hessian = [[0.0f64; 6]; 6];
-        for i in 0..6 {
-            for j in 0..6 {
-                hessian[i][j] = hessian_flat[i * 6 + j] as f64;
+            // Check convergence
+            let converged = unsafe { cuda_ffi::graph_ndt_check_converged(d_state_buffer)? };
+            if converged {
+                break;
             }
         }
 
-        // Download correspondence count
-        let corr_bytes = self
-            .client
-            .read_one(self.persistent_out_correspondences.clone());
-        let num_correspondences = u32::from_bytes(&corr_bytes)[0] as usize;
+        // Download results from output buffer
+        let output_bytes = self.client.read_one(self.graph_output_buffer.clone());
+        let output = f32::from_bytes(&output_bytes);
 
-        // Download oscillation count
-        let osc_bytes = self
-            .client
-            .read_one(self.persistent_out_oscillation.clone());
-        let oscillation_count = u32::from_bytes(&osc_bytes)[0] as usize;
+        // Parse output buffer (see ndt_graph_common.cuh OutputOffset)
+        let pose: [f64; 6] = std::array::from_fn(|i| output[i] as f64);
+        let iterations = output[6] as u32;
+        let converged = output[7] > 0.5;
+        let score = output[8] as f64;
 
-        // Download alpha sum and compute average (Phase 19.3)
-        let alpha_sum_bytes = self.client.read_one(self.persistent_out_alpha_sum.clone());
-        let alpha_sum = f32::from_bytes(&alpha_sum_bytes)[0] as f64;
-        let avg_alpha = if iterations > 0 {
-            alpha_sum / (iterations as f64)
-        } else {
-            1.0
-        };
+        // Extract Hessian (indices 9-44)
+        let mut hessian = [[0.0f64; 6]; 6];
+        for i in 0..6 {
+            for j in 0..6 {
+                hessian[i][j] = output[9 + i * 6 + j] as f64;
+            }
+        }
+
+        let num_correspondences = output[45] as usize;
+        let oscillation_count = output[46] as usize;
+        let avg_alpha = output[47] as f64;
 
         // Phase 19.4: Parse debug buffer (only when debug-iteration feature is enabled)
         #[cfg(feature = "debug-iteration")]

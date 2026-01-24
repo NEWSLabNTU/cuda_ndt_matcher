@@ -166,8 +166,8 @@ __global__ void ndt_graph_compute_kernel(
     const float* __restrict__ voxel_means,        // [V * 3]
     const float* __restrict__ voxel_inv_covs,     // [V * 9]
     const GraphHashEntry* __restrict__ hash_table,
-    // Configuration
-    const GraphNdtConfig* __restrict__ config,
+    // Configuration (passed by value to avoid host memory access)
+    GraphNdtConfig config,
     // State (read)
     const float* __restrict__ state_buffer,       // Read current pose
     // Reduction output (atomic add)
@@ -178,13 +178,13 @@ __global__ void ndt_graph_compute_kernel(
     float* partial_sums = smem;  // [REDUCE_SIZE * blockDim.x]
 
     uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
-    uint32_t num_points = config->num_points;
+    uint32_t num_points = config.num_points;
 
     // Pre-computed constants
-    float inv_resolution = 1.0f / config->resolution;
-    float radius_sq = config->resolution * config->resolution;
-    float gauss_d1 = config->gauss_d1;
-    float gauss_d2 = config->gauss_d2;
+    float inv_resolution = 1.0f / config.resolution;
+    float radius_sq = config.resolution * config.resolution;
+    float gauss_d1 = config.gauss_d1;
+    float gauss_d2 = config.gauss_d2;
 
     // Read current pose
     float pose[6];
@@ -220,7 +220,7 @@ __global__ void ndt_graph_compute_kernel(
         int32_t neighbor_indices[GRAPH_MAX_NEIGHBORS];
         int num_neighbors = graph_hash_query_inline(
             tx, ty, tz,
-            hash_table, config->hash_capacity, inv_resolution, radius_sq,
+            hash_table, config.hash_capacity, inv_resolution, radius_sq,
             voxel_means, neighbor_indices
         );
 
@@ -309,7 +309,7 @@ __global__ void ndt_graph_compute_kernel(
 // Grid: 1 block × 32 threads (or 1 thread for simplicity)
 
 __global__ void ndt_graph_solve_kernel(
-    const GraphNdtConfig* __restrict__ config,
+    GraphNdtConfig config,
     float* __restrict__ state_buffer,
     float* __restrict__ reduce_buffer,
     float* __restrict__ ls_buffer,
@@ -322,13 +322,13 @@ __global__ void ndt_graph_solve_kernel(
     float correspondence_count = reduce_buffer[ReduceOffset::CORRESPONDENCES];
 
     // Apply GNSS regularization if enabled
-    if (config->reg_enabled) {
+    if (config.reg_enabled) {
         float pose_x = state_buffer[StateOffset::POSE + 0];
         float pose_y = state_buffer[StateOffset::POSE + 1];
         float yaw = state_buffer[StateOffset::POSE + 5];
 
-        float dx = config->reg_ref_x - pose_x;
-        float dy = config->reg_ref_y - pose_y;
+        float dx = config.reg_ref_x - pose_x;
+        float dy = config.reg_ref_y - pose_y;
         float sin_yaw = sinf(yaw);
         float cos_yaw = cosf(yaw);
 
@@ -337,18 +337,18 @@ __global__ void ndt_graph_solve_kernel(
 
         // Score adjustment
         float weight = correspondence_count;
-        score += -config->reg_scale * weight * longitudinal * longitudinal;
+        score += -config.reg_scale * weight * longitudinal * longitudinal;
 
         // Gradient adjustments
-        float grad_x_delta = config->reg_scale * weight * 2.0f * cos_yaw * longitudinal;
-        float grad_y_delta = config->reg_scale * weight * 2.0f * sin_yaw * longitudinal;
+        float grad_x_delta = config.reg_scale * weight * 2.0f * cos_yaw * longitudinal;
+        float grad_y_delta = config.reg_scale * weight * 2.0f * sin_yaw * longitudinal;
         reduce_buffer[ReduceOffset::GRADIENT + 0] += grad_x_delta;
         reduce_buffer[ReduceOffset::GRADIENT + 1] += grad_y_delta;
 
         // Hessian adjustments (upper triangle indices)
-        float h00_delta = -config->reg_scale * weight * 2.0f * cos_yaw * cos_yaw;
-        float h01_delta = -config->reg_scale * weight * 2.0f * cos_yaw * sin_yaw;
-        float h11_delta = -config->reg_scale * weight * 2.0f * sin_yaw * sin_yaw;
+        float h00_delta = -config.reg_scale * weight * 2.0f * cos_yaw * cos_yaw;
+        float h01_delta = -config.reg_scale * weight * 2.0f * cos_yaw * sin_yaw;
+        float h11_delta = -config.reg_scale * weight * 2.0f * sin_yaw * sin_yaw;
         reduce_buffer[ReduceOffset::HESSIAN_UT + 0] += h00_delta;  // H[0,0]
         reduce_buffer[ReduceOffset::HESSIAN_UT + 1] += h01_delta;  // H[0,1]
         reduce_buffer[ReduceOffset::HESSIAN_UT + 6] += h11_delta;  // H[1,1]
@@ -386,7 +386,7 @@ __global__ void ndt_graph_solve_kernel(
     }
 
     // Prepare for line search or direct update
-    if (config->ls_enabled) {
+    if (config.ls_enabled) {
         // Direction check for maximization
         float dphi_0_val = 0.0f;
         for (int i = 0; i < 6; i++) {
@@ -410,8 +410,8 @@ __global__ void ndt_graph_solve_kernel(
 
         // Generate candidates (golden ratio decay from 1.0)
         float step = 1.0f;
-        int num_cands = (config->ls_num_candidates < GRAPH_MAX_LS_CANDIDATES)
-                        ? config->ls_num_candidates : GRAPH_MAX_LS_CANDIDATES;
+        int num_cands = (config.ls_num_candidates < GRAPH_MAX_LS_CANDIDATES)
+                        ? config.ls_num_candidates : GRAPH_MAX_LS_CANDIDATES;
         for (int k = 0; k < num_cands; k++) {
             state_buffer[StateOffset::ALPHA_CANDIDATES + k] = step;
             step *= 0.618f;
@@ -450,7 +450,7 @@ __global__ void ndt_graph_solve_kernel(
         float delta_norm = sqrtf(delta_norm_sq);
 
         float step_length = delta_norm;
-        if (step_length > config->fixed_step_size) step_length = config->fixed_step_size;
+        if (step_length > config.fixed_step_size) step_length = config.fixed_step_size;
 
         // Scale delta
         float scale = (delta_norm > 1e-10f) ? (step_length / delta_norm) : 0.0f;
@@ -476,8 +476,8 @@ __global__ void ndt_graph_linesearch_kernel(
     const float* __restrict__ voxel_means,
     const float* __restrict__ voxel_inv_covs,
     const GraphHashEntry* __restrict__ hash_table,
-    // Configuration
-    const GraphNdtConfig* __restrict__ config,
+    // Configuration (passed by value to avoid host memory access)
+    GraphNdtConfig config,
     // State (read)
     const float* __restrict__ state_buffer,
     // Line search buffer (read/write)
@@ -488,15 +488,15 @@ __global__ void ndt_graph_linesearch_kernel(
     float* partial_sums = smem;
 
     uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
-    uint32_t num_points = config->num_points;
+    uint32_t num_points = config.num_points;
 
-    float inv_resolution = 1.0f / config->resolution;
-    float radius_sq = config->resolution * config->resolution;
-    float gauss_d1 = config->gauss_d1;
-    float gauss_d2 = config->gauss_d2;
+    float inv_resolution = 1.0f / config.resolution;
+    float radius_sq = config.resolution * config.resolution;
+    float gauss_d1 = config.gauss_d1;
+    float gauss_d2 = config.gauss_d2;
 
-    int num_cands = (config->ls_num_candidates < GRAPH_MAX_LS_CANDIDATES)
-                    ? config->ls_num_candidates : GRAPH_MAX_LS_CANDIDATES;
+    int num_cands = (config.ls_num_candidates < GRAPH_MAX_LS_CANDIDATES)
+                    ? config.ls_num_candidates : GRAPH_MAX_LS_CANDIDATES;
 
     // Per-candidate accumulators
     constexpr int LS_VALUES_PER_CAND = 8;  // score + gradient[6] + corr
@@ -530,7 +530,7 @@ __global__ void ndt_graph_linesearch_kernel(
             int32_t neighbor_indices[GRAPH_MAX_NEIGHBORS];
             int num_neighbors = graph_hash_query_inline(
                 tx, ty, tz,
-                hash_table, config->hash_capacity, inv_resolution, radius_sq,
+                hash_table, config.hash_capacity, inv_resolution, radius_sq,
                 voxel_means, neighbor_indices
             );
 
@@ -616,7 +616,7 @@ __global__ void ndt_graph_linesearch_kernel(
 // Grid: 1 block × 1 thread
 
 __global__ void ndt_graph_update_kernel(
-    const GraphNdtConfig* __restrict__ config,
+    GraphNdtConfig config,
     float* __restrict__ state_buffer,
     float* __restrict__ reduce_buffer,
     float* __restrict__ ls_buffer,
@@ -628,9 +628,9 @@ __global__ void ndt_graph_update_kernel(
     int iter = (int)state_buffer[StateOffset::ITERATIONS];
 
     // Process line search results if enabled
-    if (config->ls_enabled) {
-        int num_cands = (config->ls_num_candidates < GRAPH_MAX_LS_CANDIDATES)
-                        ? config->ls_num_candidates : GRAPH_MAX_LS_CANDIDATES;
+    if (config.ls_enabled) {
+        int num_cands = (config.ls_num_candidates < GRAPH_MAX_LS_CANDIDATES)
+                        ? config.ls_num_candidates : GRAPH_MAX_LS_CANDIDATES;
 
         float phi_0 = ls_buffer[LineSearchOffset::PHI_0];
         float dphi_0 = ls_buffer[LineSearchOffset::DPHI_0];
@@ -646,7 +646,7 @@ __global__ void ndt_graph_update_kernel(
             float corr_k = ls_buffer[LineSearchOffset::CAND_CORR + k];
 
             // Apply regularization to candidate score if enabled
-            if (config->reg_enabled) {
+            if (config.reg_enabled) {
                 float trial_pose_x = state_buffer[StateOffset::ORIGINAL_POSE + 0] +
                                     alpha * state_buffer[StateOffset::DELTA + 0];
                 float trial_pose_y = state_buffer[StateOffset::ORIGINAL_POSE + 1] +
@@ -654,12 +654,12 @@ __global__ void ndt_graph_update_kernel(
                 float trial_yaw = state_buffer[StateOffset::ORIGINAL_POSE + 5] +
                                  alpha * state_buffer[StateOffset::DELTA + 5];
 
-                float dx = config->reg_ref_x - trial_pose_x;
-                float dy = config->reg_ref_y - trial_pose_y;
+                float dx = config.reg_ref_x - trial_pose_x;
+                float dy = config.reg_ref_y - trial_pose_y;
                 float sin_yaw = sinf(trial_yaw);
                 float cos_yaw = cosf(trial_yaw);
                 float longitudinal = dy * sin_yaw + dx * cos_yaw;
-                phi_k += -config->reg_scale * corr_k * longitudinal * longitudinal;
+                phi_k += -config.reg_scale * corr_k * longitudinal * longitudinal;
             }
 
             // Compute directional derivative
@@ -670,8 +670,8 @@ __global__ void ndt_graph_update_kernel(
             }
 
             // Strong Wolfe conditions
-            bool armijo = phi_k >= phi_0 + config->ls_mu * alpha * dphi_0;
-            bool curvature = fabsf(dphi_k) <= config->ls_nu * fabsf(dphi_0);
+            bool armijo = phi_k >= phi_0 + config.ls_mu * alpha * dphi_0;
+            bool curvature = fabsf(dphi_k) <= config.ls_nu * fabsf(dphi_0);
 
             if (armijo && curvature) {
                 best_alpha = alpha;
@@ -746,17 +746,17 @@ __global__ void ndt_graph_update_kernel(
     state_buffer[StateOffset::PREV_POS + 2] = state_buffer[StateOffset::POSE + 2];
 
     // Accumulate alpha
-    float alpha_this_iter = config->ls_enabled ?
-        ls_buffer[LineSearchOffset::BEST_ALPHA] : config->fixed_step_size;
+    float alpha_this_iter = config.ls_enabled ?
+        ls_buffer[LineSearchOffset::BEST_ALPHA] : config.fixed_step_size;
     state_buffer[StateOffset::ALPHA_SUM] += alpha_this_iter;
 
     // Check convergence
     float step_len = state_buffer[StateOffset::ACTUAL_STEP_LEN];
-    bool converged = step_len < sqrtf(config->epsilon_sq);
+    bool converged = step_len < sqrtf(config.epsilon_sq);
     state_buffer[StateOffset::CONVERGED] = converged ? 1.0f : 0.0f;
 
     // Write debug data if enabled
-    if (config->debug_enabled && debug_buffer != nullptr) {
+    if (config.debug_enabled && debug_buffer != nullptr) {
         float* iter_debug = &debug_buffer[iter * DebugOffset::PER_ITER_SIZE];
         iter_debug[DebugOffset::ITERATION] = (float)iter;
         iter_debug[DebugOffset::SCORE] = reduce_buffer[ReduceOffset::SCORE];
@@ -764,7 +764,7 @@ __global__ void ndt_graph_update_kernel(
         // Pose before is in ORIGINAL_POSE if line search, else approximate
         for (int i = 0; i < 6; i++) {
             iter_debug[DebugOffset::POSE_BEFORE + i] =
-                config->ls_enabled ? state_buffer[StateOffset::ORIGINAL_POSE + i]
+                config.ls_enabled ? state_buffer[StateOffset::ORIGINAL_POSE + i]
                                   : state_buffer[StateOffset::POSE + i] -
                                     state_buffer[StateOffset::ACTUAL_STEP_LEN] *
                                     state_buffer[StateOffset::DELTA + i] /
@@ -805,7 +805,7 @@ __global__ void ndt_graph_update_kernel(
     }
 
     // Clear line search reduction slots for next iteration
-    if (config->ls_enabled) {
+    if (config.ls_enabled) {
         for (int k = 0; k < GRAPH_MAX_LS_CANDIDATES; k++) {
             ls_buffer[LineSearchOffset::CAND_SCORES + k] = 0.0f;
             ls_buffer[LineSearchOffset::CAND_CORR + k] = 0.0f;
@@ -819,7 +819,7 @@ __global__ void ndt_graph_update_kernel(
     state_buffer[StateOffset::ITERATIONS] = (float)(iter + 1);
 
     // Write final output if converged or at max iterations
-    if (converged || (iter + 1) >= config->max_iterations) {
+    if (converged || (iter + 1) >= config.max_iterations) {
         for (int i = 0; i < 6; i++) {
             output_buffer[OutputOffset::FINAL_POSE + i] = state_buffer[StateOffset::POSE + i];
         }
@@ -896,7 +896,7 @@ CudaError ndt_graph_launch_compute(
     ndt_graph_compute_kernel<<<num_blocks, GRAPH_BLOCK_SIZE, shared_mem, stream>>>(
         source_points, voxel_means, voxel_inv_covs,
         (const GraphHashEntry*)hash_table,
-        config, state_buffer, reduce_buffer
+        *config, state_buffer, reduce_buffer
     );
     return cudaGetLastError();
 }
@@ -911,7 +911,7 @@ CudaError ndt_graph_launch_solve(
     cudaStream_t stream
 ) {
     ndt_graph_solve_kernel<<<1, 1, 0, stream>>>(
-        config, state_buffer, reduce_buffer, ls_buffer, output_buffer
+        *config, state_buffer, reduce_buffer, ls_buffer, output_buffer
     );
     return cudaGetLastError();
 }
@@ -934,7 +934,7 @@ CudaError ndt_graph_launch_linesearch(
     ndt_graph_linesearch_kernel<<<num_blocks, GRAPH_BLOCK_SIZE, shared_mem, stream>>>(
         source_points, voxel_means, voxel_inv_covs,
         (const GraphHashEntry*)hash_table,
-        config, state_buffer, ls_buffer
+        *config, state_buffer, ls_buffer
     );
     return cudaGetLastError();
 }
@@ -950,7 +950,7 @@ CudaError ndt_graph_launch_update(
     cudaStream_t stream
 ) {
     ndt_graph_update_kernel<<<1, 1, 0, stream>>>(
-        config, state_buffer, reduce_buffer, ls_buffer, output_buffer, debug_buffer
+        *config, state_buffer, reduce_buffer, ls_buffer, output_buffer, debug_buffer
     );
     return cudaGetLastError();
 }

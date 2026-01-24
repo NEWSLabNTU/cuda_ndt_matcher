@@ -1,6 +1,6 @@
 # Phase 24: CUDA Graphs Pipeline
 
-**Status**: ⚠️ Partial (24.1, 24.2 complete)
+**Status**: ⚠️ Partial (24.1, 24.2, 24.3 complete)
 **Priority**: High
 **Motivation**: The cooperative groups persistent kernel (Phase 17) fails on GPUs with limited SM count (Jetson Orin) due to `CUDA_ERROR_COOPERATIVE_LAUNCH_TOO_LARGE` (error 720).
 
@@ -529,27 +529,38 @@ launches which works and can be upgraded to graph capture later.
 
 ### Sub-phase 24.3: Integration with Existing Pipeline
 
-**Goal**: Integrate graph pipeline as alternative to cooperative kernel
+**Status**: ✅ Complete
 
-**Tasks**:
-1. Add runtime selection in `FullGpuPipelineV2`:
-   ```rust
-   pub enum GpuBackend {
-       CooperativeKernel,  // Current implementation
-       CudaGraph,          // New graph-based implementation
-   }
-   ```
+**Goal**: Integrate graph pipeline as replacement for cooperative kernel
 
-2. Auto-detect backend based on GPU capabilities:
-   - Query max cooperative blocks
-   - If `num_blocks > max_cooperative_blocks`: use Graph
-   - Otherwise: use Cooperative (slightly faster)
+**Implementation**:
 
-3. Implement `GraphNdtPipeline::align()` matching existing API
+The cooperative kernel has been **fully replaced** by graph-based kernels in
+`FullGpuPipelineV2`. This is simpler than the originally planned dual-backend
+approach and ensures all GPUs (including Jetson Orin) work correctly.
 
-4. Add feature flag: `--features cuda-graph`
+**Changes made**:
 
-**Deliverable**: Drop-in replacement that works on all GPUs
+1. **`src/ndt_cuda/src/optimization/full_gpu_pipeline_v2.rs`**:
+   - Replaced persistent kernel buffers with graph kernel buffers
+   - Updated `with_config()` to allocate graph buffers
+   - Updated `optimize()` to use graph kernels:
+     - K1 init → `graph_ndt_launch_init_raw()`
+     - Iteration loop → `graph_ndt_run_iteration_raw()` (K2-K5)
+     - Convergence check → `graph_ndt_check_converged()`
+   - Updated debug buffer parsing for new layout
+
+2. **`src/cuda_ffi/csrc/ndt_graph_kernels.cu`**:
+   - Fixed config passing: kernels now take `GraphNdtConfig` by value
+     (not pointer) to avoid illegal memory access errors
+
+**Key design decision**: The graph-based kernels are now the **only**
+implementation. The cooperative kernel code remains in the codebase but is
+not used. This can be cleaned up in a future PR.
+
+**Tests**: All 10 `full_gpu_pipeline_v2` tests pass.
+
+**Deliverable**: Graph-based NDT that works on all CUDA GPUs
 
 ---
 

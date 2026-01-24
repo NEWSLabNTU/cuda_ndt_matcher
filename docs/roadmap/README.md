@@ -27,6 +27,7 @@ This document outlines the plan to implement custom CUDA kernels for NDT scan ma
 | Phase 19: Cleanup & Enhancements  | ✅ Complete  | Struct cleanup, alpha tracking, per-iteration debug      |
 | Phase 22: Batch Multi-Alignment   | ✅ Complete  | All sub-phases complete including 22.5 ROS integration   |
 | Phase 23: GPU Utilization         | ⚠️ Partial   | 23.1 complete (async streams), texture/warp pending      |
+| Phase 24: CUDA Graphs Pipeline    | ⚠️ Partial   | 24.1-24.3 complete; optimization/testing pending         |
 
 **Core NDT algorithm is fully implemented on CPU and matches Autoware's pclomp.**
 **GPU runtime uses persistent kernel (single launch) for all optimization.**
@@ -62,6 +63,7 @@ buffer writes are complete before the cooperative kernel reads from them.
 - [Phase 19: Cleanup & Enhancements](phase-19-cleanup.md) ✅ - Struct cleanup, alpha tracking, per-iteration debug
 - [Phase 22: Batch Multi-Alignment](phase-22-batch-alignment.md) ✅ - Non-cooperative kernel for parallel multi-scan alignment
 - [Phase 23: GPU Utilization](phase-23-gpu-utilization.md) ⚠️ - 23.1 complete, texture/warp pending
+- [Phase 24: CUDA Graphs Pipeline](phase-24-cuda-graphs-pipeline.md) 📋 - Replace cooperative kernel for Jetson/small GPU compatibility
 - [Implementation Notes](implementation-notes.md) - Dependencies, risks, references
 
 ## Background
