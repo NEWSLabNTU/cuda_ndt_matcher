@@ -1,7 +1,9 @@
 //! Build script for cuda_ffi crate.
 //!
 //! Compiles CUDA code using nvcc and links against CUDA runtime.
+//! Compilation is parallelized using rayon's work-stealing thread pool.
 
+use rayon::prelude::*;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -24,6 +26,11 @@ fn main() {
     // Output directory
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
+    // Determine target architecture
+    // Default to Jetson Orin (sm_87), can be overridden via CUDA_ARCH env var
+    let cuda_arch = env::var("CUDA_ARCH").unwrap_or_else(|_| "87".to_string());
+    println!("cargo:rerun-if-env-changed=CUDA_ARCH");
+
     // Compile CUDA source files
     let cuda_sources = [
         "csrc/radix_sort.cu",
@@ -38,9 +45,10 @@ fn main() {
         "csrc/ndt_graph_kernels.cu",
     ];
 
-    for source in &cuda_sources {
-        compile_cuda_source(source, &out_dir, &cuda_include);
-    }
+    // Compile in parallel using rayon (work-stealing thread pool)
+    cuda_sources.par_iter().for_each(|source| {
+        compile_cuda_source(source, &out_dir, &cuda_include, &cuda_arch);
+    });
 
     // Link against CUDA runtime and cuSOLVER
     println!("cargo:rustc-link-search=native={}", cuda_lib.display());
@@ -62,6 +70,11 @@ fn main() {
     println!("cargo:rustc-link-lib=static=async_stream");
     println!("cargo:rustc-link-lib=static=texture_voxels");
     println!("cargo:rustc-link-lib=static=ndt_graph_kernels");
+
+    // Link these again after static libs to resolve symbols
+    // (linker is single-pass, so static libs need symbols from these)
+    println!("cargo:rustc-link-lib=cusolver"); // batched_solve needs cusolverDn*
+    println!("cargo:rustc-link-lib=stdc++"); // CUB needs C++ runtime
 
     // Rerun if CUDA sources change
     for source in &cuda_sources {
@@ -102,14 +115,20 @@ fn find_cuda_path() -> PathBuf {
 }
 
 /// Compile a CUDA source file using nvcc.
-fn compile_cuda_source(source: &str, out_dir: &Path, cuda_include: &Path) {
+///
+/// The `cuda_arch` parameter specifies the compute capability (e.g., "87" for sm_87).
+fn compile_cuda_source(source: &str, out_dir: &Path, cuda_include: &Path, cuda_arch: &str) {
     let source_path = PathBuf::from(source);
     let stem = source_path.file_stem().unwrap().to_str().unwrap();
     let obj_path = out_dir.join(format!("{stem}.o"));
     let lib_path = out_dir.join(format!("lib{stem}.a"));
 
+    // Build architecture flags
+    let arch_flag = format!("-arch=sm_{cuda_arch}");
+    let gencode_flag = format!("-gencode=arch=compute_{cuda_arch},code=sm_{cuda_arch}");
+
     // Compile with nvcc
-    let status = Command::new("nvcc")
+    let output = Command::new("nvcc")
         .args([
             "-c",
             "-o",
@@ -122,31 +141,34 @@ fn compile_cuda_source(source: &str, out_dir: &Path, cuda_include: &Path) {
             "-fPIC",
             // Optimize
             "-O3",
-            // Target architecture (adjust as needed)
-            "-arch=sm_75", // Turing (RTX 20xx, T4)
-            "-gencode=arch=compute_75,code=sm_75",
-            "-gencode=arch=compute_80,code=sm_80", // Ampere (RTX 30xx, A100)
-            "-gencode=arch=compute_86,code=sm_86", // Ampere (RTX 30xx mobile)
-            "-gencode=arch=compute_89,code=sm_89", // Ada Lovelace (RTX 40xx)
+            // Target single architecture for faster compilation
+            &arch_flag,
+            &gencode_flag,
         ])
-        .status()
+        .output()
         .expect("Failed to run nvcc. Is CUDA toolkit installed?");
 
-    if !status.success() {
-        panic!("nvcc compilation failed for {source}");
+    if !output.status.success() {
+        panic!(
+            "nvcc compilation failed for {source}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     // Create static library
-    let status = Command::new("ar")
+    let output = Command::new("ar")
         .args([
             "rcs",
             lib_path.to_str().unwrap(),
             obj_path.to_str().unwrap(),
         ])
-        .status()
+        .output()
         .expect("Failed to run ar");
 
-    if !status.success() {
-        panic!("ar failed to create library for {stem}");
+    if !output.status.success() {
+        panic!(
+            "ar failed to create library for {stem}:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }

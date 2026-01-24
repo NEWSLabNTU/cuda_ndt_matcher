@@ -950,6 +950,7 @@ name = "cuda_ffi"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "rayon",
  "thiserror 2.0.17",
 ]
 
