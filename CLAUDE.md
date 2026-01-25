@@ -62,6 +62,7 @@ src/
 | `NDT_DEBUG_COV=1` | Compare GPU vs CPU covariance (output via tracing::debug) |
 | `NDT_DUMP_VOXELS=1` | Dump voxel data to JSON for comparison |
 | `NDT_DUMP_VOXELS_FILE` | Output path (default: `/tmp/ndt_cuda_voxels.json`) |
+| `CUDA_ARCH` | CUDA compute capability (default: 87 for Jetson Orin) |
 
 **Pipeline config**: `PipelineV2Config::enable_debug = true` collects per-iteration debug data (score, gradient, Hessian, step size) from the graph kernels with zero overhead when disabled.
 
@@ -100,6 +101,22 @@ Enable features with: `cargo test --features test-verbose` or `cargo build --fea
 1. **No dynamic array indexing**: Use fully unrolled loops instead of `arr[i as usize]`
 2. **Parameter count limit**: Kernels with >12 parameters fail; combine buffers
 3. **No `as usize`**: Use explicit indices
+
+## Jetson Platform Notes
+
+**cudarc CUDA version feature**: The `cudarc` crate requires a CUDA version feature that matches the symbols available in Jetson's Tegra CUDA libraries. Jetson's libcuda.so and libcusolver.so are missing some symbols that desktop CUDA has:
+
+| Symbol | Required by | Available on Jetson |
+|--------|-------------|---------------------|
+| `cuEventElapsedTime_v2` | `cuda-12080`+ | ❌ No |
+| `cusolverDnXgeev` | `cuda-12060`+ | ❌ No |
+
+**Solution**: Use `cuda-12050` feature for cudarc to avoid missing symbol panics:
+```toml
+cudarc = { version = "0.18", features = ["cuda-12050", ...] }
+```
+
+Despite Jetson having CUDA 12.6 installed, `cuda-12050` is the highest compatible feature because Tegra drivers have a limited API surface.
 
 ## Key Files
 
@@ -210,7 +227,7 @@ cov = (sum_sq - n*mean*mean^T) / (n-1)    // Standard sample covariance
 
 **Verification**:
 - GPU vs CPU cov_sums comparison: ratio = 1.000000 (exact match)
-- All 350 unit tests pass
+- All 417 unit tests pass (351 ndt_cuda + 66 cuda_ffi)
 - All 7 Autoware comparison tests pass
 
 **Note**: The GPU pipeline in `statistics.rs` was already correct (accumulates centered deviations and divides by n-1). Only the CPU path in `types.rs::from_statistics` had the bug.
