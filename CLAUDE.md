@@ -63,7 +63,7 @@ src/
 | `NDT_DUMP_VOXELS=1` | Dump voxel data to JSON for comparison |
 | `NDT_DUMP_VOXELS_FILE` | Output path (default: `/tmp/ndt_cuda_voxels.json`) |
 
-**Pipeline config**: `PipelineV2Config::enable_debug = true` collects per-iteration debug data (score, gradient, Hessian, step size) from the persistent kernel with zero overhead when disabled.
+**Pipeline config**: `PipelineV2Config::enable_debug = true` collects per-iteration debug data (score, gradient, Hessian, step size) from the graph kernels with zero overhead when disabled.
 
 ## Cargo Features
 
@@ -105,9 +105,12 @@ Enable features with: `cargo test --features test-verbose` or `cargo build --fea
 
 | File | Purpose |
 |------|---------|
-| `ndt_cuda/src/optimization/full_gpu_pipeline_v2.rs` | Full GPU Newton with line search (persistent kernel) |
+| `ndt_cuda/src/optimization/full_gpu_pipeline_v2.rs` | Full GPU Newton with line search (graph kernels) |
 | `ndt_cuda/src/optimization/debug.rs` | Per-iteration debug data structures |
-| `cuda_ffi/csrc/persistent_ndt.cu` | CUDA persistent kernel with cooperative groups |
+| `cuda_ffi/csrc/ndt_graph_kernels.cu` | CUDA graph kernels (K1-K5) - Phase 24 |
+| `cuda_ffi/csrc/ndt_graph_common.cuh` | Buffer layouts and configuration for graph kernels |
+| `cuda_ffi/src/graph_ndt.rs` | Rust FFI bindings for graph kernels |
+| `cuda_ffi/csrc/persistent_ndt.cu` | Legacy: CUDA persistent kernel with cooperative groups |
 | `ndt_cuda/src/voxel_grid/gpu/pipeline.rs` | Zero-copy voxel grid construction |
 | `cuda_ndt_matcher/src/main.rs` | ROS node entry point |
 
