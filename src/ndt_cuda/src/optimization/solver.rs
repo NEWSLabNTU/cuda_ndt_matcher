@@ -213,7 +213,8 @@ impl NdtOptimizer {
                         pose: final_pose,
                         status: ConvergenceStatus::SingularHessian,
                         score: best_score,
-                        transform_probability: self.compute_transform_probability(best_score),
+                        transform_probability: self
+                            .compute_transform_probability(best_score, source_points.len()),
                         nvtl,
                         iterations: iteration,
                         hessian: last_hessian,
@@ -239,7 +240,10 @@ impl NdtOptimizer {
                     pose: final_pose,
                     status: ConvergenceStatus::Converged,
                     score: total_score,
-                    transform_probability: self.compute_transform_probability(total_score),
+                    transform_probability: self.compute_transform_probability(
+                        total_score,
+                        source_points.len(),
+                    ),
                     nvtl,
                     iterations: iteration + 1,
                     hessian: total_hessian,
@@ -290,7 +294,8 @@ impl NdtOptimizer {
             pose: final_pose,
             status: ConvergenceStatus::MaxIterations,
             score: best_score,
-            transform_probability: self.compute_transform_probability(best_score),
+            transform_probability: self
+                .compute_transform_probability(best_score, source_points.len()),
             nvtl,
             iterations: self.config.ndt.max_iterations,
             hessian: last_hessian,
@@ -423,7 +428,10 @@ impl NdtOptimizer {
             pose: final_pose,
             status,
             score: gpu_result.score,
-            transform_probability: self.compute_transform_probability(gpu_result.score),
+            transform_probability: self.compute_transform_probability(
+                gpu_result.score,
+                source_points.len(),
+            ),
             nvtl,
             iterations: gpu_result.iterations as usize,
             hessian,
@@ -537,7 +545,10 @@ impl NdtOptimizer {
                 pose: final_pose,
                 status,
                 score: gpu_result.score,
-                transform_probability: self.compute_transform_probability(gpu_result.score),
+                transform_probability: self.compute_transform_probability(
+                    gpu_result.score,
+                    source_points.len(),
+                ),
                 nvtl,
                 iterations: gpu_result.iterations as usize,
                 hessian,
@@ -687,18 +698,18 @@ impl NdtOptimizer {
         }
     }
 
-    /// Compute transform probability from NDT score.
+    /// Compute transform probability from NDT score and number of source points.
     ///
-    /// Transform probability is a normalized score that ranges from 0 to ~1,
-    /// where higher values indicate better alignment.
-    fn compute_transform_probability(&self, score: f64) -> f64 {
-        // NDT score is already positive (we negate d1 in the score function)
-        // Normalize by dividing by expected maximum
-        // The maximum occurs when all points are at voxel centers
-        //
-        // For now, just return the score directly
-        // TODO: proper normalization based on number of points
-        score.max(0.0)
+    /// Transform probability is the average score per source point, matching
+    /// Autoware's convention: `transform_probability = total_score / num_source_points`.
+    ///
+    /// This normalization makes the score comparable across different point cloud sizes.
+    fn compute_transform_probability(&self, score: f64, num_source_points: usize) -> f64 {
+        if num_source_points > 0 {
+            score / num_source_points as f64
+        } else {
+            0.0
+        }
     }
 
     /// Compute the condition number of a Hessian for diagnostics.
@@ -771,7 +782,11 @@ impl NdtOptimizer {
                     debug.convergence_status = "NoCorrespondences".to_string();
                     debug.total_iterations = iteration;
                     debug.set_final_pose(&pose);
-                    debug.final_score = derivatives.score;
+                    // Use normalized transform_probability for debug output (matches Autoware)
+                    debug.final_score = self.compute_transform_probability(
+                        derivatives.score,
+                        source_points.len(),
+                    );
                     debug.exe_time_ms = Some(start_time.elapsed().as_secs_f64() * 1000.0);
                     debug.build_arrays_from_iterations();
                     debug.add_initial_transformation();
@@ -804,7 +819,9 @@ impl NdtOptimizer {
                     debug.convergence_status = "SingularHessian".to_string();
                     debug.total_iterations = iteration;
                     debug.set_final_pose(&best_pose);
-                    debug.final_score = best_score;
+                    // Use normalized transform_probability for debug output (matches Autoware)
+                    debug.final_score =
+                        self.compute_transform_probability(best_score, source_points.len());
                     debug.compute_oscillation();
 
                     let final_pose = pose_vector_to_isometry(&best_pose);
@@ -818,7 +835,8 @@ impl NdtOptimizer {
                             pose: final_pose,
                             status: ConvergenceStatus::SingularHessian,
                             score: best_score,
-                            transform_probability: self.compute_transform_probability(best_score),
+                            transform_probability: self
+                                .compute_transform_probability(best_score, source_points.len()),
                             nvtl,
                             iterations: iteration,
                             hessian: last_hessian,
@@ -841,7 +859,11 @@ impl NdtOptimizer {
                 debug.convergence_status = "Converged".to_string();
                 debug.total_iterations = iteration + 1;
                 debug.set_final_pose(&pose);
-                debug.final_score = derivatives.score;
+                // Use normalized transform_probability for debug output (matches Autoware)
+                debug.final_score = self.compute_transform_probability(
+                    derivatives.score,
+                    derivatives.num_correspondences,
+                );
                 debug.compute_oscillation();
 
                 let final_pose = pose_vector_to_isometry(&pose);
@@ -855,8 +877,10 @@ impl NdtOptimizer {
                         pose: final_pose,
                         status: ConvergenceStatus::Converged,
                         score: derivatives.score,
-                        transform_probability: self
-                            .compute_transform_probability(derivatives.score),
+                        transform_probability: self.compute_transform_probability(
+                            derivatives.score,
+                            source_points.len(),
+                        ),
                         nvtl,
                         iterations: iteration + 1,
                         hessian: derivatives.hessian,
@@ -908,7 +932,9 @@ impl NdtOptimizer {
         debug.convergence_status = "MaxIterations".to_string();
         debug.total_iterations = self.config.ndt.max_iterations;
         debug.set_final_pose(&best_pose);
-        debug.final_score = best_score;
+        // Use normalized transform_probability for debug output (matches Autoware)
+        debug.final_score =
+            self.compute_transform_probability(best_score, source_points.len());
         debug.compute_oscillation();
 
         let final_pose = pose_vector_to_isometry(&best_pose);
@@ -923,7 +949,8 @@ impl NdtOptimizer {
                 pose: final_pose,
                 status: ConvergenceStatus::MaxIterations,
                 score: best_score,
-                transform_probability: self.compute_transform_probability(best_score),
+                transform_probability: self
+                    .compute_transform_probability(best_score, source_points.len()),
                 nvtl,
                 iterations: self.config.ndt.max_iterations,
                 hessian: last_hessian,

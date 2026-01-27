@@ -627,7 +627,13 @@ impl NdtScanMatcher {
             "MaxIterations".to_string()
         };
         debug.total_iterations = result.iterations;
-        debug.final_score = result.score;
+        // Use normalized transform_probability for debug output (matches Autoware)
+        // transform_probability = total_score / num_source_points
+        debug.final_score = if !source_points.is_empty() {
+            result.score / source_points.len() as f64
+        } else {
+            0.0
+        };
         debug.final_nvtl = result.nvtl;
         debug.oscillation_count = result.oscillation_count;
         debug.num_correspondences = Some(result.num_correspondences);
