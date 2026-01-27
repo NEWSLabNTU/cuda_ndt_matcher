@@ -58,6 +58,8 @@ pub struct InitPoseDebug {
     pub final_iterations: i32,
     /// Whether result is reliable (score >= threshold)
     pub reliable: bool,
+    /// Final pose [x, y, z, roll, pitch, yaw]
+    pub final_pose: [f64; 6],
 }
 
 #[cfg(feature = "debug-output")]
@@ -414,6 +416,7 @@ pub fn estimate_initial_pose(
     #[cfg(feature = "debug-output")]
     {
         let total_time_ms = total_start.elapsed().as_secs_f64() * 1000.0;
+        let (roll, pitch, yaw) = quaternion_to_rpy(&best_particle.result_pose.orientation);
         let debug = InitPoseDebug {
             entry_type: "init",
             total_time_ms,
@@ -426,6 +429,14 @@ pub fn estimate_initial_pose(
             final_score: best_particle.score,
             final_iterations: best_particle.iterations,
             reliable,
+            final_pose: [
+                best_particle.result_pose.position.x,
+                best_particle.result_pose.position.y,
+                best_particle.result_pose.position.z,
+                roll,
+                pitch,
+                yaw,
+            ],
         };
         write_init_debug(&debug);
     }

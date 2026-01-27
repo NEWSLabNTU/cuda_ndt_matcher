@@ -598,15 +598,19 @@ profile-init: build-cuda-profiling
     echo "============================================================"
 
     echo ""
-    echo "=== Step 1/3: Running CUDA with init mode ==="
+    echo "=== Step 1/4: Running CUDA with init mode ==="
     NDT_DEBUG_FILE="$LOG_DIR/ndt_cuda_profiling.jsonl" \
         ./scripts/run_demo.sh --cuda --init-mode \
             "$(realpath {{sample_map_dir}})" \
             "$(realpath {{sample_rosbag}})" \
             "{{rosbag_output_dir}}"
 
+    # Find the latest CUDA rosbag
+    CUDA_ROSBAG=$(ls -td {{rosbag_output_dir}}/cuda_* 2>/dev/null | head -1)
+    echo "CUDA rosbag: $CUDA_ROSBAG"
+
     echo ""
-    echo "=== Step 2/3: Running Autoware with init mode ==="
+    echo "=== Step 2/4: Running Autoware with init mode ==="
     NDT_DEBUG=1 \
     NDT_DEBUG_FILE="$LOG_DIR/ndt_autoware_profiling.jsonl" \
         ./scripts/run_demo.sh --init-mode \
@@ -614,9 +618,24 @@ profile-init: build-cuda-profiling
             "$(realpath {{sample_rosbag}})" \
             "{{rosbag_output_dir}}"
 
+    # Find the latest Autoware rosbag
+    AUTOWARE_ROSBAG=$(ls -td {{rosbag_output_dir}}/builtin_* 2>/dev/null | head -1)
+    echo "Autoware rosbag: $AUTOWARE_ROSBAG"
+
     echo ""
-    echo "=== Step 3/3: Analyzing results ==="
+    echo "=== Step 3/4: Analyzing timing results ==="
     python3 scripts/profile_ndt_comparison.py "$LOG_DIR"
+
+    echo ""
+    echo "=== Step 4/4: Comparing init poses from rosbags ==="
+    if [[ -n "$CUDA_ROSBAG" && -n "$AUTOWARE_ROSBAG" ]]; then
+        source /opt/autoware/1.5.0/setup.bash
+        python3 scripts/compare_init_poses.py "$CUDA_ROSBAG" "$AUTOWARE_ROSBAG" \
+            --output "$LOG_DIR/init_pose_comparison.txt"
+        cat "$LOG_DIR/init_pose_comparison.txt"
+    else
+        echo "Warning: Could not find rosbags for pose comparison"
+    fi
 
     echo ""
     echo "============================================================"
@@ -624,6 +643,29 @@ profile-init: build-cuda-profiling
     echo " Results: $LOG_DIR"
     echo " Latest:  {{logs_dir}}/profiling/latest"
     echo "============================================================"
+
+# Compare init poses from rosbag recordings
+compare-init-poses cuda_rosbag autoware_rosbag:
+    #!/usr/bin/env bash
+    source /opt/autoware/1.5.0/setup.bash
+    python3 scripts/compare_init_poses.py "{{cuda_rosbag}}" "{{autoware_rosbag}}"
+
+# Compare init poses from latest rosbags
+compare-init-poses-latest:
+    #!/usr/bin/env bash
+    set -e
+    CUDA_ROSBAG=$(ls -td {{rosbag_output_dir}}/cuda_* 2>/dev/null | head -1)
+    AUTOWARE_ROSBAG=$(ls -td {{rosbag_output_dir}}/builtin_* 2>/dev/null | head -1)
+    if [[ -z "$CUDA_ROSBAG" || -z "$AUTOWARE_ROSBAG" ]]; then
+        echo "Error: Could not find rosbags in {{rosbag_output_dir}}"
+        echo "  CUDA: $CUDA_ROSBAG"
+        echo "  Autoware: $AUTOWARE_ROSBAG"
+        exit 1
+    fi
+    echo "CUDA rosbag: $CUDA_ROSBAG"
+    echo "Autoware rosbag: $AUTOWARE_ROSBAG"
+    source /opt/autoware/1.5.0/setup.bash
+    python3 scripts/compare_init_poses.py "$CUDA_ROSBAG" "$AUTOWARE_ROSBAG"
 
 # Dump voxel grid data for comparison (CUDA)
 dump-voxels-cuda: build-cuda-debug-voxels

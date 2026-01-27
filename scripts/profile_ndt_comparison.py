@@ -58,6 +58,8 @@ class InitPoseStats:
     final_iterations_mean: float
     reliable_count: int
     reliable_percent: float
+    # Final pose [x, y, z, roll, pitch, yaw] - list of poses for each init
+    final_poses: List[List[float]]
 
 
 @dataclass
@@ -139,6 +141,7 @@ def compute_init_stats(name: str, entries: List[Dict]) -> Optional[InitPoseStats
     final_scores = [e['final_score'] for e in entries]
     final_iters = [e.get('final_iterations', 0) for e in entries]
     reliable = [e['reliable'] for e in entries]
+    final_poses = [e.get('final_pose', [0, 0, 0, 0, 0, 0]) for e in entries]
 
     # Per-particle time (average across all particles)
     per_particle_times = []
@@ -166,6 +169,7 @@ def compute_init_stats(name: str, entries: List[Dict]) -> Optional[InitPoseStats
         final_iterations_mean=float(np.mean(final_iters)),
         reliable_count=reliable_count,
         reliable_percent=(reliable_count / len(entries)) * 100 if entries else 0.0,
+        final_poses=final_poses,
     )
 
 
@@ -361,6 +365,73 @@ def print_init_stats(stats: InitPoseStats):
     print(f"    Mean final score:  {stats.final_score_mean:.4f}")
     print(f"    Mean iterations:   {stats.final_iterations_mean:.1f}")
     print(f"    Reliable:          {stats.reliable_count}/{stats.num_inits} ({stats.reliable_percent:.1f}%)")
+
+    # Print final poses if available
+    if stats.final_poses and any(p != [0, 0, 0, 0, 0, 0] for p in stats.final_poses):
+        print(f"\n  Final Poses:")
+        import math
+        for i, pose in enumerate(stats.final_poses):
+            if len(pose) == 6:
+                x, y, z, roll, pitch, yaw = pose
+                print(f"    Init {i+1}: x={x:.2f}, y={y:.2f}, z={z:.2f}, yaw={math.degrees(yaw):.1f}°")
+
+
+def print_init_pose_comparison(cuda_init: Optional[InitPoseStats], autoware_init: Optional[InitPoseStats]):
+    """Print comparison of initial poses between CUDA and Autoware."""
+    if not cuda_init or not autoware_init:
+        return
+
+    if not cuda_init.final_poses or not autoware_init.final_poses:
+        return
+
+    # Compare poses pairwise
+    import math
+    import numpy as np
+
+    print(f"\n{'='*60}")
+    print(f" Initial Pose Comparison (CUDA vs Autoware)")
+    print(f"{'='*60}")
+
+    num_pairs = min(len(cuda_init.final_poses), len(autoware_init.final_poses))
+    if num_pairs == 0:
+        print("  No poses to compare")
+        return
+
+    trans_diffs = []
+    yaw_diffs = []
+
+    for i in range(num_pairs):
+        cuda_pose = cuda_init.final_poses[i]
+        aw_pose = autoware_init.final_poses[i]
+
+        if len(cuda_pose) != 6 or len(aw_pose) != 6:
+            continue
+
+        # Translation difference (Euclidean)
+        dx = cuda_pose[0] - aw_pose[0]
+        dy = cuda_pose[1] - aw_pose[1]
+        dz = cuda_pose[2] - aw_pose[2]
+        trans_diff = math.sqrt(dx*dx + dy*dy + dz*dz)
+        trans_diffs.append(trans_diff)
+
+        # Yaw difference (handle wraparound)
+        cuda_yaw = cuda_pose[5]
+        aw_yaw = aw_pose[5]
+        yaw_diff = abs(cuda_yaw - aw_yaw)
+        # Normalize to [-pi, pi]
+        while yaw_diff > math.pi:
+            yaw_diff = 2 * math.pi - yaw_diff
+        yaw_diffs.append(math.degrees(yaw_diff))
+
+        print(f"\n  Init {i+1}:")
+        print(f"    CUDA:     x={cuda_pose[0]:8.2f}, y={cuda_pose[1]:8.2f}, z={cuda_pose[2]:6.2f}, yaw={math.degrees(cuda_pose[5]):6.1f}°")
+        print(f"    Autoware: x={aw_pose[0]:8.2f}, y={aw_pose[1]:8.2f}, z={aw_pose[2]:6.2f}, yaw={math.degrees(aw_pose[5]):6.1f}°")
+        print(f"    Diff:     Δpos={trans_diff:.3f}m, Δyaw={yaw_diff:.2f}°")
+
+    if trans_diffs:
+        print(f"\n  Summary (across {len(trans_diffs)} init(s)):")
+        print(f"    Position difference: mean={np.mean(trans_diffs):.3f}m, max={np.max(trans_diffs):.3f}m")
+        print(f"    Yaw difference:      mean={np.mean(yaw_diffs):.2f}°, max={np.max(yaw_diffs):.2f}°")
 
 
 def generate_markdown_report(
@@ -684,6 +755,10 @@ Examples:
         print_init_stats(cuda_init)
     if autoware_init:
         print_init_stats(autoware_init)
+
+    # Print init pose comparison
+    if cuda_init and autoware_init:
+        print_init_pose_comparison(cuda_init, autoware_init)
 
     # Load and display init-to-tracking times
     cuda_init_to_tracking = load_init_to_tracking_entries(files['cuda_release']) if 'cuda_release' in files else []
