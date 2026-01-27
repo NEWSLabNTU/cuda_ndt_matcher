@@ -478,3 +478,45 @@ analyze-iterations-autoware:
 # Analyze debug output from a specific file
 analyze-debug file:
     python3 tmp/analyze_debug.py {{file}}
+
+# === Accuracy Comparison (CUDA vs Autoware) ===
+
+# Compare poses from existing profiling logs
+compare-poses:
+    python3 scripts/compare_poses.py \
+        {{logs_dir}}/ndt_cuda_profiling.jsonl \
+        {{logs_dir}}/ndt_autoware_profiling.jsonl
+
+# Compare poses with verbose output (shows largest differences)
+compare-poses-verbose:
+    python3 scripts/compare_poses.py -v \
+        {{logs_dir}}/ndt_cuda_profiling.jsonl \
+        {{logs_dir}}/ndt_autoware_profiling.jsonl
+
+# Full accuracy test: run both implementations and compare poses
+accuracy-test: build-cuda-profiling
+    #!/usr/bin/env bash
+    set -e
+    echo "=== Running CUDA NDT ==="
+    mkdir -p {{logs_dir}}
+    NDT_DEBUG_FILE={{logs_dir}}/ndt_cuda_profiling.jsonl \
+        ./scripts/run_demo.sh --cuda \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}"
+
+    echo ""
+    echo "=== Running Autoware NDT ==="
+    cd tests/comparison && just run-profiling
+
+    echo ""
+    echo "=== Comparing Poses ==="
+    python3 scripts/compare_poses.py -v \
+        {{logs_dir}}/ndt_cuda_profiling.jsonl \
+        {{logs_dir}}/ndt_autoware_profiling.jsonl
+
+# Compare poses and output JSON (for CI/automated tests)
+compare-poses-json:
+    python3 scripts/compare_poses.py --json \
+        {{logs_dir}}/ndt_cuda_profiling.jsonl \
+        {{logs_dir}}/ndt_autoware_profiling.jsonl
