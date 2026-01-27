@@ -176,9 +176,24 @@ pkill -9 -f "ros2-daemon"              # ROS 2 CLI daemon
 **Release profiling** (minimal overhead, for accurate performance comparison):
 ```bash
 just profile-compare           # Full workflow: build, run both, compare
+just profile-quick             # Quick comparison (release builds only)
 just run-cuda-profiling        # CUDA with timing data only
 just run-builtin-profiling     # Autoware with timing data only
 just compare-profiling         # Analyze results
+```
+
+**Init pose profiling** (Monte Carlo pose initialization):
+```bash
+just profile-init              # Full workflow: run both with init mode, compare timing and poses
+just run-cuda-init             # CUDA with init mode
+just run-builtin-init          # Autoware with init mode
+```
+
+**Pose comparison** (from rosbag recordings):
+```bash
+just compare-init-poses-latest              # Compare poses from latest rosbags
+just compare-init-poses <cuda> <autoware>   # Compare specific rosbags
+just compare-poses                          # Compare tracking poses from profiling logs
 ```
 
 **Debug profiling** (full debug data, adds overhead):
@@ -193,14 +208,15 @@ just run-builtin-debug         # Autoware with all debug features
 | `build-cuda-profiling` | `profiling` | Minimal | Performance measurement |
 | `build-cuda-debug` | `debug` | Significant | Debug data collection |
 
-Output files:
-- `logs/ndt_cuda_profiling.jsonl` - CUDA timing data
-- `logs/ndt_autoware_profiling.jsonl` - Autoware timing data
-- `logs/ndt_cuda_debug.jsonl` - CUDA full debug data
-- `logs/ndt_autoware_debug.jsonl` - Autoware full debug data
+Output files (in `logs/profiling/<date>/`):
+- `ndt_cuda_profiling.jsonl` - CUDA timing data
+- `ndt_autoware_profiling.jsonl` - Autoware timing data
+- `init_pose_comparison.txt` - Init pose comparison results (from `profile-init`)
 
 Analysis scripts:
-- `tmp/profile_comparison.py` - Compare CUDA vs Autoware performance
+- `scripts/profile_ndt_comparison.py` - Compare CUDA vs Autoware performance
+- `scripts/compare_init_poses.py` - Compare init poses from rosbags
+- `scripts/compare_poses.py` - Compare tracking poses from profiling logs
 - `scripts/analyze_profile.py` - Analyze profile directory structure
 
 ## Comparison Testing
