@@ -97,6 +97,8 @@ Enable features with: `cargo test --features test-verbose` or `cargo build --fea
 
 **SmartPoseBuffer**: Rejects interpolation when target timestamp is before first pose (matches Autoware behavior). Does NOT use fallback to first pose.
 
+**ndt_align_srv Service Type**: Uses `autoware_internal_localization_msgs/srv/PoseWithCovarianceStamped` to match Autoware's `pose_initializer`. Init mode (`user_defined_initial_pose=false`) now works with Monte Carlo pose estimation.
+
 ## Coding Conventions
 
 - **Logging**: Use `rclrs::log_*!` in `cuda_ndt_matcher`, `tracing::*!` in `ndt_cuda`

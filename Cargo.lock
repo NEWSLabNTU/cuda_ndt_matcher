@@ -235,6 +235,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "autoware_internal_localization_msgs"
+version = "1.12.0"
+dependencies = [
+ "autoware_common_msgs",
+ "geometry_msgs",
+ "rosidl_runtime_rs",
+]
+
+[[package]]
 name = "autoware_map_msgs"
 version = "1.11.0"
 dependencies = [
@@ -970,6 +979,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "autoware_internal_debug_msgs",
+ "autoware_internal_localization_msgs",
  "autoware_map_msgs",
  "builtin_interfaces",
  "ctrlc",
@@ -3489,7 +3499,7 @@ dependencies = [
 
 [[package]]
 name = "tf2_msgs"
-version = "0.25.18"
+version = "0.25.17"
 dependencies = [
  "action_msgs",
  "builtin_interfaces",

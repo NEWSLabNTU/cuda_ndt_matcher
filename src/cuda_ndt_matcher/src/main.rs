@@ -46,7 +46,7 @@ use std_msgs::msg::Header;
 use std_srvs::srv::{SetBool, Trigger};
 use tf2_msgs::msg::TFMessage;
 use autoware_internal_debug_msgs::msg::{Float32Stamped, Int32Stamped};
-use tier4_localization_msgs::srv::PoseWithCovarianceStamped as PoseWithCovSrv;
+use autoware_internal_localization_msgs::srv::PoseWithCovarianceStamped as PoseWithCovSrv;
 use visualization::ParticleMarkerConfig;
 use visualization_msgs::msg::{Marker, MarkerArray};
 
@@ -55,8 +55,8 @@ type SetBoolRequest = std_srvs::srv::SetBool_Request;
 type SetBoolResponse = std_srvs::srv::SetBool_Response;
 type TriggerRequest = std_srvs::srv::Trigger_Request;
 type TriggerResponse = std_srvs::srv::Trigger_Response;
-type PoseWithCovSrvRequest = tier4_localization_msgs::srv::PoseWithCovarianceStamped_Request;
-type PoseWithCovSrvResponse = tier4_localization_msgs::srv::PoseWithCovarianceStamped_Response;
+type PoseWithCovSrvRequest = autoware_internal_localization_msgs::srv::PoseWithCovarianceStamped_Request;
+type PoseWithCovSrvResponse = autoware_internal_localization_msgs::srv::PoseWithCovarianceStamped_Response;
 
 /// Write init-to-tracking time to debug file (only with debug-output feature)
 #[cfg(feature = "debug-output")]
