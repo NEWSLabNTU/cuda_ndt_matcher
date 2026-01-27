@@ -58,6 +58,17 @@ type TriggerResponse = std_srvs::srv::Trigger_Response;
 type PoseWithCovSrvRequest = tier4_localization_msgs::srv::PoseWithCovarianceStamped_Request;
 type PoseWithCovSrvResponse = tier4_localization_msgs::srv::PoseWithCovarianceStamped_Response;
 
+/// Write init-to-tracking time to debug file (only with debug-output feature)
+#[cfg(feature = "debug-output")]
+fn write_init_to_tracking_debug(elapsed_ms: f64) {
+    let debug_file =
+        std::env::var("NDT_DEBUG_FILE").unwrap_or_else(|_| "/tmp/ndt_cuda_debug.jsonl".to_string());
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&debug_file) {
+        let json = format!(r#"{{"type":"init_to_tracking","elapsed_ms":{:.2}}}"#, elapsed_ms);
+        let _ = writeln!(file, "{}", json);
+    }
+}
+
 const NODE_NAME: &str = "ndt_scan_matcher";
 
 /// Convert nalgebra Isometry3 to geometry_msgs Pose
@@ -501,6 +512,15 @@ impl NdtScanMatcherNode {
             })?
         };
 
+        // Debug: Track time from init request to tracking enabled
+        #[cfg(feature = "debug-output")]
+        let init_request_time: Arc<std::sync::Mutex<Option<std::time::Instant>>> =
+            Arc::new(std::sync::Mutex::new(None));
+        #[cfg(feature = "debug-output")]
+        let init_request_time_for_align = Arc::clone(&init_request_time);
+        #[cfg(feature = "debug-output")]
+        let init_request_time_for_trigger = Arc::clone(&init_request_time);
+
         // Trigger service
         let trigger_srv = {
             let enabled = Arc::clone(&enabled);
@@ -513,6 +533,16 @@ impl NdtScanMatcherNode {
                     // Clear pose buffer when enabling (matches Autoware behavior)
                     // This ensures we start fresh with EKF poses from after initialization
                     if req.data {
+                        // Log init-to-tracking time
+                        #[cfg(feature = "debug-output")]
+                        {
+                            if let Some(start) = init_request_time_for_trigger.lock().unwrap().take() {
+                                let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+                                log_info!(NODE_NAME, "Init-to-tracking time: {:.2}ms", elapsed_ms);
+                                // Write to debug file
+                                write_init_to_tracking_debug(elapsed_ms);
+                            }
+                        }
                         pose_buffer.clear();
                         log_info!(NODE_NAME, "NDT scan matcher enabled (pose buffer cleared)");
                     } else {
@@ -531,6 +561,7 @@ impl NdtScanMatcherNode {
 
         // NDT align service (initial pose estimation)
         // This service is called by pose_initializer with an initial pose guess
+
         let ndt_align_srv = {
             let ndt_manager = Arc::clone(&ndt_manager);
             let map_points = Arc::clone(&map_points);
@@ -541,6 +572,15 @@ impl NdtScanMatcherNode {
             node.create_service::<PoseWithCovSrv, _>(
                 "ndt_align_srv",
                 move |req: PoseWithCovSrvRequest, _info: rclrs::ServiceInfo| {
+                    // Record init request time for end-to-end tracking
+                    #[cfg(feature = "debug-output")]
+                    {
+                        let mut guard = init_request_time_for_align.lock().unwrap();
+                        if guard.is_none() {
+                            *guard = Some(std::time::Instant::now());
+                        }
+                    }
+
                     Self::on_ndt_align(
                         req,
                         &ndt_manager,

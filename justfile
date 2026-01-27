@@ -397,50 +397,233 @@ run-cuda-debug-voxels: build-cuda-debug-voxels
             "{{rosbag_output_dir}}"
 
 # Run CUDA with profiling only (minimal overhead timing data)
-run-cuda-profiling: build-cuda-profiling
-    mkdir -p {{logs_dir}}
-    NDT_DEBUG_FILE={{logs_dir}}/ndt_cuda_profiling.jsonl \
-        ./scripts/run_demo.sh --cuda \
-            "$(realpath {{sample_map_dir}})" \
-            "$(realpath {{sample_rosbag}})" \
-            "{{rosbag_output_dir}}"
-
-# Run Autoware with profiling (timing data for comparison)
-run-builtin-profiling:
-    mkdir -p {{logs_dir}}
-    cd tests/comparison && just run-profiling
-
-# Compare CUDA and Autoware profiling results
-compare-profiling:
-    python3 tmp/profile_comparison.py
-
-# Full profiling comparison: build, run both, compare
-profile-compare: build-cuda-profiling
+# Saves to dated directory: logs/profiling/YYYY-MM-DD_HHMMSS/
+run-cuda-profiling log_dir="": build-cuda-profiling
     #!/usr/bin/env bash
     set -e
-    echo "=== Building CUDA with profiling ==="
-    # Already built by dependency
+    if [[ -z "{{log_dir}}" ]]; then
+        LOG_DIR=$(python3 scripts/profile_ndt_comparison.py --create-dir)
+    else
+        LOG_DIR="{{log_dir}}"
+        mkdir -p "$LOG_DIR"
+    fi
+    echo "Profiling output: $LOG_DIR"
+    NDT_DEBUG_FILE="$LOG_DIR/ndt_cuda_profiling.jsonl" \
+        ./scripts/run_demo.sh --cuda \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}"
+    echo "CUDA profiling saved to: $LOG_DIR/ndt_cuda_profiling.jsonl"
+
+# Run Autoware with profiling (timing data for comparison)
+# Saves to dated directory: logs/profiling/YYYY-MM-DD_HHMMSS/
+run-builtin-profiling log_dir="":
+    #!/usr/bin/env bash
+    set -e
+    if [[ -z "{{log_dir}}" ]]; then
+        # Use latest if exists, otherwise create new
+        if [[ -L "{{logs_dir}}/profiling/latest" ]]; then
+            LOG_DIR=$(readlink -f "{{logs_dir}}/profiling/latest")
+        else
+            LOG_DIR=$(python3 scripts/profile_ndt_comparison.py --create-dir)
+        fi
+    else
+        LOG_DIR="{{log_dir}}"
+        mkdir -p "$LOG_DIR"
+    fi
+    echo "Profiling output: $LOG_DIR"
+    NDT_DEBUG=1 \
+    NDT_DEBUG_FILE="$LOG_DIR/ndt_autoware_profiling.jsonl" \
+        ./scripts/run_demo.sh \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}"
+    echo "Autoware profiling saved to: $LOG_DIR/ndt_autoware_profiling.jsonl"
+
+# Compare CUDA and Autoware profiling results (analyzes latest by default)
+compare-profiling log_dir="":
+    #!/usr/bin/env bash
+    if [[ -z "{{log_dir}}" ]]; then
+        python3 scripts/profile_ndt_comparison.py
+    else
+        python3 scripts/profile_ndt_comparison.py "{{log_dir}}"
+    fi
+
+# Full profiling comparison: build, run both implementations, analyze results
+# Creates dated directory: logs/profiling/YYYY-MM-DD_HHMMSS/ with 'latest' symlink
+profile-compare: build-cuda-profiling build-cuda-debug
+    #!/usr/bin/env bash
+    set -e
+
+    # Create dated log directory
+    LOG_DIR=$(python3 scripts/profile_ndt_comparison.py --create-dir)
+    echo "============================================================"
+    echo " NDT Profiling Comparison"
+    echo " Output directory: $LOG_DIR"
+    echo "============================================================"
 
     echo ""
-    echo "=== Running CUDA profiling ==="
-    mkdir -p {{logs_dir}}
-    NDT_DEBUG_FILE={{logs_dir}}/ndt_cuda_profiling.jsonl \
+    echo "=== Step 1/4: Running CUDA (release/profiling build) ==="
+    NDT_DEBUG_FILE="$LOG_DIR/ndt_cuda_profiling.jsonl" \
         ./scripts/run_demo.sh --cuda \
             "$(realpath {{sample_map_dir}})" \
             "$(realpath {{sample_rosbag}})" \
             "{{rosbag_output_dir}}"
 
     echo ""
-    echo "=== Running Autoware profiling ==="
-    cd tests/comparison && just run-profiling
+    echo "=== Step 2/4: Running Autoware (release build) ==="
+    NDT_DEBUG=1 \
+    NDT_DEBUG_FILE="$LOG_DIR/ndt_autoware_profiling.jsonl" \
+        ./scripts/run_demo.sh \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}"
 
     echo ""
-    echo "=== Comparing results ==="
-    python3 tmp/profile_comparison.py
+    echo "=== Step 3/4: Running CUDA (debug build for overhead analysis) ==="
+    NDT_DEBUG_FILE="$LOG_DIR/ndt_cuda_debug.jsonl" \
+        ./scripts/run_demo.sh --cuda \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}"
+
+    echo ""
+    echo "=== Step 4/4: Analyzing results ==="
+    python3 scripts/profile_ndt_comparison.py "$LOG_DIR"
+
+    echo ""
+    echo "============================================================"
+    echo " Profiling complete!"
+    echo " Results: $LOG_DIR"
+    echo " Latest:  {{logs_dir}}/profiling/latest -> $(basename $LOG_DIR)"
+    echo "============================================================"
+
+# Quick profiling: run release builds only (faster, no debug overhead analysis)
+profile-quick: build-cuda-profiling
+    #!/usr/bin/env bash
+    set -e
+
+    # Create dated log directory
+    LOG_DIR=$(python3 scripts/profile_ndt_comparison.py --create-dir)
+    echo "============================================================"
+    echo " Quick NDT Profiling (release builds only)"
+    echo " Output directory: $LOG_DIR"
+    echo "============================================================"
+
+    echo ""
+    echo "=== Step 1/3: Running CUDA (release build) ==="
+    NDT_DEBUG_FILE="$LOG_DIR/ndt_cuda_profiling.jsonl" \
+        ./scripts/run_demo.sh --cuda \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}"
+
+    echo ""
+    echo "=== Step 2/3: Running Autoware (release build) ==="
+    NDT_DEBUG=1 \
+    NDT_DEBUG_FILE="$LOG_DIR/ndt_autoware_profiling.jsonl" \
+        ./scripts/run_demo.sh \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}"
+
+    echo ""
+    echo "=== Step 3/3: Analyzing results ==="
+    python3 scripts/profile_ndt_comparison.py "$LOG_DIR"
+
+    echo ""
+    echo "============================================================"
+    echo " Profiling complete!"
+    echo " Results: $LOG_DIR"
+    echo " Latest:  {{logs_dir}}/profiling/latest"
+    echo "============================================================"
 
 # Run Autoware with per-iteration debug output (requires build-comparison first)
 run-builtin-debug:
     cd tests/comparison && just run-debug
+
+# === Init Pose Profiling ===
+
+# Run CUDA with init mode (Monte Carlo pose initialization)
+run-cuda-init log_dir="": build-cuda-profiling
+    #!/usr/bin/env bash
+    set -e
+    if [[ -z "{{log_dir}}" ]]; then
+        LOG_DIR=$(python3 scripts/profile_ndt_comparison.py --create-dir)
+    else
+        LOG_DIR="{{log_dir}}"
+        mkdir -p "$LOG_DIR"
+    fi
+    echo "Init profiling output: $LOG_DIR"
+    NDT_DEBUG_FILE="$LOG_DIR/ndt_cuda_profiling.jsonl" \
+        ./scripts/run_demo.sh --cuda --init-mode \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}"
+    echo "CUDA init profiling saved to: $LOG_DIR/ndt_cuda_profiling.jsonl"
+
+# Run Autoware with init mode (Monte Carlo pose initialization)
+run-builtin-init log_dir="":
+    #!/usr/bin/env bash
+    set -e
+    if [[ -z "{{log_dir}}" ]]; then
+        if [[ -L "{{logs_dir}}/profiling/latest" ]]; then
+            LOG_DIR=$(readlink -f "{{logs_dir}}/profiling/latest")
+        else
+            LOG_DIR=$(python3 scripts/profile_ndt_comparison.py --create-dir)
+        fi
+    else
+        LOG_DIR="{{log_dir}}"
+        mkdir -p "$LOG_DIR"
+    fi
+    echo "Init profiling output: $LOG_DIR"
+    NDT_DEBUG=1 \
+    NDT_DEBUG_FILE="$LOG_DIR/ndt_autoware_profiling.jsonl" \
+        ./scripts/run_demo.sh --init-mode \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}"
+    echo "Autoware init profiling saved to: $LOG_DIR/ndt_autoware_profiling.jsonl"
+
+# Profile init pose: run both CUDA and Autoware with Monte Carlo initialization
+profile-init: build-cuda-profiling
+    #!/usr/bin/env bash
+    set -e
+
+    # Create dated log directory
+    LOG_DIR=$(python3 scripts/profile_ndt_comparison.py --create-dir)
+    echo "============================================================"
+    echo " NDT Init Pose Profiling"
+    echo " Output directory: $LOG_DIR"
+    echo "============================================================"
+
+    echo ""
+    echo "=== Step 1/3: Running CUDA with init mode ==="
+    NDT_DEBUG_FILE="$LOG_DIR/ndt_cuda_profiling.jsonl" \
+        ./scripts/run_demo.sh --cuda --init-mode \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}"
+
+    echo ""
+    echo "=== Step 2/3: Running Autoware with init mode ==="
+    NDT_DEBUG=1 \
+    NDT_DEBUG_FILE="$LOG_DIR/ndt_autoware_profiling.jsonl" \
+        ./scripts/run_demo.sh --init-mode \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}"
+
+    echo ""
+    echo "=== Step 3/3: Analyzing results ==="
+    python3 scripts/profile_ndt_comparison.py "$LOG_DIR"
+
+    echo ""
+    echo "============================================================"
+    echo " Init profiling complete!"
+    echo " Results: $LOG_DIR"
+    echo " Latest:  {{logs_dir}}/profiling/latest"
+    echo "============================================================"
 
 # Dump voxel grid data for comparison (CUDA)
 dump-voxels-cuda: build-cuda-debug-voxels

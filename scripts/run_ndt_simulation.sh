@@ -11,6 +11,7 @@ COMPARISON_SETUP="$PROJECT_DIR/tests/comparison/install/setup.bash"
 
 USE_CUDA="false"
 RVIZ="true"
+INIT_MODE="false"
 MAP_PATH=""
 
 while [[ $# -gt 0 ]]; do
@@ -21,6 +22,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-rviz)
             RVIZ="false"
+            shift
+            ;;
+        --init-mode)
+            INIT_MODE="true"
             shift
             ;;
         *)
@@ -42,10 +47,16 @@ if [[ "$RVIZ" == "true" ]]; then
     fi
 fi
 
-# Always enable user-defined initial pose for demo runs
+# Enable user-defined initial pose for demo runs by default
 # This provides a consistent starting pose for reproducible testing
 # Without this, the EKF initializes to an unknown state
-USE_INITIAL_POSE="true"
+# Use --init-mode to disable this and test Monte Carlo pose init
+if [[ "$INIT_MODE" == "true" ]]; then
+    USE_INITIAL_POSE="false"
+    echo "Init mode: Monte Carlo pose initialization enabled"
+else
+    USE_INITIAL_POSE="true"
+fi
 
 # Source Autoware environment first, then local workspace as overlay
 source "$AUTOWARE_ACTIVATE"

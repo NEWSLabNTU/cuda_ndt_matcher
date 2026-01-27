@@ -12,12 +12,25 @@ COMPARISON_SETUP="$PROJECT_DIR/tests/comparison/install/setup.bash"
 # Source NDT topics
 source "$SCRIPT_DIR/ndt_topics.sh"
 
-# Parse --cuda flag
+# Parse flags
 USE_CUDA=""
-if [[ "${1:-}" == "--cuda" ]]; then
-    USE_CUDA="--cuda"
-    shift
-fi
+INIT_MODE=""
+while [[ "${1:-}" == --* ]]; do
+    case "$1" in
+        --cuda)
+            USE_CUDA="--cuda"
+            shift
+            ;;
+        --init-mode)
+            INIT_MODE="--init-mode"
+            shift
+            ;;
+        *)
+            echo "Unknown flag: $1" >&2
+            exit 1
+            ;;
+    esac
+done
 
 # Parse positional arguments
 MAP_DIR="$1"
@@ -34,6 +47,7 @@ fi
 
 echo "Starting NDT demo..."
 echo "  Mode: ${USE_CUDA:-builtin}"
+echo "  Init mode: ${INIT_MODE:-disabled}"
 echo "  Map: $MAP_DIR"
 echo "  Rosbag: $ROSBAG"
 echo "  Recording to: $BAG_NAME"
@@ -61,7 +75,7 @@ fi
 STARTUP_DELAY="${NDT_STARTUP_DELAY:-60}"
 
 parallel --halt now,done=1 --line-buffer ::: \
-    "$SCRIPT_DIR/run_ndt_simulation.sh $USE_CUDA '$MAP_DIR'" \
+    "$SCRIPT_DIR/run_ndt_simulation.sh $USE_CUDA $INIT_MODE '$MAP_DIR'" \
     "sleep $STARTUP_DELAY && source '$AUTOWARE_ACTIVATE' && ros2 bag play '$ROSBAG'" \
     "sleep $((STARTUP_DELAY + 5)) && source '$AUTOWARE_ACTIVATE' && ros2 bag record -o '$BAG_NAME' ${NDT_TOPICS[*]}"
 
