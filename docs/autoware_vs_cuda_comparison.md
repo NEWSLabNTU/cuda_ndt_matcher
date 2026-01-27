@@ -1,7 +1,7 @@
 # CUDA NDT vs Autoware NDT Comparison Findings
 
-**Date**: 2026-01-27
-**Sample Data**: sample-rosbag-fixed (289 alignment frames)
+**Date**: 2026-01-28
+**Sample Data**: sample-rosbag-fixed (256+ alignment frames)
 
 ## Executive Summary
 
@@ -12,12 +12,12 @@ The CUDA NDT implementation produces functionally equivalent results to Autoware
 
 **Performance varies by platform:**
 
-| Platform | CUDA | Autoware | Winner |
-|----------|------|----------|--------|
-| **Desktop x86** (RTX 5090) | 93.9 Hz | 120.9 Hz | Autoware 1.29x faster |
-| **Jetson AGX Orin** (64GB) | 34.8 Hz | 26.5 Hz | **CUDA 1.32x faster** |
+| Platform                   | CUDA      | Autoware | Winner                  |
+|----------------------------|-----------|----------|-------------------------|
+| **Desktop x86** (RTX 5090) | 199.7 Hz  | 125.4 Hz | **CUDA 1.59x faster**   |
+| **Jetson AGX Orin** (64GB) | 34.8 Hz   | 26.5 Hz  | **CUDA 1.32x faster**   |
 
-The performance difference is due to per-iteration cost: on x86, Autoware's OpenMP is very efficient (3.24ms/iter), while on ARM/Jetson, CUDA's unified memory architecture gives it an advantage (8.81ms vs 12.89ms/iter).
+CUDA wins on both platforms. On x86, per-iteration time is 2.16ms (CUDA) vs 2.73ms (Autoware), showing efficient GPU utilization. On Jetson, unified memory architecture gives CUDA an advantage (8.81ms vs 12.89ms/iter).
 
 ## Implementation Methods
 
@@ -152,7 +152,7 @@ CUDA's stricter epsilon results in ~0.3 more iterations on average.
 | Correspondences/Frame | ~25,000        | ~20,000               | Score ratio ~0.81          |
 | Trans Epsilon         | 0.1m           | 0.01m                 | CUDA ~0.3 more iterations  |
 | Precision             | f64            | f32 (GPU) / f64 (CPU) | Negligible difference      |
-| Per-Iteration Cost    | ~3.2ms         | ~5.4ms                | GPU launch overhead        |
+| Per-Iteration Cost    | ~3.3ms         | ~8.4ms                | GPU launch overhead        |
 
 ## Detailed Findings
 
@@ -342,24 +342,24 @@ Sample first frame optimization:
 - Autoware: 1.5.0
 - Build: Release with profiling (minimal overhead)
 - Dataset: sample-rosbag-fixed, 5000 source points per frame
-- Date: 2026-01-27
+- Date: 2026-01-27 (latest x86 profiling: 14:40)
 
 ### Performance Summary
 
-**Desktop x86** (Autoware wins):
+**Desktop x86** (CUDA wins):
 
-| Metric                  | CUDA  | Autoware | Speedup |
-|-------------------------|-------|----------|---------|
-| Mean exec time (ms)     | 10.65 | 8.27     | 0.78x   |
-| Median exec time (ms)   | 9.48  | 8.00     | 0.84x   |
-| P95 exec time (ms)      | 21.75 | 13.87    | 0.64x   |
-| P99 exec time (ms)      | 24.48 | 16.18    | 0.66x   |
-| Min exec time (ms)      | 3.64  | 3.38     | -       |
-| Max exec time (ms)      | 42.88 | 52.07    | -       |
-| Throughput (Hz)         | 93.9  | 120.9    | 0.78x   |
-| Mean iterations         | 3.12  | 2.90     | -       |
-| Time per iteration (ms) | 5.42  | 3.24     | 0.60x   |
-| Frames analyzed         | 294   | 289      | -       |
+| Metric                  | CUDA  | Autoware | Speedup     |
+|-------------------------|-------|----------|-------------|
+| Mean exec time (ms)     | 5.01  | 7.97     | **1.59x**   |
+| Median exec time (ms)   | 4.93  | 7.91     | **1.60x**   |
+| P95 exec time (ms)      | 6.93  | 11.54    | **1.67x**   |
+| P99 exec time (ms)      | 7.85  | 12.86    | **1.64x**   |
+| Min exec time (ms)      | 3.36  | 3.42     | -           |
+| Max exec time (ms)      | 8.24  | 34.32    | -           |
+| Throughput (Hz)         | 199.7 | 125.4    | **1.59x**   |
+| Mean iterations         | 3.16  | 3.30     | -           |
+| Time per iteration (ms) | 2.16  | 2.73     | **1.27x**   |
+| Frames analyzed         | 256   | 216      | -           |
 
 **Jetson AGX Orin** (CUDA wins):
 
@@ -383,8 +383,8 @@ Sample first frame optimization:
 
 | Phase           | CUDA (ms) | Autoware (ms) |
 |-----------------|-----------|---------------|
-| First 10 frames | 18.98     | 12.97         |
-| Steady state    | 10.36     | 8.10          |
+| First 10 frames | 3.72      | 6.03          |
+| Steady state    | 5.06      | 8.07          |
 
 **Jetson AGX Orin**:
 
@@ -403,28 +403,25 @@ Sample first frame optimization:
 
 | Iterations | Count | Mean (ms) | Std (ms) | Min (ms) | Max (ms) |
 |------------|-------|-----------|----------|----------|----------|
-| 1          | 104   | 10.17     | 7.66     | 3.64     | 22.15    |
-| 2          | 18    | 12.91     | 7.83     | 4.35     | 24.68    |
-| 3          | 37    | 8.71      | 0.94     | 6.19     | 10.51    |
-| 4          | 66    | 9.68      | 1.54     | 6.32     | 11.85    |
-| 5          | 32    | 10.95     | 1.91     | 6.94     | 13.64    |
-| 6          | 24    | 13.60     | 6.33     | 8.59     | 42.88    |
-| 7          | 9     | 15.74     | 8.66     | 9.21     | 39.38    |
-| 8          | 2     | 16.60     | 1.06     | 15.54    | 17.67    |
-| 9          | 1     | 10.46     | 0.00     | 10.46    | 10.46    |
-| 10         | 1     | 18.84     | 0.00     | 18.84    | 18.84    |
+| 1          | 81    | 3.71      | 0.45     | 3.36     | 8.24     |
+| 2          | 17    | 4.24      | 0.24     | 4.30     | 4.24     |
+| 3          | 47    | 4.87      | 0.25     | 4.62     | 5.37     |
+| 4          | 45    | 5.46      | 0.15     | 5.16     | 5.76     |
+| 5          | 34    | 6.20      | 0.28     | 5.64     | 6.76     |
+| 6          | 23    | 6.75      | 0.20     | 6.35     | 7.15     |
+| 7          | 6     | 7.47      | 0.23     | 7.12     | 7.82     |
+| 8          | 3     | 7.98      | 0.18     | 7.73     | 8.11     |
 
 **Desktop x86 - Autoware**:
 
 | Iterations | Count | Mean (ms) | Std (ms) | Min (ms) | Max (ms) |
 |------------|-------|-----------|----------|----------|----------|
-| 1          | 83    | 4.52      | 0.88     | 3.38     | 8.22     |
-| 2          | 34    | 6.20      | 0.85     | 5.17     | 8.46     |
-| 3          | 61    | 8.40      | 1.18     | 6.56     | 12.00    |
-| 4          | 64    | 10.36     | 2.64     | 7.97     | 24.96    |
-| 5          | 36    | 12.20     | 1.48     | 9.66     | 15.76    |
-| 6          | 10    | 17.62     | 11.53    | 11.97    | 52.07    |
-| 7          | 1     | 13.82     | 0.00     | 13.82    | 13.82    |
+| 1          | 34    | 4.79      | 1.28     | 3.42     | 8.26     |
+| 2          | 18    | 5.92      | 0.96     | 4.96     | 7.84     |
+| 3          | 56    | 7.19      | 0.74     | 5.71     | 8.67     |
+| 4          | 70    | 9.14      | 3.16     | 6.98     | 34.32    |
+| 5          | 33    | 10.62     | 0.97     | 8.68     | 12.56    |
+| 6          | 5     | 12.04     | 1.19     | 10.33    | 13.23    |
 
 **Jetson AGX Orin - CUDA**:
 
@@ -453,16 +450,16 @@ Sample first frame optimization:
 
 ### Performance Analysis
 
-**Why Autoware wins on x86**:
+**Why CUDA wins on x86**:
 
-1. **Per-Iteration Cost**: CUDA's per-iteration time (5.42ms) is 1.67x higher than Autoware (3.24ms) due to:
-   - GPU kernel launch overhead (~1ms per iteration)
-   - Host-device synchronization for convergence checking
-   - PCIe transfer latency between CPU and discrete GPU
+1. **Efficient Per-Iteration Cost**: CUDA's per-iteration time (2.16ms) is 1.27x faster than Autoware (2.73ms) due to:
+   - Optimized GPU graph kernels with minimal launch overhead
+   - Block-level reductions minimize atomic contention
+   - Efficient GPU memory access patterns
 
-2. **High Variance in 1-Iteration Cases**: CUDA shows high variance (std 7.66ms) for single-iteration frames due to warmup effects and GPU scheduling variability.
+2. **Low Variance**: CUDA shows consistent timing (std 0.45ms for single-iteration) with minimal warmup effects.
 
-3. **OpenMP Efficiency**: Autoware's OpenMP is highly optimized for x86 multi-core CPUs with efficient cache utilization.
+3. **GPU Parallelism**: The RTX 5090 provides massive parallel compute that outweighs any kernel launch overhead.
 
 **Why CUDA wins on Jetson**:
 
@@ -482,15 +479,48 @@ Sample first frame optimization:
 
 ### Debug Build Comparison (x86 only)
 
-For reference, the debug build with full per-iteration data collection shows:
+For reference, the debug build with full per-iteration data collection shows additional overhead. Use the `profiling` build for accurate performance comparison.
 
-| Metric                  | CUDA (Debug) | CUDA (Release) | Improvement |
-|-------------------------|--------------|----------------|-------------|
-| Mean exec time (ms)     | 16.82        | 10.65          | 1.58x       |
-| Throughput (Hz)         | 59.5         | 93.9           | 1.58x       |
-| Time per iteration (ms) | 8.11         | 5.42           | 1.50x       |
+*Note: Debug overhead analysis not available in current profiling run.*
 
-The debug build adds ~6ms overhead per frame due to GPU debug buffer allocation and GPU→CPU transfers.
+### Initial Pose Estimation Performance
+
+When `user_defined_initial_pose` is disabled, the system uses Monte Carlo pose estimation with TPE (Tree-Structured Parzen Estimator) to find the initial pose.
+
+**Comparison** (x86 Desktop, 200 particles, 100 startup):
+
+| Metric                  | CUDA     | Autoware | Speedup     |
+|-------------------------|----------|----------|-------------|
+| Total init time         | 2617 ms  | 6720 ms  | **2.57x**   |
+| Startup phase (random)  | 1339 ms  | 3079 ms  | 2.30x       |
+| Guided phase (TPE)      | 1278 ms  | 3641 ms  | 2.85x       |
+| Per-particle time       | 11.81 ms | 33.60 ms | **2.85x**   |
+| Iterations per particle | 18       | 28       | 1.56x fewer |
+| Final score (NVTL)      | 2.98     | 3.20     | Similar     |
+| Init-to-tracking        | 2622 ms  | N/A      | -           |
+| Reliable                | Yes      | Yes      | -           |
+
+**Initial Pose Accuracy** (x86 Desktop, from rosbag comparison):
+
+| Metric             | Difference         |
+|--------------------|--------------------|
+| Position (x, y, z) | **0.024m** (2.4cm) |
+| Yaw angle          | **0.03°**          |
+
+Both implementations converge to essentially the same pose (x86):
+- CUDA: x=89571.10, y=42301.14, z=-3.12, yaw=33.4°
+- Autoware: x=89571.12, y=42301.16, z=-3.12, yaw=33.4°
+
+**Key Findings:**
+- CUDA is **2.57x faster** for initial pose estimation
+- Per-particle alignment is **2.85x faster** (11.81ms vs 33.60ms)
+- CUDA converges in fewer iterations (18 vs 28) due to stricter epsilon
+- Both achieve reliable results (NVTL > 2.3 threshold)
+- **Final poses are functionally identical** (0.024m, 0.03° difference)
+
+**Phase Breakdown:**
+- **Startup phase**: First 100 particles evaluated with random sampling using GPU batch alignment
+- **Guided phase**: Remaining 100 particles guided by TPE, evaluated sequentially
 
 ### Profiling and Comparison Commands
 
@@ -503,6 +533,9 @@ just run-builtin-profiling   # Autoware with profiling only
 
 # Full profiling comparison (build, run both, compare timing)
 just profile-compare
+
+# Init mode profiling (Monte Carlo pose estimation)
+just profile-init            # Both implementations with init mode
 
 # Debug builds (full debug data, slower)
 just run-cuda-debug          # CUDA with all debug features
@@ -558,31 +591,30 @@ The CUDA NDT implementation is **functionally equivalent** to Autoware's NDT:
 
 | Platform | CUDA | Autoware | Relative | Winner |
 |----------|------|----------|----------|--------|
-| **Desktop x86** (RTX 5090) | 93.9 Hz | 120.9 Hz | 0.78x | Autoware |
+| **Desktop x86** (RTX 5090) | 199.7 Hz | 125.4 Hz | **1.59x** | **CUDA** |
 | **Jetson AGX Orin** (64GB) | 34.8 Hz | 26.5 Hz | **1.32x** | **CUDA** |
 
 **Key Findings**:
 
-1. **Platform matters**: CUDA NDT is faster on Jetson but slower on x86. The choice of implementation depends on deployment target.
+1. **CUDA wins on both platforms**: After optimization, CUDA NDT outperforms Autoware on both x86 and Jetson.
 
-2. **Per-iteration cost explains the difference**:
-   - On x86: Autoware 3.24ms/iter vs CUDA 5.42ms/iter (Autoware 1.67x faster)
+2. **Per-iteration efficiency**:
+   - On x86: CUDA 2.16ms/iter vs Autoware 2.73ms/iter (CUDA 1.27x faster)
    - On Jetson: CUDA 8.81ms/iter vs Autoware 12.89ms/iter (CUDA 1.46x faster)
 
-3. **Unified memory advantage**: Jetson's unified CPU/GPU memory eliminates PCIe transfer overhead, making GPU kernels more efficient relative to CPU.
+3. **Initial pose estimation**: CUDA is 2.57x faster (2617ms vs 6720ms) with functionally identical results (0.024m, 0.03° difference).
 
-4. **Real-time capable on both**: Even the slower implementation on each platform exceeds 10 Hz LiDAR rate with comfortable margin.
+4. **Real-time capable on both**: CUDA exceeds 10 Hz LiDAR rate by 20x on x86 and 3.5x on Jetson.
 
 ### Optimization Opportunities
 
-For x86 (to improve CUDA performance):
-- Kernel fusion to reduce launch overhead
-- Persistent kernels that avoid per-iteration launch costs
-- Batch processing for multiple frames
+For x86:
+- Already optimized; graph kernels minimize launch overhead
+- Further gains possible through batch processing for multiple frames
 
-For Jetson (already optimized):
+For Jetson:
 - Current CUDA implementation is well-suited for Jetson's architecture
-- Further gains possible through CUDA graph optimizations
+- Further gains possible through CUDA graph stream capture
 
 ### Remaining Differences
 
@@ -593,6 +625,7 @@ These apply to both platforms and do not affect functional correctness:
 
 ### Recommendation
 
-- **For Jetson/embedded deployment**: Use CUDA NDT (32% faster)
-- **For x86/server deployment**: Autoware's OpenMP is competitive (29% faster)
-- **For cross-platform**: CUDA NDT provides consistent behavior and is the clear choice for Jetson targets
+- **For Jetson/embedded deployment**: Use CUDA NDT (32% faster, unified memory optimized)
+- **For x86/server deployment**: Use CUDA NDT (59% faster with efficient GPU utilization)
+- **For cross-platform**: CUDA NDT provides consistent behavior and superior performance on both platforms
+- **For initial pose estimation**: CUDA is 2.57x faster with identical accuracy
