@@ -1,6 +1,6 @@
 # CUDA NDT vs Autoware NDT Comparison Findings
 
-**Date**: 2026-01-28
+**Date**: 2026-01-28 (init pose profiling updated)
 **Sample Data**: sample-rosbag-fixed (256+ alignment frames)
 
 ## Executive Summary
@@ -12,12 +12,12 @@ The CUDA NDT implementation produces functionally equivalent results to Autoware
 
 **Performance varies by platform:**
 
-| Platform                   | CUDA      | Autoware | Winner                  |
-|----------------------------|-----------|----------|-------------------------|
-| **Desktop x86** (RTX 5090) | 199.7 Hz  | 125.4 Hz | **CUDA 1.59x faster**   |
-| **Jetson AGX Orin** (64GB) | 34.8 Hz   | 26.5 Hz  | **CUDA 1.32x faster**   |
+| Platform                   | Tracking     | Init Pose    | Winner   |
+|----------------------------|--------------|--------------|----------|
+| **Desktop x86** (RTX 5090) | 1.59x faster | 2.57x faster | **CUDA** |
+| **Jetson AGX Orin** (64GB) | 1.32x faster | 3.05x faster | **CUDA** |
 
-CUDA wins on both platforms. On x86, per-iteration time is 2.16ms (CUDA) vs 2.73ms (Autoware), showing efficient GPU utilization. On Jetson, unified memory architecture gives CUDA an advantage (8.81ms vs 12.89ms/iter).
+CUDA wins on both platforms for both tracking and initial pose estimation. The advantage is more pronounced for init pose (2.57-3.05x) than tracking (1.32-1.59x) due to GPU batch processing of Monte Carlo particles.
 
 ## Implementation Methods
 
@@ -487,7 +487,7 @@ For reference, the debug build with full per-iteration data collection shows add
 
 When `user_defined_initial_pose` is disabled, the system uses Monte Carlo pose estimation with TPE (Tree-Structured Parzen Estimator) to find the initial pose.
 
-**Comparison** (x86 Desktop, 200 particles, 100 startup):
+**Desktop x86** (200 particles, 100 startup):
 
 | Metric                  | CUDA     | Autoware | Speedup     |
 |-------------------------|----------|----------|-------------|
@@ -500,27 +500,57 @@ When `user_defined_initial_pose` is disabled, the system uses Monte Carlo pose e
 | Init-to-tracking        | 2622 ms  | N/A      | -           |
 | Reliable                | Yes      | Yes      | -           |
 
-**Initial Pose Accuracy** (x86 Desktop, from rosbag comparison):
+**Jetson AGX Orin** (200 particles, 100 startup):
 
-| Metric             | Difference         |
-|--------------------|--------------------|
-| Position (x, y, z) | **0.024m** (2.4cm) |
-| Yaw angle          | **0.03°**          |
+| Metric                  | CUDA      | Autoware  | Speedup     |
+|-------------------------|-----------|-----------|-------------|
+| Total init time         | 7411 ms   | 22613 ms  | **3.05x**   |
+| Startup phase (random)  | 4202 ms   | 10730 ms  | 2.55x       |
+| Guided phase (TPE)      | 3208 ms   | 11883 ms  | 3.70x       |
+| Per-particle time       | 34.30 ms  | 113.06 ms | **3.30x**   |
+| Iterations per particle | 11        | 28        | 2.55x fewer |
+| Final score (NVTL)      | 2.98      | 3.20      | Similar     |
+| Init-to-tracking        | 7436 ms   | N/A       | -           |
+| Reliable                | Yes       | Yes       | -           |
 
-Both implementations converge to essentially the same pose (x86):
+**Initial Pose Accuracy** (from rosbag comparison):
+
+| Platform    | Position Diff | Yaw Diff | Assessment |
+|-------------|---------------|----------|------------|
+| x86 Desktop | 0.024m        | 0.03°    | Excellent  |
+| Jetson Orin | 0.427m        | 0.03°    | Acceptable |
+
+Both implementations converge to essentially the same pose:
+
+**x86 Desktop**:
 - CUDA: x=89571.10, y=42301.14, z=-3.12, yaw=33.4°
 - Autoware: x=89571.12, y=42301.16, z=-3.12, yaw=33.4°
 
+**Jetson AGX Orin**:
+- CUDA: x=89571.09, y=42301.14, z=-3.12, yaw=33.4°
+- Autoware: x=89571.45, y=42301.38, z=-3.12, yaw=33.4°
+
 **Key Findings:**
-- CUDA is **2.57x faster** for initial pose estimation
-- Per-particle alignment is **2.85x faster** (11.81ms vs 33.60ms)
-- CUDA converges in fewer iterations (18 vs 28) due to stricter epsilon
+- **x86**: CUDA is **2.57x faster** for init pose (2.6s vs 6.7s)
+- **Jetson**: CUDA is **3.05x faster** for init pose (7.4s vs 22.6s)
+- Per-particle alignment: 2.85x faster on x86, **3.30x faster on Jetson**
+- CUDA converges in fewer iterations on both platforms
 - Both achieve reliable results (NVTL > 2.3 threshold)
-- **Final poses are functionally identical** (0.024m, 0.03° difference)
+- **Final poses are functionally equivalent** on both platforms
 
 **Phase Breakdown:**
 - **Startup phase**: First 100 particles evaluated with random sampling using GPU batch alignment
 - **Guided phase**: Remaining 100 particles guided by TPE, evaluated sequentially
+
+**Tracking Performance After Init (Jetson)**:
+
+| Metric              | CUDA     | Autoware | Speedup   |
+|---------------------|----------|----------|-----------|
+| Mean exec time (ms) | 28.29    | 110.88   | **3.92x** |
+| Throughput (Hz)     | 35.3     | 9.0      | **3.92x** |
+| Mean iterations     | 3.92     | 29.20    | -         |
+
+Note: Autoware hits max iterations (30) on 90% of frames after init mode, indicating different convergence behavior in the TPE-guided initial pose scenario.
 
 ### Profiling and Comparison Commands
 
@@ -602,7 +632,9 @@ The CUDA NDT implementation is **functionally equivalent** to Autoware's NDT:
    - On x86: CUDA 2.16ms/iter vs Autoware 2.73ms/iter (CUDA 1.27x faster)
    - On Jetson: CUDA 8.81ms/iter vs Autoware 12.89ms/iter (CUDA 1.46x faster)
 
-3. **Initial pose estimation**: CUDA is 2.57x faster (2617ms vs 6720ms) with functionally identical results (0.024m, 0.03° difference).
+3. **Initial pose estimation**: CUDA is 2.57-3.05x faster depending on platform:
+   - x86: 2617ms vs 6720ms (2.57x faster), 0.024m position difference
+   - Jetson: 7411ms vs 22613ms (3.05x faster), 0.427m position difference
 
 4. **Real-time capable on both**: CUDA exceeds 10 Hz LiDAR rate by 20x on x86 and 3.5x on Jetson.
 
@@ -625,7 +657,7 @@ These apply to both platforms and do not affect functional correctness:
 
 ### Recommendation
 
-- **For Jetson/embedded deployment**: Use CUDA NDT (32% faster, unified memory optimized)
-- **For x86/server deployment**: Use CUDA NDT (59% faster with efficient GPU utilization)
+- **For Jetson/embedded deployment**: Use CUDA NDT (32% faster tracking, 3.05x faster init pose)
+- **For x86/server deployment**: Use CUDA NDT (59% faster tracking, 2.57x faster init pose)
 - **For cross-platform**: CUDA NDT provides consistent behavior and superior performance on both platforms
-- **For initial pose estimation**: CUDA is 2.57x faster with identical accuracy
+- **For initial pose estimation**: CUDA is 2.57-3.05x faster with functionally equivalent accuracy
