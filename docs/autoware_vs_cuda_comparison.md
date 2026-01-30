@@ -594,6 +594,50 @@ System resource usage comparison measuring CPU, memory, GPU utilization, and pow
 
 **Note**: Per-process GPU metrics are not available on Jetson (Tegra architecture limitation). GPU utilization is measured system-wide via tegrastats. During profiling, only the NDT node performs significant GPU work.
 
+#### Total System Resource Usage
+
+System-wide CPU and memory usage across all 72 Autoware nodes, measured via tegrastats during active processing (30s rosbag playback after 60s startup).
+
+| Metric            | CUDA  | Autoware | Diff      | Notes                 |
+|-------------------|-------|----------|-----------|-----------------------|
+| Total CPU (%)     | 520.7 | 570.7    | **-50.0** | Sum of all 12 cores   |
+| CPU (cores equiv) | 5.21  | 5.71     | **-0.50** | 8.8% reduction        |
+| CPU Max (%)       | 606   | 686      | -80       | Peak during alignment |
+| System RAM (GB)   | 13.29 | 13.17    | +0.12     | Nearly identical      |
+
+**Key Finding**: CUDA NDT frees **0.5 CPU cores** (8.8% reduction) at the system level. While this is smaller than the per-node reduction (57%), it represents meaningful headroom for other tasks on embedded platforms.
+
+**Note on measurement scope**:
+- **tegrastats**: Measures all system processes (~570%) - includes profiling tools
+- **play_launch**: Monitors only 25 Autoware nodes (~294%)
+- **rosbag (measured via top)**: Only ~8% CPU - much smaller than initially estimated
+- **Profiling overhead**: ~150% (play_launch, monitoring tools, etc.)
+
+#### CPU Usage by Autoware Node Category
+
+Per-node CPU usage from play_launch metrics (25 monitored nodes only):
+
+| Category                | CUDA (%)  | Autoware (%) | Diff      |
+|-------------------------|-----------|--------------|-----------|
+| **NDT Scan Matcher**    | 34.8      | 81.0         | **-46.2** |
+| Pointcloud Processing   | 124.8     | 122.6        | +2.2      |
+| Localization (EKF, etc) | 30.0      | 29.4         | +0.6      |
+| Other nodes             | 62.3      | 61.2         | +1.0      |
+| **Total (25 nodes)**    | **251.9** | **294.2**    | **-42.3** |
+
+**Verified via top (Autoware run)**:
+
+| Category | CPU (%) | % of Total |
+|----------|---------|------------|
+| NDT Scan Matcher | 93.3 | 46% |
+| Localization (EKF, gyro, IMU) | 32.5 | 16% |
+| Component Containers | 24.0 | 12% |
+| rosbag (player+recorder) | 8.1 | 4% |
+| Other Autoware nodes | 45.2 | 22% |
+| **Total** | **203.1** | 100% |
+
+**Key Insight**: NDT is the CPU bottleneck, consuming **46% of all Autoware CPU**. rosbag overhead is minimal (~8%).
+
 #### CPU Usage (NDT Node Only)
 
 | Metric       | CUDA | Autoware | Savings           |
@@ -634,14 +678,18 @@ System resource usage comparison measuring CPU, memory, GPU utilization, and pow
 
 #### Resource Efficiency Summary
 
-| Metric           | CUDA Advantage                                  |
-|------------------|-------------------------------------------------|
-| CPU utilization  | **57% less** - frees cores for other tasks      |
-| GPU utilization  | **11% average** - ample headroom for perception |
-| Power efficiency | **Equal** - same power, 30% more throughput     |
-| Throughput/Watt  | **30% better** - more work per watt             |
+| Metric          | NDT Node       | Full System | Notes                           |
+|-----------------|----------------|-------------|---------------------------------|
+| CPU reduction   | **57%**        | **8.8%**    | 0.5 cores freed system-wide     |
+| GPU utilization | 11% avg        | -           | Ample headroom for perception   |
+| Power           | Equal          | Equal       | Same power, 30% more throughput |
+| Throughput/Watt | **30% better** | -           | More work per watt              |
 
-**Recommendation**: CUDA NDT is more resource-efficient on Jetson, using less CPU while achieving higher throughput at the same power consumption. This enables running more concurrent perception and planning tasks.
+**Recommendation**: CUDA NDT is more resource-efficient on Jetson:
+- **NDT-specific**: 57% less CPU, freeing compute for other tasks
+- **System-wide**: 0.5 cores freed (8.8% reduction) across 72 Autoware nodes
+- **Power-neutral**: Same power consumption with 30% higher throughput
+- **GPU headroom**: Only 11% GPU utilization leaves capacity for perception DNNs
 
 ### Profiling and Comparison Commands
 
@@ -668,7 +716,8 @@ just run-builtin-debug       # Autoware with all debug features
 # === Resource Analysis ===
 
 # Analyze resource usage from latest play_log runs
-just analyze-resource        # Compare CPU, memory, GPU, power
+just analyze-resource        # Compare per-node CPU, memory, GPU, power
+just analyze-system-stats    # Compare total system CPU and memory
 
 # === Pose Accuracy Comparison ===
 
