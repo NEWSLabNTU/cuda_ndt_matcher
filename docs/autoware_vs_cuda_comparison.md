@@ -560,31 +560,65 @@ System resource usage comparison measuring CPU, memory, GPU utilization, and pow
 
 **Run profiling**: `just profile-resource`
 
+#### Profiling Methodology
+
+| Parameter           | Value               | Notes                                 |
+|---------------------|---------------------|---------------------------------------|
+| **Dataset**         | sample-rosbag-fixed | ~30s of driving data                  |
+| **Startup delay**   | 60s                 | Wait for Autoware stack to initialize |
+| **Rosbag duration** | ~30s                | Aligned frames during playback        |
+| **Total run time**  | ~93s per impl       | Including startup and teardown        |
+
+**Measurement Tools:**
+
+| Tool                  | Sample Rate | Metrics                                  | Samples       |
+|-----------------------|-------------|------------------------------------------|---------------|
+| `tegrastats`          | 500ms       | GPU util, power, system RAM, temperature | 183 per run   |
+| `play_launch` metrics | 2000ms      | Per-process CPU%, RSS, threads, I/O      | 22-23 per run |
+
+**Data Collection:**
+- `tegrastats --interval 500` runs in background during entire profiling run
+- `play_launch` monitors the `ndt_scan_matcher` node at 2-second intervals
+- Measurements cover the full run including idle periods before/after rosbag playback
+- Active NDT processing occurs during ~30s of rosbag playback
+
+**tegrastats Fields Used:**
+
+| Field         | Description                   | Example                     |
+|---------------|-------------------------------|-----------------------------|
+| `GR3D_FREQ`   | GPU 3D engine utilization (%) | `GR3D_FREQ 11%`             |
+| `VDD_GPU_SOC` | GPU/SoC power (mW)            | `VDD_GPU_SOC 3809mW/3809mW` |
+| `VDD_CPU_CV`  | CPU cluster power (mW)        | `VDD_CPU_CV 3841mW/3841mW`  |
+| `VIN_SYS_5V0` | Total system power (mW)       | `VIN_SYS_5V0 5505mW/5505mW` |
+| `RAM`         | System memory usage           | `RAM 14831/62841MB`         |
+
+**Note**: Per-process GPU metrics are not available on Jetson (Tegra architecture limitation). GPU utilization is measured system-wide via tegrastats. During profiling, only the NDT node performs significant GPU work.
+
 #### CPU Usage (NDT Node Only)
 
-| Metric        | CUDA  | Autoware | Savings |
-|---------------|-------|----------|---------|
-| Mean (%)      | 34.8  | 81.0     | **57% reduction** |
-| Max (%)       | 65.4  | 173.6    | 62% reduction |
-| Thread count  | 9     | 12       | 25% fewer |
+| Metric       | CUDA | Autoware | Savings           |
+|--------------|------|----------|-------------------|
+| Mean (%)     | 34.8 | 81.0     | **57% reduction** |
+| Max (%)      | 65.4 | 173.6    | 62% reduction     |
+| Thread count | 9    | 12       | 25% fewer         |
 
 **Key Finding**: CUDA uses **57% less CPU** by offloading computation to the GPU. This frees up CPU cores for other Autoware tasks (planning, perception).
 
 #### Memory Usage
 
-| Metric        | CUDA (MB) | Autoware (MB) | Notes |
-|---------------|-----------|---------------|-------|
-| RSS Mean      | 258.0     | 53.2          | CUDA higher due to unified memory |
-| RSS Max       | 292.9     | 66.2          | GPU buffers mapped to process |
+| Metric   | CUDA (MB) | Autoware (MB) | Notes                             |
+|----------|-----------|---------------|-----------------------------------|
+| RSS Mean | 258.0     | 53.2          | CUDA higher due to unified memory |
+| RSS Max  | 292.9     | 66.2          | GPU buffers mapped to process     |
 
 **Note**: On Jetson's unified memory architecture, GPU memory is mapped into the process address space, causing higher RSS values for CUDA. This is not additional memory consumption—the same physical memory is shared between CPU and GPU.
 
 #### GPU Utilization (System-Wide via tegrastats)
 
-| Metric           | CUDA   | Autoware | Notes |
-|------------------|--------|----------|-------|
-| GPU Util Mean    | 11.1%  | 0.2%     | CUDA actively uses GPU |
-| GPU Util Max     | 98%    | 34%      | Peak during alignment |
+| Metric        | CUDA  | Autoware | Notes                  |
+|---------------|-------|----------|------------------------|
+| GPU Util Mean | 11.1% | 0.2%     | CUDA actively uses GPU |
+| GPU Util Max  | 98%   | 34%      | Peak during alignment  |
 
 **Observation**: CUDA achieves better throughput with only ~11% average GPU utilization, leaving GPU capacity available for other tasks (perception, deep learning inference).
 
@@ -600,12 +634,12 @@ System resource usage comparison measuring CPU, memory, GPU utilization, and pow
 
 #### Resource Efficiency Summary
 
-| Metric | CUDA Advantage |
-|--------|----------------|
-| CPU utilization | **57% less** - frees cores for other tasks |
-| GPU utilization | **11% average** - ample headroom for perception |
-| Power efficiency | **Equal** - same power, 30% more throughput |
-| Throughput/Watt | **30% better** - more work per watt |
+| Metric           | CUDA Advantage                                  |
+|------------------|-------------------------------------------------|
+| CPU utilization  | **57% less** - frees cores for other tasks      |
+| GPU utilization  | **11% average** - ample headroom for perception |
+| Power efficiency | **Equal** - same power, 30% more throughput     |
+| Throughput/Watt  | **30% better** - more work per watt             |
 
 **Recommendation**: CUDA NDT is more resource-efficient on Jetson, using less CPU while achieving higher throughput at the same power consumption. This enables running more concurrent perception and planning tasks.
 
