@@ -189,6 +189,14 @@ just run-cuda-init             # CUDA with init mode
 just run-builtin-init          # Autoware with init mode
 ```
 
+**Resource profiling** (CPU, GPU, power on Jetson):
+```bash
+just profile-resource          # Full workflow with tegrastats monitoring
+just analyze-resource          # Compare per-node CPU, memory, GPU, power
+just analyze-system-stats      # Compare total system CPU and memory
+just analyze-tegrastats-cpu    # Analyze tegrastats CPU data
+```
+
 **Pose comparison** (from rosbag recordings):
 ```bash
 just compare-init-poses-latest              # Compare poses from latest rosbags
@@ -212,12 +220,18 @@ Output files (in `logs/profiling/<date>/`):
 - `ndt_cuda_profiling.jsonl` - CUDA timing data
 - `ndt_autoware_profiling.jsonl` - Autoware timing data
 - `init_pose_comparison.txt` - Init pose comparison results (from `profile-init`)
+- `cuda_tegrastats.log` / `autoware_tegrastats.log` - Jetson tegrastats logs
+- `cuda_system_stats.csv` / `autoware_system_stats.csv` - System-wide CPU/memory
+- `cuda_metrics.csv` / `autoware_metrics.csv` - Per-node metrics from play_launch
 
 Analysis scripts:
 - `scripts/profile_ndt_comparison.py` - Compare CUDA vs Autoware performance
 - `scripts/compare_init_poses.py` - Compare init poses from rosbags
 - `scripts/compare_poses.py` - Compare tracking poses from profiling logs
 - `scripts/analyze_profile.py` - Analyze profile directory structure
+- `scripts/analyze_resource_usage.py` - Compare CPU, GPU, power from tegrastats
+- `scripts/analyze_system_stats.py` - Compare total system CPU/memory
+- `scripts/analyze_tegrastats_cpu.py` - Parse tegrastats for per-core CPU
 
 ## Comparison Testing
 
@@ -302,3 +316,33 @@ python3 tmp/analyze_by_point_count.py
 # Debug GPU vs CPU cov_sums
 NDT_DEBUG_COV=1 cargo test -p ndt_cuda -- voxel --nocapture
 ```
+
+## Performance Summary (2026-01-30)
+
+See `docs/autoware_vs_cuda_comparison.md` for detailed analysis.
+
+### Tracking Performance
+
+| Platform | CUDA | Autoware | Speedup |
+|----------|------|----------|---------|
+| Desktop x86 (RTX 5090) | 199.7 Hz | 125.4 Hz | **1.59x** |
+| Jetson AGX Orin (64GB) | 34.8 Hz | 26.5 Hz | **1.32x** |
+
+### Init Pose Performance
+
+| Platform | CUDA | Autoware | Speedup |
+|----------|------|----------|---------|
+| Desktop x86 | 2.6s | 6.7s | **2.57x** |
+| Jetson AGX Orin | 7.4s | 22.6s | **3.05x** |
+
+### Resource Efficiency (Jetson)
+
+| Metric | CUDA | Autoware | Improvement |
+|--------|------|----------|-------------|
+| NDT CPU usage | 34.8% | 81.0% | **57% less** |
+| System CPU (12 cores) | 520.7% | 570.7% | 0.5 cores freed |
+| GPU utilization | 11% avg | 0.2% | Headroom for perception |
+| Power consumption | 5505 mW | 5468 mW | Equal |
+| Throughput/Watt | - | - | **30% better** |
+
+**Key insight**: NDT is the CPU bottleneck (46% of all Autoware CPU). CUDA offloads this to GPU with minimal power increase.
