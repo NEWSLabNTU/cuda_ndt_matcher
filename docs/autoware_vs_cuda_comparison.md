@@ -19,6 +19,8 @@ The CUDA NDT implementation produces functionally equivalent results to Autoware
 
 CUDA wins on both platforms for both tracking and initial pose estimation. The advantage is more pronounced for init pose (2.57-3.05x) than tracking (1.32-1.59x) due to GPU batch processing of Monte Carlo particles.
 
+**Resource efficiency on Jetson**: CUDA uses **57% less CPU** while achieving 30% higher throughput at **equal power consumption**. This frees CPU cores for other Autoware tasks.
+
 ## Implementation Methods
 
 ### Algorithm Overview
@@ -552,6 +554,61 @@ Both implementations converge to essentially the same pose:
 
 Note: Autoware hits max iterations (30) on 90% of frames after init mode, indicating different convergence behavior in the TPE-guided initial pose scenario.
 
+### Resource Usage (Jetson AGX Orin)
+
+System resource usage comparison measuring CPU, memory, GPU utilization, and power consumption on Jetson AGX Orin.
+
+**Run profiling**: `just profile-resource`
+
+#### CPU Usage (NDT Node Only)
+
+| Metric        | CUDA  | Autoware | Savings |
+|---------------|-------|----------|---------|
+| Mean (%)      | 34.8  | 81.0     | **57% reduction** |
+| Max (%)       | 65.4  | 173.6    | 62% reduction |
+| Thread count  | 9     | 12       | 25% fewer |
+
+**Key Finding**: CUDA uses **57% less CPU** by offloading computation to the GPU. This frees up CPU cores for other Autoware tasks (planning, perception).
+
+#### Memory Usage
+
+| Metric        | CUDA (MB) | Autoware (MB) | Notes |
+|---------------|-----------|---------------|-------|
+| RSS Mean      | 258.0     | 53.2          | CUDA higher due to unified memory |
+| RSS Max       | 292.9     | 66.2          | GPU buffers mapped to process |
+
+**Note**: On Jetson's unified memory architecture, GPU memory is mapped into the process address space, causing higher RSS values for CUDA. This is not additional memory consumption—the same physical memory is shared between CPU and GPU.
+
+#### GPU Utilization (System-Wide via tegrastats)
+
+| Metric           | CUDA   | Autoware | Notes |
+|------------------|--------|----------|-------|
+| GPU Util Mean    | 11.1%  | 0.2%     | CUDA actively uses GPU |
+| GPU Util Max     | 98%    | 34%      | Peak during alignment |
+
+**Observation**: CUDA achieves better throughput with only ~11% average GPU utilization, leaving GPU capacity available for other tasks (perception, deep learning inference).
+
+#### Power Consumption (tegrastats)
+
+| Component        | CUDA (mW) | Autoware (mW) | Diff |
+|------------------|-----------|---------------|------|
+| GPU (VDD_GPU_SOC)| 3809      | 3406          | +403 |
+| CPU (VDD_CPU_CV) | 3841      | 3968          | -127 |
+| Total (VIN_SYS)  | 5505      | 5468          | +37  |
+
+**Key Finding**: Total power consumption is nearly identical (+0.7%). CUDA trades CPU power for GPU power, with no net increase in system power draw despite 30% higher throughput.
+
+#### Resource Efficiency Summary
+
+| Metric | CUDA Advantage |
+|--------|----------------|
+| CPU utilization | **57% less** - frees cores for other tasks |
+| GPU utilization | **11% average** - ample headroom for perception |
+| Power efficiency | **Equal** - same power, 30% more throughput |
+| Throughput/Watt | **30% better** - more work per watt |
+
+**Recommendation**: CUDA NDT is more resource-efficient on Jetson, using less CPU while achieving higher throughput at the same power consumption. This enables running more concurrent perception and planning tasks.
+
 ### Profiling and Comparison Commands
 
 ```bash
@@ -567,9 +624,17 @@ just profile-compare
 # Init mode profiling (Monte Carlo pose estimation)
 just profile-init            # Both implementations with init mode
 
+# Resource profiling with tegrastats (CPU, GPU, power)
+just profile-resource        # Includes tegrastats monitoring
+
 # Debug builds (full debug data, slower)
 just run-cuda-debug          # CUDA with all debug features
 just run-builtin-debug       # Autoware with all debug features
+
+# === Resource Analysis ===
+
+# Analyze resource usage from latest play_log runs
+just analyze-resource        # Compare CPU, memory, GPU, power
 
 # === Pose Accuracy Comparison ===
 
@@ -606,6 +671,7 @@ just accuracy-test           # Build, run both, compare poses
 | `logs/ndt_cuda_voxels.json`          | CUDA voxel grid dump (11,601 voxels)                |
 | `logs/ndt_autoware_voxels.json`      | Autoware voxel grid dump (11,601 voxels)            |
 | `scripts/compare_poses.py`           | Pose difference comparison script                   |
+| `scripts/analyze_resource_usage.py`  | Resource usage analysis (CPU, GPU, power)           |
 | `tmp/analyze_jetson_profiling.py`    | Jetson profiling analysis script                    |
 
 ## Conclusion
@@ -637,6 +703,11 @@ The CUDA NDT implementation is **functionally equivalent** to Autoware's NDT:
    - Jetson: 7411ms vs 22613ms (3.05x faster), 0.427m position difference
 
 4. **Real-time capable on both**: CUDA exceeds 10 Hz LiDAR rate by 20x on x86 and 3.5x on Jetson.
+
+5. **Resource efficiency (Jetson)**:
+   - CPU usage: 57% reduction (34.8% vs 81.0%)
+   - GPU utilization: 11% average with headroom for perception
+   - Power: Equal consumption with 30% higher throughput (30% better throughput/watt)
 
 ### Optimization Opportunities
 
