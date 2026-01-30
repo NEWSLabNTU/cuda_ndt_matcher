@@ -745,3 +745,117 @@ compare-poses-json:
     python3 scripts/compare_poses.py --json \
         {{logs_dir}}/ndt_cuda_profiling.jsonl \
         {{logs_dir}}/ndt_autoware_profiling.jsonl
+
+# === Resource Usage Profiling ===
+
+# Analyze resource usage from latest play_log runs
+analyze-resource:
+    python3 scripts/analyze_resource_usage.py --latest
+
+# Analyze resource usage from specific play_log directories
+analyze-resource-dirs cuda_dir autoware_dir:
+    python3 scripts/analyze_resource_usage.py \
+        --cuda "{{cuda_dir}}" \
+        --autoware "{{autoware_dir}}"
+
+# Profile with tegrastats (GPU monitoring)
+profile-resource: build-cuda-profiling
+    #!/usr/bin/env bash
+    set -e
+
+    # Create dated log directory
+    LOG_DIR=$(python3 scripts/profile_ndt_comparison.py --create-dir)
+    echo "============================================================"
+    echo " NDT Resource Profiling (with tegrastats)"
+    echo " Output directory: $LOG_DIR"
+    echo "============================================================"
+
+    # Kill any existing tegrastats
+    pkill -9 tegrastats 2>/dev/null || true
+    sleep 0.5
+
+    echo ""
+    echo "=== Step 1/4: Running CUDA with tegrastats ==="
+    tegrastats --interval 500 > "$LOG_DIR/cuda_tegrastats.log" 2>&1 &
+    TEGRA_PID=$!
+    sleep 1
+
+    NDT_DEBUG_FILE="$LOG_DIR/ndt_cuda_profiling.jsonl" \
+        ./scripts/run_demo.sh --cuda \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}" || true
+
+    kill $TEGRA_PID 2>/dev/null || true
+    sleep 1
+
+    # Copy play_log metrics
+    CUDA_PLAY_LOG=$(ls -td play_log/2026-* 2>/dev/null | head -1)
+    if [[ -n "$CUDA_PLAY_LOG" ]]; then
+        cp "$CUDA_PLAY_LOG/node/ndt_scan_matcher/metrics.csv" "$LOG_DIR/cuda_metrics.csv" 2>/dev/null || true
+        echo "CUDA play_log: $CUDA_PLAY_LOG"
+    fi
+
+    echo ""
+    echo "=== Step 2/4: Running Autoware with tegrastats ==="
+    tegrastats --interval 500 > "$LOG_DIR/autoware_tegrastats.log" 2>&1 &
+    TEGRA_PID=$!
+    sleep 1
+
+    NDT_DEBUG=1 \
+    NDT_DEBUG_FILE="$LOG_DIR/ndt_autoware_profiling.jsonl" \
+        ./scripts/run_demo.sh \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}" || true
+
+    kill $TEGRA_PID 2>/dev/null || true
+    sleep 1
+
+    # Copy play_log metrics
+    AUTOWARE_PLAY_LOG=$(ls -td play_log/2026-* 2>/dev/null | head -1)
+    if [[ -n "$AUTOWARE_PLAY_LOG" ]]; then
+        cp "$AUTOWARE_PLAY_LOG/node/ndt_scan_matcher/metrics.csv" "$LOG_DIR/autoware_metrics.csv" 2>/dev/null || true
+        echo "Autoware play_log: $AUTOWARE_PLAY_LOG"
+    fi
+
+    echo ""
+    echo "=== Step 3/4: Analyzing timing results ==="
+    python3 scripts/profile_ndt_comparison.py "$LOG_DIR"
+
+    echo ""
+    echo "=== Step 4/4: Analyzing resource usage ==="
+    # Create temporary directories with the metrics for analysis
+    mkdir -p "$LOG_DIR/cuda_run/node/ndt_scan_matcher"
+    mkdir -p "$LOG_DIR/autoware_run/node/ndt_scan_matcher"
+
+    if [[ -f "$LOG_DIR/cuda_metrics.csv" ]]; then
+        cp "$LOG_DIR/cuda_metrics.csv" "$LOG_DIR/cuda_run/node/ndt_scan_matcher/metrics.csv"
+        echo "cuda_ndt_matcher" > "$LOG_DIR/cuda_run/node/ndt_scan_matcher/cmdline"
+    fi
+    if [[ -f "$LOG_DIR/autoware_metrics.csv" ]]; then
+        cp "$LOG_DIR/autoware_metrics.csv" "$LOG_DIR/autoware_run/node/ndt_scan_matcher/metrics.csv"
+        echo "autoware_ndt_scan_matcher" > "$LOG_DIR/autoware_run/node/ndt_scan_matcher/cmdline"
+    fi
+
+    # Copy tegrastats logs
+    cp "$LOG_DIR/cuda_tegrastats.log" "$LOG_DIR/cuda_run/tegrastats.log" 2>/dev/null || true
+    cp "$LOG_DIR/autoware_tegrastats.log" "$LOG_DIR/autoware_run/tegrastats.log" 2>/dev/null || true
+
+    python3 scripts/analyze_resource_usage.py \
+        --cuda "$LOG_DIR/cuda_run" \
+        --autoware "$LOG_DIR/autoware_run"
+
+    # Save resource analysis to file
+    python3 scripts/analyze_resource_usage.py \
+        --cuda "$LOG_DIR/cuda_run" \
+        --autoware "$LOG_DIR/autoware_run" > "$LOG_DIR/resource_comparison.txt"
+
+    echo ""
+    echo "============================================================"
+    echo " Resource profiling complete!"
+    echo " Results: $LOG_DIR"
+    echo " - cuda_tegrastats.log     GPU/power during CUDA run"
+    echo " - autoware_tegrastats.log GPU/power during Autoware run"
+    echo " - resource_comparison.txt Summary comparison"
+    echo "============================================================"
