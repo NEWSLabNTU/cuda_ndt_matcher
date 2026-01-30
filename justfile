@@ -789,10 +789,11 @@ profile-resource: build-cuda-profiling
     kill $TEGRA_PID 2>/dev/null || true
     sleep 1
 
-    # Copy play_log metrics
+    # Copy play_log metrics and system stats
     CUDA_PLAY_LOG=$(ls -td play_log/2026-* 2>/dev/null | head -1)
     if [[ -n "$CUDA_PLAY_LOG" ]]; then
         cp "$CUDA_PLAY_LOG/node/ndt_scan_matcher/metrics.csv" "$LOG_DIR/cuda_metrics.csv" 2>/dev/null || true
+        cp "$CUDA_PLAY_LOG/system_stats.csv" "$LOG_DIR/cuda_system_stats.csv" 2>/dev/null || true
         echo "CUDA play_log: $CUDA_PLAY_LOG"
     fi
 
@@ -812,10 +813,11 @@ profile-resource: build-cuda-profiling
     kill $TEGRA_PID 2>/dev/null || true
     sleep 1
 
-    # Copy play_log metrics
+    # Copy play_log metrics and system stats
     AUTOWARE_PLAY_LOG=$(ls -td play_log/2026-* 2>/dev/null | head -1)
     if [[ -n "$AUTOWARE_PLAY_LOG" ]]; then
         cp "$AUTOWARE_PLAY_LOG/node/ndt_scan_matcher/metrics.csv" "$LOG_DIR/autoware_metrics.csv" 2>/dev/null || true
+        cp "$AUTOWARE_PLAY_LOG/system_stats.csv" "$LOG_DIR/autoware_system_stats.csv" 2>/dev/null || true
         echo "Autoware play_log: $AUTOWARE_PLAY_LOG"
     fi
 
@@ -859,3 +861,13 @@ profile-resource: build-cuda-profiling
     echo " - autoware_tegrastats.log GPU/power during Autoware run"
     echo " - resource_comparison.txt Summary comparison"
     echo "============================================================"
+
+# Analyze total system CPU/memory usage from play_log
+analyze-system-stats:
+    python3 scripts/analyze_system_stats.py --latest
+
+# Analyze tegrastats CPU usage
+analyze-tegrastats-cpu cuda_log autoware_log:
+    python3 scripts/analyze_tegrastats_cpu.py \
+        --cuda "{{cuda_log}}" \
+        --autoware "{{autoware_log}}"
