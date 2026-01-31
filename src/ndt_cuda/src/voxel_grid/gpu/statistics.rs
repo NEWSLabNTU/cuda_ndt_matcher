@@ -425,16 +425,24 @@ pub fn finalize_voxels_cpu(
         // which equals: sum_xx - pt_sum * mean^T
         //
         // So we divide by (n-1) to get the sample covariance.
+        //
+        // IMPORTANT: Autoware initializes leaf.cov_ to Identity (line 132 of
+        // multi_voxel_grid_covariance_omp.h), not zero. This adds an implicit
+        // I/(n-1) term to the final covariance. We replicate this behavior.
         let denom = if count > 1 {
             1.0 / (count - 1) as f32
         } else {
             1.0
         };
 
-        // Finalize covariance: cov = cov_sums / (n - 1)
+        // Finalize covariance: cov = cov_sums / (n - 1) + I/(n-1)
         for i in 0..9 {
             covariances[v * 9 + i] = cov_sums[v * 9 + i] * denom;
         }
+        // Add I/(n-1) to diagonal elements (indices 0, 4, 8) to match Autoware's identity initialization
+        covariances[v * 9] += denom;
+        covariances[v * 9 + 4] += denom;
+        covariances[v * 9 + 8] += denom;
 
         // Regularize and invert covariance matrix
         let result = regularize_and_invert(&covariances[v * 9..v * 9 + 9]);

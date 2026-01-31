@@ -1389,7 +1389,7 @@ mod tests {
         crate::test_println!("Iterations: {}", ITERATIONS);
         crate::test_println!("CPU path: {:.2} ms per alignment", _cpu_per_align);
         crate::test_println!("GPU path: {:.2} ms per alignment", _gpu_per_align);
-        crate::test_println!("Speedup: {:.2}x", cpu_per_align / gpu_per_align);
+        crate::test_println!("Speedup: {:.2}x", _cpu_per_align / _gpu_per_align);
         crate::test_println!("==============================\n");
     }
 }

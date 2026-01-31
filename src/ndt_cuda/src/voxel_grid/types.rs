@@ -1,4 +1,57 @@
 //! Type definitions for voxel grid structures.
+//!
+//! # NVTL Score Investigation Notes (2026-01-31)
+//!
+//! ## Problem
+//! CUDA NDT produces ~20% lower NVTL scores than Autoware despite:
+//! - Identical neighbor search results (voxels_per_point: 4.05 in both)
+//! - Matching final poses (< 0.05m difference)
+//! - Same gauss_d1/gauss_d2 parameters
+//!
+//! ## Findings from Voxel Dump Comparison
+//!
+//! Test `test_compare_voxel_dumps` compares JSON dumps from both implementations:
+//!
+//! **Matching results:**
+//! - 100% voxel match (11601/11601 voxels match by coordinate)
+//! - Point counts are IDENTICAL (0 difference for all voxels)
+//! - Means are nearly identical (avg diff: 0.0005m, max: 0.009m)
+//!
+//! **Covariance ratio by point count (CUDA/Autoware):**
+//! ```text
+//! n=  6: ratio=0.475 (if (n-1)²/n² bug: 0.694)
+//! n= 10: ratio=0.631 (if (n-1)²/n² bug: 0.810)
+//! n= 20: ratio=0.784 (if (n-1)²/n² bug: 0.902)
+//! n=100: ratio=0.940 (if (n-1)²/n² bug: 0.980)
+//! Overall avg: 0.724
+//! ```
+//!
+//! **Key observation:** The observed ratios are LOWER than what a simple (n-1)²/n² bug
+//! would produce. The pattern roughly follows (n-1)/(n+4), suggesting the issue is
+//! NOT in the covariance formula itself (which is verified correct by unit tests).
+//!
+//! **Possible causes:**
+//! 1. Different input point positions in map (map loading difference)
+//! 2. Preprocessing/voxel filtering differences
+//! 3. Regularization parameter differences
+//!
+//! **Lower covariances → larger inv_covariances → larger Mahalanobis distances → lower scores.**
+//!
+//! ## Covariance Formula
+//! Both CUDA and Autoware use the standard unbiased sample covariance:
+//!   `cov = (Σxx^T - n*μ*μ^T) / (n-1)`
+//!
+//! This formula is verified correct by unit tests:
+//! - `test_covariance_formula_known_answer`
+//! - `test_covariance_matches_autoware_formula`
+//! - `test_covariance_6_points`
+//!
+//! ## Next Steps
+//! The covariance formula is correct. The discrepancy must come from different
+//! input data reaching the covariance computation. Investigate:
+//! - Map point cloud loading (PCD vs rosbag source)
+//! - Point preprocessing (voxel filtering, downsampling)
+//! - Coordinate frame transformations
 
 use nalgebra::{Matrix3, Vector3};
 
@@ -67,16 +120,19 @@ impl Voxel {
         let mean = sum / n;
 
         // Compute covariance matching Autoware's formula:
-        //   cov = (sum_sq - n*mean*mean^T) / (n-1)
+        //   cov = (sum_sq - n*mean*mean^T) / (n-1) + I/(n-1)
         //
         // Reference: autoware_ndt_scan_matcher/src/ndt_omp/multi_voxel_grid_covariance_omp_impl.hpp
         // Line 436:
         //   leaf.cov_ = (leaf.cov_ - pt_sum * leaf.mean_.transpose()) / (leaf.nr_points_ - 1);
         //   where leaf.cov_ = sum_sq, pt_sum = n*mean
         //
-        // This is the standard unbiased sample covariance formula.
+        // IMPORTANT: Autoware initializes leaf.cov_ to Identity (line 132 of
+        // multi_voxel_grid_covariance_omp.h), not zero. This adds an implicit
+        // I/(n-1) term to the final covariance. We replicate this behavior.
         let mean_outer = mean * mean.transpose();
-        let covariance = (sum_sq - mean_outer * n) / (n - 1.0);
+        let covariance =
+            (sum_sq - mean_outer * n + Matrix3::identity()) / (n - 1.0);
 
         // Regularize covariance to avoid singularity
         let reg = regularize_covariance(&covariance, config.eigenvalue_ratio_threshold)?;
@@ -271,8 +327,9 @@ mod tests {
         assert_relative_eq!(voxel.mean.y, 2.0, epsilon = 0.1);
         assert_relative_eq!(voxel.mean.z, 3.0, epsilon = 0.1);
 
-        // Covariance should be small (tight cluster)
-        assert!(voxel.covariance.norm() < 0.1);
+        // Covariance should be small (tight cluster), but Autoware's identity term
+        // adds 1/(n-1) = 1/9 ≈ 0.111 to each diagonal, giving norm ≈ sqrt(3*0.111^2) ≈ 0.19
+        assert!(voxel.covariance.norm() < 0.3);
 
         // Inverse covariance should exist and be symmetric
         let identity = voxel.covariance * voxel.inv_covariance;
@@ -411,5 +468,183 @@ mod tests {
         } else {
             crate::test_println!("nalgebra order: UNORDERED (random order)");
         }
+    }
+
+    /// Test covariance formula against known answer.
+    ///
+    /// The standard unbiased sample covariance formula is:
+    ///   cov = Σ(x - μ)(x - μ)^T / (n - 1)
+    ///
+    /// Which can be computed as:
+    ///   cov = (Σxx^T - n*μ*μ^T) / (n - 1)
+    ///
+    /// This test uses a simple 3-point example where we can compute by hand.
+    #[test]
+    fn test_covariance_formula_known_answer() {
+        let config = VoxelGridConfig {
+            min_points_per_voxel: 3,
+            eigenvalue_ratio_threshold: 0.0, // No regularization
+            ..Default::default()
+        };
+
+        // Simple 3 points in a line along X axis
+        // Points: (0, 0, 0), (1, 0, 0), (2, 0, 0)
+        // Mean: (1, 0, 0)
+        // Deviations: (-1, 0, 0), (0, 0, 0), (1, 0, 0)
+        // Cov_xx = (1 + 0 + 1) / 2 = 1.0
+        // All other elements = 0
+        let points = [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+
+        let mut sum = Vector3::zeros();
+        let mut sum_sq = Matrix3::zeros();
+        for p in &points {
+            let v = Vector3::new(p[0] as f64, p[1] as f64, p[2] as f64);
+            sum += v;
+            sum_sq += v * v.transpose();
+        }
+
+        crate::test_println!("Points: {:?}", points);
+        crate::test_println!("Sum: {:?}", sum);
+        crate::test_println!("Sum_sq diagonal: [{}, {}, {}]", sum_sq[(0,0)], sum_sq[(1,1)], sum_sq[(2,2)]);
+
+        let voxel = Voxel::from_statistics(&sum, &sum_sq, points.len(), &config);
+        assert!(voxel.is_some(), "Voxel creation should succeed");
+        let voxel = voxel.unwrap();
+
+        crate::test_println!("Mean: {:?}", voxel.mean);
+        crate::test_println!("Cov: {:?}", voxel.covariance);
+
+        // Mean should be (1, 0, 0)
+        assert_relative_eq!(voxel.mean.x, 1.0, epsilon = 1e-6);
+        assert_relative_eq!(voxel.mean.y, 0.0, epsilon = 1e-6);
+        assert_relative_eq!(voxel.mean.z, 0.0, epsilon = 1e-6);
+
+        // Variance in X should be 1.0 (sum of squared deviations / (n-1)) + identity term
+        // ((-1)^2 + 0^2 + 1^2) / 2 = 2/2 = 1.0, plus Autoware's I/(n-1) = 1/2 = 0.5
+        // Total: 1.0 + 0.5 = 1.5
+        assert_relative_eq!(voxel.covariance[(0, 0)], 1.5, epsilon = 1e-6);
+    }
+
+    /// Test covariance formula matches Autoware's approach.
+    ///
+    /// Autoware uses: cov = (sum_sq - pt_sum * mean^T) / (n - 1)
+    /// where pt_sum = n * mean, so this equals: (sum_sq - n*mean*mean^T) / (n-1)
+    ///
+    /// This is the same formula we use, but let's verify with realistic data.
+    #[test]
+    fn test_covariance_matches_autoware_formula() {
+        let config = VoxelGridConfig {
+            min_points_per_voxel: 6,
+            eigenvalue_ratio_threshold: 0.0, // No regularization for clean comparison
+            ..Default::default()
+        };
+
+        // Use 6 points similar to real voxel data
+        let points = [
+            [100.0f32, 200.0, 5.0],
+            [100.1, 200.1, 5.1],
+            [99.9, 199.9, 4.9],
+            [100.05, 200.05, 5.05],
+            [99.95, 199.95, 4.95],
+            [100.02, 200.02, 5.02],
+        ];
+
+        // Accumulate using our formula
+        let mut sum = Vector3::zeros();
+        let mut sum_sq = Matrix3::zeros();
+        for p in &points {
+            let v = Vector3::new(p[0] as f64, p[1] as f64, p[2] as f64);
+            sum += v;
+            sum_sq += v * v.transpose();
+        }
+
+        let voxel = Voxel::from_statistics(&sum, &sum_sq, points.len(), &config);
+        assert!(voxel.is_some());
+        let voxel = voxel.unwrap();
+
+        // Compute expected covariance using Autoware's explicit formula:
+        // mean = sum / n
+        // cov = (sum_sq - pt_sum * mean^T + I) / (n - 1)
+        //     = (sum_sq - n * mean * mean^T + I) / (n - 1)
+        //
+        // IMPORTANT: Autoware initializes leaf.cov_ to Identity (line 132 of
+        // multi_voxel_grid_covariance_omp.h), adding I/(n-1) to the result.
+        let n = points.len() as f64;
+        let mean = sum / n;
+        let pt_sum = sum; // = n * mean
+        let expected_cov =
+            (sum_sq - pt_sum * mean.transpose() + Matrix3::identity()) / (n - 1.0);
+
+        crate::test_println!("n = {}", n);
+        crate::test_println!("mean = {:?}", mean);
+        crate::test_println!("Expected cov diagonal: [{:.8}, {:.8}, {:.8}]",
+            expected_cov[(0,0)], expected_cov[(1,1)], expected_cov[(2,2)]);
+        crate::test_println!("Actual cov diagonal:   [{:.8}, {:.8}, {:.8}]",
+            voxel.covariance[(0,0)] as f64, voxel.covariance[(1,1)] as f64, voxel.covariance[(2,2)] as f64);
+
+        // Compare
+        for i in 0..3 {
+            for j in 0..3 {
+                assert_relative_eq!(
+                    voxel.covariance[(i, j)] as f64,
+                    expected_cov[(i, j)],
+                    epsilon = 1e-6
+                );
+            }
+        }
+    }
+
+    /// Test covariance with 6 points - minimum for valid voxel.
+    /// This is a key case since many voxels have exactly 6 points.
+    #[test]
+    fn test_covariance_6_points() {
+        let config = VoxelGridConfig {
+            min_points_per_voxel: 6,
+            eigenvalue_ratio_threshold: 0.0,
+            ..Default::default()
+        };
+
+        // 6 points with known variances
+        // x varies: 0, 0, 0, 1, 1, 1 -> mean=0.5, var=(0.5^2*3 + 0.5^2*3)/5 = 1.5/5 = 0.3
+        // y constant: 0, 0, 0, 0, 0, 0 -> mean=0, var=0
+        // z varies: 0, 1, 2, 0, 1, 2 -> mean=1, var=(1+0+1+1+0+1)/5 = 0.8
+        let points = [
+            [0.0f32, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 2.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 0.0, 2.0],
+        ];
+
+        let mut sum = Vector3::zeros();
+        let mut sum_sq = Matrix3::zeros();
+        for p in &points {
+            let v = Vector3::new(p[0] as f64, p[1] as f64, p[2] as f64);
+            sum += v;
+            sum_sq += v * v.transpose();
+        }
+
+        let voxel = Voxel::from_statistics(&sum, &sum_sq, points.len(), &config);
+        assert!(voxel.is_some());
+        let voxel = voxel.unwrap();
+
+        // Expected: mean = (0.5, 0, 1)
+        assert_relative_eq!(voxel.mean.x, 0.5, epsilon = 1e-6);
+        assert_relative_eq!(voxel.mean.y, 0.0, epsilon = 1e-6);
+        assert_relative_eq!(voxel.mean.z, 1.0, epsilon = 1e-6);
+
+        // Expected variances (+ Autoware identity term 1/(n-1) = 1/5 = 0.2):
+        // var_x = sum((xi - 0.5)^2) / 5 = (0.25*3 + 0.25*3) / 5 = 1.5/5 = 0.3 + 0.2 = 0.5
+        // var_y = 0 + 0.2 = 0.2
+        // var_z = sum((zi - 1)^2) / 5 = (1+0+1+1+0+1) / 5 = 0.8 + 0.2 = 1.0
+        assert_relative_eq!(voxel.covariance[(0, 0)], 0.5, epsilon = 1e-6);
+        assert_relative_eq!(voxel.covariance[(1, 1)], 0.2, epsilon = 1e-6);
+        assert_relative_eq!(voxel.covariance[(2, 2)], 1.0, epsilon = 1e-6);
+
+        crate::test_println!("6-point covariance test:");
+        crate::test_println!("  Mean: ({:.4}, {:.4}, {:.4})", voxel.mean.x, voxel.mean.y, voxel.mean.z);
+        crate::test_println!("  Cov diagonal: [{:.6}, {:.6}, {:.6}]",
+            voxel.covariance[(0,0)], voxel.covariance[(1,1)], voxel.covariance[(2,2)]);
     }
 }

@@ -138,14 +138,21 @@ impl VoxelAccumulator {
         // Compute mean
         let mean = [self.sum[0] / n, self.sum[1] / n, self.sum[2] / n];
 
-        // Single-pass covariance: cov = (sum_xx - sum * mean') / (n-1)
-        // Equivalent to: cov = (sum_xx - n * mean * mean') / (n-1)
+        // Single-pass covariance: cov = (sum_xx - sum * mean' + I) / (n-1)
+        // Equivalent to: cov = (sum_xx - n * mean * mean' + I) / (n-1)
+        //
+        // IMPORTANT: Autoware initializes leaf.cov_ to Identity (line 132 of
+        // multi_voxel_grid_covariance_omp.h), not zero. This adds an implicit
+        // I/(n-1) term to the final covariance. We replicate this behavior.
         let mut cov = [[0.0; 3]; 3];
-        for (cov_row, (sum_xx_row, &sum_i)) in
-            cov.iter_mut().zip(self.sum_xx.iter().zip(self.sum.iter()))
+        for (i, (cov_row, (sum_xx_row, &sum_i))) in cov
+            .iter_mut()
+            .zip(self.sum_xx.iter().zip(self.sum.iter()))
+            .enumerate()
         {
             for (j, cov_ij) in cov_row.iter_mut().enumerate() {
-                *cov_ij = (sum_xx_row[j] - sum_i * mean[j]) / (n - 1.0);
+                let identity_ij = if i == j { 1.0 } else { 0.0 };
+                *cov_ij = (sum_xx_row[j] - sum_i * mean[j] + identity_ij) / (n - 1.0);
             }
         }
 
