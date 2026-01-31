@@ -667,6 +667,8 @@ compare-init-poses-latest:
     source /opt/autoware/1.5.0/setup.bash
     python3 scripts/compare_init_poses.py "$CUDA_ROSBAG" "$AUTOWARE_ROSBAG"
 
+# === Voxel Grid Comparison ===
+
 # Dump voxel grid data for comparison (CUDA)
 dump-voxels-cuda: build-cuda-debug-voxels
     mkdir -p {{logs_dir}}
@@ -680,11 +682,44 @@ dump-voxels-cuda: build-cuda-debug-voxels
 dump-voxels-autoware:
     cd tests/comparison && just dump-voxels
 
-# Compare voxel grids between CUDA and Autoware
-compare-voxels:
+# Full voxel comparison workflow: dump both implementations and compare
+compare-voxels: build-cuda-debug-voxels build-comparison
+    #!/usr/bin/env bash
+    set -e
+    mkdir -p {{logs_dir}}
+
+    echo "============================================================"
+    echo " Voxel Grid Comparison"
+    echo "============================================================"
+
+    echo ""
+    echo "=== Step 1/3: Dumping CUDA voxels ==="
+    NDT_DUMP_VOXELS_FILE={{logs_dir}}/ndt_cuda_voxels.json \
+        ./scripts/run_demo.sh --cuda \
+            "$(realpath {{sample_map_dir}})" \
+            "$(realpath {{sample_rosbag}})" \
+            "{{rosbag_output_dir}}"
+
+    echo ""
+    echo "=== Step 2/3: Dumping Autoware voxels ==="
+    cd tests/comparison && just dump-voxels
+
+    echo ""
+    echo "=== Step 3/3: Comparing voxel grids ==="
+    cd - > /dev/null
     python3 tmp/compare_voxels.py \
         {{logs_dir}}/ndt_cuda_voxels.json \
         {{logs_dir}}/ndt_autoware_voxels.json
+
+    echo ""
+    echo "============================================================"
+    echo " Voxel comparison complete!"
+    echo " Results saved to: {{logs_dir}}/ndt_*_voxels.json"
+    echo "============================================================"
+
+# Analyze voxel diagonal differences (for debugging covariance issues)
+analyze-voxel-diagonals:
+    python3 tmp/investigate_diagonal_diff.py
 
 # === Debug Analysis ===
 
