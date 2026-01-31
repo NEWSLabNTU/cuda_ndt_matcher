@@ -255,8 +255,10 @@ just run-builtin
 just run-builtin-debug
 
 # Dump voxel data for comparison
-just dump-voxels-autoware
 just dump-voxels-cuda
+just dump-voxels-autoware
+
+# Full voxel comparison workflow (dump both + compare)
 just compare-voxels
 ```
 
@@ -316,6 +318,30 @@ python3 tmp/analyze_by_point_count.py
 # Debug GPU vs CPU cov_sums
 NDT_DEBUG_COV=1 cargo test -p ndt_cuda -- voxel --nocapture
 ```
+
+### Autoware Identity Initialization Fix (2026-01-31)
+
+**Root cause**: Autoware initializes `leaf.cov_` to Identity matrix, not zero.
+
+**Bug location**: `multi_voxel_grid_covariance_omp.h:132`
+```cpp
+cov_(Eigen::Matrix3d::Identity()),  // Autoware initializes to I, not 0
+```
+
+**Impact**: When accumulating `leaf.cov_ += pt * pt.T`, Autoware starts from I, giving:
+```cpp
+cov = (I + Σ(x*xᵀ) - n*mean*meanᵀ) / (n-1)
+    = standard_cov + I/(n-1)
+```
+
+This adds `1/(n-1)` to each diagonal element. For n=6, this is +0.2 per diagonal.
+
+**Fix applied to**:
+- `src/ndt_cuda/src/voxel_grid/types.rs:132`: Added `+ Matrix3::identity()` to numerator
+- `src/ndt_cuda/src/voxel_grid/gpu/statistics.rs:437-439`: Added `+ denom` to diagonal elements
+- `src/ndt_cuda/src/voxel_grid/gpu/autoware_comparison.rs:148`: Updated test helper
+
+**Verification**: All 421 tests pass (355 ndt_cuda + 66 cuda_ffi)
 
 ## Performance Summary (2026-01-30)
 
