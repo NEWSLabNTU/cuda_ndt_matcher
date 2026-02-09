@@ -96,7 +96,10 @@ setup:
     echo ""
     echo "Setup complete!"
 
-# Build all packages with colcon (only check src/ directory)
+# Rosbag replay sensor kit package directories (under tests/, hidden from colcon by COLCON_IGNORE)
+rosbag_replay_pkgs := "tests/rosbag_replay/individual_params tests/rosbag_replay/rosbag_sensor_kit_description tests/rosbag_replay/rosbag_sensor_kit_launch"
+
+# Build cuda_ndt_matcher and cuda_ndt_matcher_launch
 build:
     #!/usr/bin/env bash
     colcon build \
@@ -104,6 +107,14 @@ build:
         --symlink-install \
         --cmake-args -DCMAKE_BUILD_TYPE=Release \
         --cargo-args --release
+
+# Build rosbag replay sensor kit packages (needed for run/demo recipes)
+build-rosbag-replay:
+    #!/usr/bin/env bash
+    colcon build \
+        --base-paths {{rosbag_replay_pkgs}} \
+        --symlink-install \
+        --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 # Clean all build artifacts
 clean:

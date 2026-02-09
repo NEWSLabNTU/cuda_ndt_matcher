@@ -58,6 +58,17 @@ else
     USE_INITIAL_POSE="true"
 fi
 
+# Ensure rosbag replay sensor kit packages are installed
+if [[ ! -d "$PROJECT_DIR/install/rosbag_sensor_kit_launch" ]]; then
+    echo "Building rosbag replay sensor kit packages..."
+    (cd "$PROJECT_DIR" && colcon build \
+        --base-paths tests/rosbag_replay/individual_params \
+                     tests/rosbag_replay/rosbag_sensor_kit_description \
+                     tests/rosbag_replay/rosbag_sensor_kit_launch \
+        --symlink-install \
+        --cmake-args -DCMAKE_BUILD_TYPE=Release)
+fi
+
 # Source Autoware environment first, then local workspace as overlay
 source "$AUTOWARE_ACTIVATE"
 source "$PROJECT_DIR/install/setup.bash"
