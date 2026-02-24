@@ -8,7 +8,7 @@ build = "build.rs"
 
 [dependencies]
 # Error handling
-thiserror = { workspace = true }
+thiserror.workspace = true
 
 [build-dependencies]
 # For finding CUDA installation

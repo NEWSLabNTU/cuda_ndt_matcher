@@ -27,11 +27,11 @@ cudarc = { version = "0.18", default-features = false, features = [
 cuda_ffi = { path = "../cuda_ffi" }
 
 # Linear algebra
-nalgebra = { workspace = true }
+nalgebra.workspace = true
 
 # Error handling
-anyhow = { workspace = true }
-thiserror = { workspace = true }
+anyhow.workspace = true
+thiserror.workspace = true
 
 # Logging (tracing for ROS-independent library; cuda_ndt_matcher uses rclrs logging)
 tracing = "0.1"
@@ -48,9 +48,9 @@ serde_json = "1"
 
 [dev-dependencies]
 # Testing
-rand = { workspace = true }
-rand_distr = { workspace = true }
-approx = { workspace = true }
+rand.workspace = true
+rand_distr.workspace = true
+approx.workspace = true
 
 [features]
 default = ["cuda"]
