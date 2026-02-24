@@ -131,8 +131,7 @@ impl Voxel {
         // multi_voxel_grid_covariance_omp.h), not zero. This adds an implicit
         // I/(n-1) term to the final covariance. We replicate this behavior.
         let mean_outer = mean * mean.transpose();
-        let covariance =
-            (sum_sq - mean_outer * n + Matrix3::identity()) / (n - 1.0);
+        let covariance = (sum_sq - mean_outer * n + Matrix3::identity()) / (n - 1.0);
 
         // Regularize covariance to avoid singularity
         let reg = regularize_covariance(&covariance, config.eigenvalue_ratio_threshold)?;
@@ -505,7 +504,12 @@ mod tests {
 
         crate::test_println!("Points: {:?}", points);
         crate::test_println!("Sum: {:?}", sum);
-        crate::test_println!("Sum_sq diagonal: [{}, {}, {}]", sum_sq[(0,0)], sum_sq[(1,1)], sum_sq[(2,2)]);
+        crate::test_println!(
+            "Sum_sq diagonal: [{}, {}, {}]",
+            sum_sq[(0, 0)],
+            sum_sq[(1, 1)],
+            sum_sq[(2, 2)]
+        );
 
         let voxel = Voxel::from_statistics(&sum, &sum_sq, points.len(), &config);
         assert!(voxel.is_some(), "Voxel creation should succeed");
@@ -572,15 +576,22 @@ mod tests {
         let n = points.len() as f64;
         let mean = sum / n;
         let pt_sum = sum; // = n * mean
-        let expected_cov =
-            (sum_sq - pt_sum * mean.transpose() + Matrix3::identity()) / (n - 1.0);
+        let expected_cov = (sum_sq - pt_sum * mean.transpose() + Matrix3::identity()) / (n - 1.0);
 
         crate::test_println!("n = {}", n);
         crate::test_println!("mean = {:?}", mean);
-        crate::test_println!("Expected cov diagonal: [{:.8}, {:.8}, {:.8}]",
-            expected_cov[(0,0)], expected_cov[(1,1)], expected_cov[(2,2)]);
-        crate::test_println!("Actual cov diagonal:   [{:.8}, {:.8}, {:.8}]",
-            voxel.covariance[(0,0)] as f64, voxel.covariance[(1,1)] as f64, voxel.covariance[(2,2)] as f64);
+        crate::test_println!(
+            "Expected cov diagonal: [{:.8}, {:.8}, {:.8}]",
+            expected_cov[(0, 0)],
+            expected_cov[(1, 1)],
+            expected_cov[(2, 2)]
+        );
+        crate::test_println!(
+            "Actual cov diagonal:   [{:.8}, {:.8}, {:.8}]",
+            voxel.covariance[(0, 0)] as f64,
+            voxel.covariance[(1, 1)] as f64,
+            voxel.covariance[(2, 2)] as f64
+        );
 
         // Compare
         for i in 0..3 {
@@ -643,8 +654,17 @@ mod tests {
         assert_relative_eq!(voxel.covariance[(2, 2)], 1.0, epsilon = 1e-6);
 
         crate::test_println!("6-point covariance test:");
-        crate::test_println!("  Mean: ({:.4}, {:.4}, {:.4})", voxel.mean.x, voxel.mean.y, voxel.mean.z);
-        crate::test_println!("  Cov diagonal: [{:.6}, {:.6}, {:.6}]",
-            voxel.covariance[(0,0)], voxel.covariance[(1,1)], voxel.covariance[(2,2)]);
+        crate::test_println!(
+            "  Mean: ({:.4}, {:.4}, {:.4})",
+            voxel.mean.x,
+            voxel.mean.y,
+            voxel.mean.z
+        );
+        crate::test_println!(
+            "  Cov diagonal: [{:.6}, {:.6}, {:.6}]",
+            voxel.covariance[(0, 0)],
+            voxel.covariance[(1, 1)],
+            voxel.covariance[(2, 2)]
+        );
     }
 }

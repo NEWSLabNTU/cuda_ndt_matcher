@@ -16,6 +16,8 @@ mod visualization;
 
 use anyhow::Result;
 use arc_swap::ArcSwap;
+use autoware_internal_debug_msgs::msg::{Float32Stamped, Int32Stamped};
+use autoware_internal_localization_msgs::srv::PoseWithCovarianceStamped as PoseWithCovSrv;
 use diagnostics::{DiagnosticLevel, DiagnosticsInterface, ScanMatchingDiagnostics};
 use dual_ndt_manager::DualNdtManager;
 use geometry_msgs::msg::{
@@ -45,8 +47,6 @@ use std::time::Instant;
 use std_msgs::msg::Header;
 use std_srvs::srv::{SetBool, Trigger};
 use tf2_msgs::msg::TFMessage;
-use autoware_internal_debug_msgs::msg::{Float32Stamped, Int32Stamped};
-use autoware_internal_localization_msgs::srv::PoseWithCovarianceStamped as PoseWithCovSrv;
 use visualization::ParticleMarkerConfig;
 use visualization_msgs::msg::{Marker, MarkerArray};
 
@@ -55,16 +55,25 @@ type SetBoolRequest = std_srvs::srv::SetBool_Request;
 type SetBoolResponse = std_srvs::srv::SetBool_Response;
 type TriggerRequest = std_srvs::srv::Trigger_Request;
 type TriggerResponse = std_srvs::srv::Trigger_Response;
-type PoseWithCovSrvRequest = autoware_internal_localization_msgs::srv::PoseWithCovarianceStamped_Request;
-type PoseWithCovSrvResponse = autoware_internal_localization_msgs::srv::PoseWithCovarianceStamped_Response;
+type PoseWithCovSrvRequest =
+    autoware_internal_localization_msgs::srv::PoseWithCovarianceStamped_Request;
+type PoseWithCovSrvResponse =
+    autoware_internal_localization_msgs::srv::PoseWithCovarianceStamped_Response;
 
 /// Write init-to-tracking time to debug file (only with debug-output feature)
 #[cfg(feature = "debug-output")]
 fn write_init_to_tracking_debug(elapsed_ms: f64) {
     let debug_file =
         std::env::var("NDT_DEBUG_FILE").unwrap_or_else(|_| "/tmp/ndt_cuda_debug.jsonl".to_string());
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&debug_file) {
-        let json = format!(r#"{{"type":"init_to_tracking","elapsed_ms":{:.2}}}"#, elapsed_ms);
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&debug_file)
+    {
+        let json = format!(
+            r#"{{"type":"init_to_tracking","elapsed_ms":{:.2}}}"#,
+            elapsed_ms
+        );
         let _ = writeln!(file, "{}", json);
     }
 }
@@ -536,7 +545,9 @@ impl NdtScanMatcherNode {
                         // Log init-to-tracking time
                         #[cfg(feature = "debug-output")]
                         {
-                            if let Some(start) = init_request_time_for_trigger.lock().unwrap().take() {
+                            if let Some(start) =
+                                init_request_time_for_trigger.lock().unwrap().take()
+                            {
                                 let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
                                 log_info!(NODE_NAME, "Init-to-tracking time: {:.2}ms", elapsed_ms);
                                 // Write to debug file

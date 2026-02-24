@@ -1503,7 +1503,10 @@ mod tests {
             return;
         }
         if !std::path::Path::new(autoware_path).exists() {
-            crate::test_println!("Skipping: Autoware voxel dump not found at {}", autoware_path);
+            crate::test_println!(
+                "Skipping: Autoware voxel dump not found at {}",
+                autoware_path
+            );
             return;
         }
 
@@ -1518,7 +1521,11 @@ mod tests {
         let autoware_dump: VoxelDumpJson =
             serde_json::from_reader(autoware_file).expect("Failed to parse Autoware dump");
 
-        crate::test_println!("CUDA: {} voxels, resolution={}", cuda_dump.voxels.len(), cuda_dump.resolution);
+        crate::test_println!(
+            "CUDA: {} voxels, resolution={}",
+            cuda_dump.voxels.len(),
+            cuda_dump.resolution
+        );
         crate::test_println!(
             "Autoware: {} voxels, resolution={}",
             autoware_dump.voxels.len(),
@@ -1569,8 +1576,7 @@ mod tests {
                 point_count_diffs.push(pc_diff);
 
                 // Compute covariance ratio (trace ratio as scalar measure)
-                let cuda_trace =
-                    cuda_voxel.cov[0][0] + cuda_voxel.cov[1][1] + cuda_voxel.cov[2][2];
+                let cuda_trace = cuda_voxel.cov[0][0] + cuda_voxel.cov[1][1] + cuda_voxel.cov[2][2];
                 let aw_trace = aw_voxel.cov[0][0] + aw_voxel.cov[1][1] + aw_voxel.cov[2][2];
 
                 if aw_trace > 1e-10 {
@@ -1655,9 +1661,14 @@ mod tests {
 
             // Check if this matches the formula discrepancy pattern
             if overall_avg < 0.8 {
-                crate::test_println!("\n*** WARNING: CUDA covariances are significantly smaller ({:.1}%) ***", overall_avg * 100.0);
+                crate::test_println!(
+                    "\n*** WARNING: CUDA covariances are significantly smaller ({:.1}%) ***",
+                    overall_avg * 100.0
+                );
                 crate::test_println!("Possible causes:");
-                crate::test_println!("  1. Different voxel boundaries (different points per voxel)");
+                crate::test_println!(
+                    "  1. Different voxel boundaries (different points per voxel)"
+                );
                 crate::test_println!("  2. Different map loading (PCD vs rosbag)");
                 crate::test_println!("  3. Covariance formula difference");
                 crate::test_println!("  4. Regularization difference");

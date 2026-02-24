@@ -115,12 +115,12 @@ src/cuda_ndt_matcher/src/
 Quick fixes that ship in package metadata or affect build consistency.
 
 **Criteria**:
-- [ ] `src/cuda_ndt_matcher/package.xml` has real maintainer name and email (not `TODO`)
-- [ ] `src/cuda_ndt_matcher_launch/package.xml` has real maintainer name and email (not `TODO`)
-- [ ] Workspace dependency syntax normalized to one style across all `Cargo.toml` files
-- [ ] Doc examples in `ndt_cuda/src/lib.rs` changed from ` ```ignore ` to ` ```no_run ` where valid Rust (keeps ` ```ignore ` with comment where ROS context is needed)
-- [ ] `cargo doc` succeeds
-- [ ] `just build` succeeds
+- [x] `src/cuda_ndt_matcher/package.xml` has real maintainer name and email (not `TODO`)
+- [x] `src/cuda_ndt_matcher_launch/package.xml` has real maintainer name and email (not `TODO`)
+- [x] Workspace dependency syntax normalized to one style across all `Cargo.toml` files
+- [x] Doc examples in `ndt_cuda/src/lib.rs` changed from ` ```ignore ` to ` ```no_run ` where valid Rust (keeps ` ```ignore ` with comment where ROS context is needed)
+- [x] `cargo doc` succeeds
+- [x] `just build` succeeds
 
 ---
 

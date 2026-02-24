@@ -13,7 +13,10 @@
 //!
 //! # Usage
 //!
-//! ```ignore
+//! ```no_run
+//! # fn load_pcd_file(_: &str) -> Vec<[f32; 3]> { vec![] }
+//! # fn get_lidar_scan() -> Vec<[f32; 3]> { vec![] }
+//! # fn main() -> anyhow::Result<()> {
 //! use ndt_cuda::NdtScanMatcher;
 //! use nalgebra::Isometry3;
 //!
@@ -30,6 +33,8 @@
 //!
 //! let result = matcher.align(&source_points, initial_guess)?;
 //! println!("Converged: {}, NVTL: {}", result.converged, result.nvtl);
+//! # Ok(())
+//! # }
 //! ```
 
 /// Print to stdout only when the `test-verbose` feature is enabled.
