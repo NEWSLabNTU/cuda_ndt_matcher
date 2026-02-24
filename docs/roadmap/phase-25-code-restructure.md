@@ -1,22 +1,29 @@
-# Phase 25: Code Restructure (cuda_ndt_matcher)
+# Phase 25: Code Restructure & Quality
 
 **Status**: Planned
-**Date**: 2026-01-28
+**Date**: 2026-01-28 (updated 2026-02-25)
 
 ## Motivation
 
-The `cuda_ndt_matcher` crate has grown organically and needs restructuring:
+The codebase has grown organically and needs both structural reorganization and quality improvements:
 
-1. **main.rs is too large** (1,934 lines) - difficult to navigate and maintain
-2. **Flat module structure** - unclear relationships between modules (e.g., `tpe.rs` only used by `initial_pose.rs`)
-3. **CPU/GPU paths not explicit** - hard to identify which code runs on GPU vs CPU
+1. **main.rs is too large** (1,934 lines) — difficult to navigate and maintain
+2. **Flat module structure** — unclear relationships between modules (e.g., `tpe.rs` only used by `initial_pose.rs`)
+3. **CPU/GPU paths not explicit** — hard to identify which code runs on GPU vs CPU
+4. **Excessive `unwrap()` calls** (307 in `ndt_cuda`) — risk panics in production
+5. **No `pub(crate)` scoping** — internal APIs are fully public
+6. **Code duplication** — PointCloud2 construction, quaternion conversion, debug I/O repeated across files
+7. **Module-level `#[allow(dead_code)]`** — masks real dead code
+8. **Silent test skips** — `require_cuda!()` macro hides whether tests actually ran in CI
 
 ## Goals
 
+- Fix low-hanging metadata and hygiene issues first
+- Reduce duplication before moving files (smaller diffs)
 - Split `main.rs` into manageable modules
 - Create hierarchical module structure reflecting actual dependencies
 - Make CPU/GPU implementations explicit where both exist
-- Improve code discoverability and maintainability
+- Improve error handling and test visibility across all crates
 
 ## Current Structure
 
@@ -79,7 +86,8 @@ src/cuda_ndt_matcher/src/
 ├── transform/                 - Spatial transforms (CPU)
 │   ├── mod.rs
 │   ├── tf_handler.rs          (396 lines)  ← tf_handler.rs
-│   └── pose_buffer.rs         (464 lines)  ← pose_buffer.rs
+│   ├── pose_buffer.rs         (464 lines)  ← pose_buffer.rs
+│   └── pose_utils.rs          (~60 lines)  ← NEW: shared conversion helpers
 │
 ├── scoring/                   - Scoring reference (CPU)
 │   ├── mod.rs
@@ -92,88 +100,75 @@ src/cuda_ndt_matcher/src/
 │   │   ├── cpu.rs             ← CPU conversion/filtering
 │   │   └── gpu.rs             ← GPU-accelerated filtering
 │   ├── params.rs              (440 lines)  ← params.rs
-│   └── diagnostics.rs         (446 lines)  ← diagnostics.rs
+│   ├── diagnostics.rs         (446 lines)  ← diagnostics.rs
+│   └── debug_writer.rs        (~50 lines)  ← NEW: centralized debug JSONL I/O
 │
 └── visualization/             - Debug visualization (CPU)
     ├── mod.rs
     └── markers.rs             (709 lines)  ← visualization.rs
 ```
 
-## Implementation Phases
+## Sub-phases
 
-### Phase 1: Split main.rs
+### 25.1 Fix Metadata & Cargo Hygiene
 
-**Priority**: First
+Quick fixes that ship in package metadata or affect build consistency.
+
+**Criteria**:
+- [ ] `src/cuda_ndt_matcher/package.xml` has real maintainer name and email (not `TODO`)
+- [ ] `src/cuda_ndt_matcher_launch/package.xml` has real maintainer name and email (not `TODO`)
+- [ ] Workspace dependency syntax normalized to one style across all `Cargo.toml` files
+- [ ] Doc examples in `ndt_cuda/src/lib.rs` changed from ` ```ignore ` to ` ```no_run ` where valid Rust (keeps ` ```ignore ` with comment where ROS context is needed)
+- [ ] `cargo doc` succeeds
+- [ ] `just build` succeeds
+
+---
+
+### 25.2 Code Deduplication & Extraction
+
+Reduce duplication before the structural moves (smaller diffs in later sub-phases).
+
+**Criteria**:
+- [ ] **Callback context struct**: `OnPointsContext` (or similar) created holding all shared state; `on_points()` signature reduced to `(msg, ctx)`; `#[allow(clippy::too_many_arguments)]` removed
+- [ ] **Pose utilities**: `pose_utils.rs` created with `isometry_from_pose()`, `pose_from_isometry()`, `nalgebra_quat_from_msg()`; all ~8 duplicate conversion sites updated
+- [ ] **Debug I/O**: `DebugWriter` struct created encapsulating debug JSONL file open + append; all 4 duplicate sites (`main.rs:63-70`, `initial_pose.rs:75-87`, `main.rs:612-630`, `ndt_manager.rs:75-97`) use it; `NDT_DEBUG_FILE` env var handling centralized
+- [ ] **PointCloud2 builder**: common helper extracted; `to_pointcloud2()`, `to_pointcloud2_with_rgb()`, and test helper delegate to shared logic
+- [ ] All tests pass (`just test`)
+- [ ] No functionality changes
+
+---
+
+### 25.3 Lint & Visibility Hygiene
+
+Tighten up compiler warnings and API surface.
+
+**Criteria**:
+- [ ] `#![allow(dead_code)]` removed from `ndt_manager.rs` and `params.rs`; individual `#[allow(dead_code)]` added only to items genuinely used via `Arc<Mutex<T>>` or closure captures; truly dead code removed
+- [ ] All `pub fn` / `pub struct` in `cuda_ndt_matcher/src/*.rs` audited; internal-only items changed to `pub(crate)`
+- [ ] `just lint` passes with no new warnings
+
+---
+
+### 25.4 Split main.rs
 
 Split the 1,934-line `main.rs` into the `node/` module hierarchy.
 
-#### 1.1 Create node/state.rs
+**Criteria**:
+- [ ] **node/state.rs**: `NdtScanMatcherNode` struct definition extracted (lines 129-167)
+- [ ] **node/publishers.rs**: `DebugPublishers` struct, `publish_tf()`, marker helpers extracted (lines 84-123, 1507-1678)
+- [ ] **node/services.rs**: `on_ndt_align()`, `on_map_update()`, `on_map_received()` extracted (lines 1684-1903)
+- [ ] **node/processing.rs**: core alignment logic extracted from `on_points()` — pose interpolation, alignment execution, convergence gating, covariance estimation
+- [ ] **node/callbacks.rs**: remaining `on_points()` structure — point cloud conversion, sensor frame transform, calls to processing, debug publishing
+- [ ] **node/init.rs**: `NdtScanMatcherNode::new()` extracted (lines 170-617) — parameter loading, publisher/subscription/service creation
+- [ ] **main.rs** reduced to ~50 lines (entry point only)
+- [ ] All tests pass
+- [ ] No functionality changes
 
-Extract `NdtScanMatcherNode` struct definition (lines 129-167):
+---
 
-```rust
-// node/state.rs
-pub struct NdtScanMatcherNode {
-    // All fields from current NdtScanMatcherNode
-}
-```
+### 25.5 Reorganize Module Structure
 
-#### 1.2 Create node/publishers.rs
-
-Extract (lines 84-123, 1507-1678):
-- `DebugPublishers` struct
-- `publish_tf()` function
-- Marker creation helpers
-
-#### 1.3 Create node/services.rs
-
-Extract service handlers (lines 1684-1903):
-- `on_ndt_align()` - Initial pose alignment service
-- `on_map_update()` - Map update service
-- `on_map_received()` - Map subscription callback
-
-#### 1.4 Create node/processing.rs
-
-Extract core alignment logic from `on_points()`:
-- Pose interpolation and validation
-- Alignment execution (sync/batch)
-- Convergence gating
-- Covariance estimation
-- Utility: `isometry_to_pose()` (lines 61-83)
-
-#### 1.5 Create node/callbacks.rs
-
-Remaining `on_points()` structure:
-- Point cloud conversion and filtering
-- Sensor frame transformation
-- Calls to processing functions
-- Debug publishing
-
-#### 1.6 Create node/init.rs
-
-Extract `NdtScanMatcherNode::new()` (lines 170-617):
-- Parameter loading
-- Publisher creation
-- Subscription creation
-- Service creation
-
-#### 1.7 Slim main.rs
-
-Final `main.rs` (~50 lines):
-
-```rust
-mod node;
-
-fn main() {
-    // Initialize logging
-    // Create node
-    // Spin
-}
-```
-
-### Phase 2: Reorganize Module Structure
-
-Move files to new directory structure:
+Move flat files into hierarchical directories using `git mv`.
 
 | Current | New Location |
 |---------|--------------|
@@ -193,90 +188,50 @@ Move files to new directory structure:
 | `diagnostics.rs` | `io/diagnostics.rs` |
 | `visualization.rs` | `visualization/markers.rs` |
 
-### Phase 3: Split Dual CPU/GPU Implementations
+**Criteria**:
+- [ ] All files moved to new locations with `git mv`
+- [ ] `mod` declarations and `use` imports updated throughout
+- [ ] Module visibility set: `node/` internal, others `pub(crate)` or `pub` as appropriate
+- [ ] `map_module.rs` split into `map/tiles.rs` (`MapUpdateModule`) and `map/loader.rs` (`DynamicMapLoader`)
+- [ ] All tests pass
+- [ ] No functionality changes
 
-#### 3.1 Split pointcloud.rs
+---
 
-Current `pointcloud.rs` has both CPU and GPU filtering paths:
+### 25.6 Split Dual CPU/GPU Implementations
 
-```rust
-// io/pointcloud/mod.rs
-pub mod cpu;
-pub mod gpu;
+Make CPU and GPU code paths explicit in modules that have both.
 
-// Re-exports
-pub use cpu::{from_pointcloud2, to_pointcloud2, to_pointcloud2_with_rgb};
+**Criteria**:
+- [ ] **pointcloud split**: `io/pointcloud/cpu.rs` (conversion, filtering) and `io/pointcloud/gpu.rs` (GPU-accelerated filtering) created; `io/pointcloud/mod.rs` re-exports and auto-selects
+- [ ] CPU/GPU paths clearly identifiable by file location
+- [ ] All tests pass
 
-/// Auto-select CPU or GPU based on point count
-pub fn filter_sensor_points(
-    points: &[[f32; 3]],
-    params: &PointFilterParams
-) -> FilterResult {
-    if points.len() > 10_000 && gpu::is_available() {
-        gpu::filter_sensor_points(points, params)
-    } else {
-        cpu::filter_sensor_points(points, params)
-    }
-}
-```
+---
 
-```rust
-// io/pointcloud/cpu.rs
-pub fn from_pointcloud2(msg: &PointCloud2) -> Result<Vec<[f32; 3]>, Error> { ... }
-pub fn to_pointcloud2(points: &[[f32; 3]], frame_id: &str) -> PointCloud2 { ... }
-pub fn to_pointcloud2_with_rgb(...) -> PointCloud2 { ... }
-pub fn filter_sensor_points(...) -> FilterResult { ... }
-```
+### 25.7 Error Handling Audit
 
-```rust
-// io/pointcloud/gpu.rs
-pub fn is_available() -> bool { ... }
-pub fn filter_sensor_points(...) -> FilterResult { ... }
-```
+Improve error handling in the `ndt_cuda` library crate (307 `unwrap()` calls).
 
-#### 3.2 Split map_module.rs
+**Criteria**:
+- [ ] `unwrap()` calls in `ndt_cuda/src/**/*.rs` audited
+- [ ] Public API paths use `?` + `context()` instead of `unwrap()`
+- [ ] `unwrap()` retained only where infallibility is proven by construction (with a comment explaining why)
+- [ ] Test code may retain `unwrap()` — production code should not
+- [ ] All tests pass
 
-Split into two focused modules:
+---
 
-```rust
-// map/tiles.rs (~500 lines)
-pub struct MapUpdateModule { ... }
-pub struct MapTile { ... }
-pub struct MapUpdateResult { ... }
-pub struct MapStats { ... }
-```
+### 25.8 Test & Build Hygiene
 
-```rust
-// map/loader.rs (~340 lines)
-pub struct DynamicMapLoader { ... }
-pub struct MapLoaderStatus { ... }
-```
+Improve test visibility, feature flag ergonomics, type safety, and clean up tech debt.
 
-### Phase 4: Module Visibility
-
-```rust
-// lib.rs
-pub mod alignment;      // GPU alignment path
-pub mod initial_pose;   // Initial pose estimation
-pub mod map;            // CPU map management
-pub mod transform;      // CPU transforms
-pub mod scoring;        // CPU scoring reference
-pub mod io;             // I/O with explicit CPU/GPU
-pub mod visualization;  // CPU visualization
-
-// node/ is internal (ROS-specific)
-```
-
-```rust
-// initial_pose/mod.rs
-pub mod tpe;            // PUBLIC as requested
-pub mod particle;       // PUBLIC (used by visualization)
-mod estimator;
-
-pub use estimator::estimate_initial_pose;
-pub use tpe::TreeStructuredParzenEstimator;
-pub use particle::{Particle, select_best_particle};
-```
+**Criteria**:
+- [ ] **Test skips**: `require_cuda!()` macro replaced or augmented with `#[ignore = "requires CUDA"]` where appropriate; CI output distinguishes skipped from passed
+- [ ] **Feature flags**: nested `#[cfg]` blocks in `on_points()` alignment path simplified (runtime `if cfg!()` or trait dispatch); feature dependency chain in `cuda_ndt_matcher/Cargo.toml` documented with comments; all feature combinations build (`default`, `profiling`, `debug`)
+- [ ] **`as` casts at boundaries**: casts on external input (PointCloud2 parsing, ROS params) replaced with `try_into().context()?` or explicit bounds checks; internal casts left as-is
+- [ ] **Stale TODOs**: each TODO evaluated — resolve, convert to GitHub issue, or prefix with `TECH-DEBT:`; no bare `TODO` in production code paths (test-only TODOs acceptable)
+- [ ] All tests pass
 
 ## Module Classification
 
@@ -294,10 +249,11 @@ pub use particle::{Particle, select_best_particle};
 | Module | Purpose |
 |--------|---------|
 | `map/` | Tile management, map loading |
-| `transform/` | TF buffer, pose interpolation |
+| `transform/` | TF buffer, pose interpolation, conversion utils |
 | `scoring/` | NVTL reference implementation |
 | `io/params.rs` | Parameter loading |
 | `io/diagnostics.rs` | ROS diagnostics |
+| `io/debug_writer.rs` | Centralized debug JSONL output |
 | `visualization/` | Debug markers and clouds |
 
 ### Mixed CPU/GPU
@@ -308,16 +264,33 @@ pub use particle::{Particle, select_best_particle};
 | `io/pointcloud/` | Explicit CPU/GPU filtering |
 | `node/` | ROS orchestration |
 
+## Implementation Order
+
+| Sub-phase | Depends On | Effort |
+|-----------|------------|--------|
+| 25.1 Metadata & Cargo hygiene | — | 30 min |
+| 25.2 Code deduplication | — | 6 hours |
+| 25.3 Lint & visibility | — | 3 hours |
+| 25.4 Split main.rs | 25.2 | 4 hours |
+| 25.5 Reorganize modules | 25.4 | 3 hours |
+| 25.6 Split CPU/GPU | 25.5 | 2 hours |
+| 25.7 Error handling audit | — | 6 hours |
+| 25.8 Test & build hygiene | 25.4 | 4 hours |
+
+**Total estimated effort**: ~28 hours
+
+Sub-phases 25.1–25.3 and 25.7 have no dependencies and can be done in parallel or any order. Sub-phases 25.4–25.6 are sequential (each builds on the previous). 25.8 depends on 25.4 because feature-flag cleanup touches the restructured callbacks.
+
 ## Migration Strategy
 
 1. **Preserve git history**: Use `git mv` for file moves
-2. **Incremental changes**: One phase at a time, verify builds
+2. **Incremental changes**: One sub-phase at a time, verify builds
 3. **Update imports**: Fix all `use` statements after each move
-4. **Run tests**: Ensure all tests pass after each phase
+4. **Run tests**: Ensure all tests pass after each sub-phase
 
 ## Verification
 
-After each phase:
+After each sub-phase:
 
 ```bash
 just build
@@ -336,11 +309,18 @@ just lint
 - No external dependencies
 - Internal refactoring only
 - No API changes to ndt_cuda crate
+- No conflict with Phase 23 (GPU Utilization)
 
 ## Success Criteria
 
 - [ ] `main.rs` reduced to ~50 lines
 - [ ] All modules in logical hierarchical structure
 - [ ] CPU/GPU paths clearly identifiable
-- [ ] All tests passing
+- [ ] `just build` succeeds
+- [ ] `just test` passes (all 417+ tests)
+- [ ] `just lint` passes with no new warnings
+- [ ] No `#![allow(dead_code)]` at module level
+- [ ] No `#[allow(clippy::too_many_arguments)]` on `on_points()`
+- [ ] Zero bare `TODO` in production code paths
+- [ ] `package.xml` files have real maintainer info
 - [ ] No functionality changes
