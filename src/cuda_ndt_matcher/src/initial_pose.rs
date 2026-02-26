@@ -18,14 +18,12 @@ use crate::tpe::{
     ANGLE_Y, ANGLE_Z, TRANS_X, TRANS_Y, TRANS_Z,
 };
 use geometry_msgs::msg::{Point, Pose, PoseWithCovariance, PoseWithCovarianceStamped, Quaternion};
-use nalgebra::{Quaternion as NaQuaternion, UnitQuaternion};
+use nalgebra::UnitQuaternion;
 use rclrs::log_debug;
 #[cfg(feature = "debug-output")]
 use serde::Serialize;
 #[cfg(feature = "debug-output")]
-use std::fs::OpenOptions;
-#[cfg(feature = "debug-output")]
-use std::io::Write;
+use super::debug_writer;
 #[cfg(feature = "debug-output")]
 use std::time::Instant;
 
@@ -74,15 +72,7 @@ impl InitPoseDebug {
 #[cfg(feature = "debug-output")]
 fn write_init_debug(debug: &InitPoseDebug) {
     if let Ok(json) = debug.to_json() {
-        let debug_file = std::env::var("NDT_DEBUG_FILE")
-            .unwrap_or_else(|_| "/tmp/ndt_cuda_debug.jsonl".to_string());
-        if let Ok(mut file) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&debug_file)
-        {
-            let _ = writeln!(file, "{json}");
-        }
+        debug_writer::append_debug_line(&json);
     }
 }
 
@@ -488,9 +478,7 @@ fn pose_to_input(pose: &Pose) -> Input {
 
 /// Convert quaternion to roll-pitch-yaw angles
 fn quaternion_to_rpy(q: &Quaternion) -> (f64, f64, f64) {
-    let unit_q = UnitQuaternion::new_normalize(NaQuaternion::new(q.w, q.x, q.y, q.z));
-    let euler = unit_q.euler_angles();
-    (euler.0, euler.1, euler.2)
+    super::pose_utils::unit_quat_from_msg(q).euler_angles()
 }
 
 /// Convert roll-pitch-yaw to quaternion

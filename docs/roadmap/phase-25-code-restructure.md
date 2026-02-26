@@ -129,12 +129,12 @@ Quick fixes that ship in package metadata or affect build consistency.
 Reduce duplication before the structural moves (smaller diffs in later sub-phases).
 
 **Criteria**:
-- [ ] **Callback context struct**: `OnPointsContext` (or similar) created holding all shared state; `on_points()` signature reduced to `(msg, ctx)`; `#[allow(clippy::too_many_arguments)]` removed
-- [ ] **Pose utilities**: `pose_utils.rs` created with `isometry_from_pose()`, `pose_from_isometry()`, `nalgebra_quat_from_msg()`; all ~8 duplicate conversion sites updated
-- [ ] **Debug I/O**: `DebugWriter` struct created encapsulating debug JSONL file open + append; all 4 duplicate sites (`main.rs:63-70`, `initial_pose.rs:75-87`, `main.rs:612-630`, `ndt_manager.rs:75-97`) use it; `NDT_DEBUG_FILE` env var handling centralized
-- [ ] **PointCloud2 builder**: common helper extracted; `to_pointcloud2()`, `to_pointcloud2_with_rgb()`, and test helper delegate to shared logic
-- [ ] All tests pass (`just test`)
-- [ ] No functionality changes
+- [x] **Callback context struct**: `OnPointsContext` created holding all shared state; `on_points()` signature reduced to `(msg, ctx)`; `#[allow(clippy::too_many_arguments)]` removed
+- [x] **Pose utilities**: `pose_utils.rs` created with `isometry_from_pose()`, `pose_from_isometry()`, `unit_quat_from_msg()`, `euler_from_pose()`; all duplicate conversion sites in `main.rs`, `covariance.rs`, `initial_pose.rs` updated
+- [x] **Debug I/O**: `debug_writer.rs` created with `clear_debug_file()`, `append_debug_line()`, `write_init_to_tracking()`; all duplicate sites in `main.rs` and `initial_pose.rs` use it; `NDT_DEBUG_FILE` env var handling centralized
+- [x] **PointCloud2 builder**: `xyz_fields()` and `encode_xyz_data()` helpers extracted; `to_pointcloud2()`, `to_pointcloud2_with_rgb()`, and test helper delegate to shared logic
+- [x] All tests pass (`just test`) — 421 tests (355 ndt_cuda + 66 cuda_ffi)
+- [x] No functionality changes
 
 ---
 
@@ -170,23 +170,23 @@ Split the 1,934-line `main.rs` into the `node/` module hierarchy.
 
 Move flat files into hierarchical directories using `git mv`.
 
-| Current | New Location |
-|---------|--------------|
-| `ndt_manager.rs` | `alignment/manager.rs` |
-| `dual_ndt_manager.rs` | `alignment/dual_manager.rs` |
-| `covariance.rs` | `alignment/covariance.rs` |
-| `scan_queue.rs` | `alignment/batch.rs` |
-| `initial_pose.rs` | `initial_pose/estimator.rs` |
-| `tpe.rs` | `initial_pose/tpe.rs` |
-| `particle.rs` | `initial_pose/particle.rs` |
-| `map_module.rs` | `map/tiles.rs` + `map/loader.rs` |
-| `tf_handler.rs` | `transform/tf_handler.rs` |
-| `pose_buffer.rs` | `transform/pose_buffer.rs` |
-| `nvtl.rs` | `scoring/nvtl.rs` |
-| `pointcloud.rs` | `io/pointcloud/` |
-| `params.rs` | `io/params.rs` |
-| `diagnostics.rs` | `io/diagnostics.rs` |
-| `visualization.rs` | `visualization/markers.rs` |
+| Current               | New Location                     |
+|-----------------------|----------------------------------|
+| `ndt_manager.rs`      | `alignment/manager.rs`           |
+| `dual_ndt_manager.rs` | `alignment/dual_manager.rs`      |
+| `covariance.rs`       | `alignment/covariance.rs`        |
+| `scan_queue.rs`       | `alignment/batch.rs`             |
+| `initial_pose.rs`     | `initial_pose/estimator.rs`      |
+| `tpe.rs`              | `initial_pose/tpe.rs`            |
+| `particle.rs`         | `initial_pose/particle.rs`       |
+| `map_module.rs`       | `map/tiles.rs` + `map/loader.rs` |
+| `tf_handler.rs`       | `transform/tf_handler.rs`        |
+| `pose_buffer.rs`      | `transform/pose_buffer.rs`       |
+| `nvtl.rs`             | `scoring/nvtl.rs`                |
+| `pointcloud.rs`       | `io/pointcloud/`                 |
+| `params.rs`           | `io/params.rs`                   |
+| `diagnostics.rs`      | `io/diagnostics.rs`              |
+| `visualization.rs`    | `visualization/markers.rs`       |
 
 **Criteria**:
 - [ ] All files moved to new locations with `git mv`

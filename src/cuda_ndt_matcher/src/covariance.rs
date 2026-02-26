@@ -13,7 +13,7 @@
 use crate::ndt_manager::NdtManager;
 use crate::params::{CovarianceEstimationParams, CovarianceEstimationType, CovarianceParams};
 use geometry_msgs::msg::Pose;
-use nalgebra::{Matrix2, UnitQuaternion, Vector2};
+use nalgebra::{Matrix2, Vector2};
 
 /// Result of covariance estimation
 #[derive(Debug, Clone)]
@@ -99,8 +99,7 @@ fn estimate_xy_covariance_by_laplace(hessian: &[[f64; 6]; 6]) -> [[f64; 2]; 2] {
 
 /// Rotate covariance matrix based on result pose orientation
 fn rotate_covariance(covariance: &[f64; 36], pose: &Pose) -> [f64; 36] {
-    let q = &pose.orientation;
-    let rotation = UnitQuaternion::new_normalize(nalgebra::Quaternion::new(q.w, q.x, q.y, q.z));
+    let rotation = super::pose_utils::unit_quat_from_msg(&pose.orientation);
     let rotation_matrix = rotation.to_rotation_matrix();
 
     // Create 6x6 rotation block matrix (rotation for position and rotation for orientation)
@@ -236,8 +235,7 @@ pub fn propose_offset_poses(result_pose: &Pose, offset_x: &[f64], offset_y: &[f6
     );
 
     // Extract 2D rotation from result pose quaternion
-    let q = &result_pose.orientation;
-    let rotation = UnitQuaternion::new_normalize(nalgebra::Quaternion::new(q.w, q.x, q.y, q.z));
+    let rotation = super::pose_utils::unit_quat_from_msg(&result_pose.orientation);
     let rot_matrix = rotation.to_rotation_matrix();
     let rot_2d = Matrix2::new(
         rot_matrix[(0, 0)],

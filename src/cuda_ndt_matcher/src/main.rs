@@ -1,4 +1,5 @@
 mod covariance;
+mod debug_writer;
 mod diagnostics;
 mod dual_ndt_manager;
 mod initial_pose;
@@ -9,6 +10,7 @@ mod params;
 mod particle;
 mod pointcloud;
 mod pose_buffer;
+mod pose_utils;
 mod scan_queue;
 mod tf_handler;
 mod tpe;
@@ -21,10 +23,10 @@ use autoware_internal_localization_msgs::srv::PoseWithCovarianceStamped as PoseW
 use diagnostics::{DiagnosticLevel, DiagnosticsInterface, ScanMatchingDiagnostics};
 use dual_ndt_manager::DualNdtManager;
 use geometry_msgs::msg::{
-    Point, Pose, PoseArray, PoseStamped, PoseWithCovariance, PoseWithCovarianceStamped,
+    Pose, PoseArray, PoseStamped, PoseWithCovariance, PoseWithCovarianceStamped,
 };
 use map_module::{DynamicMapLoader, MapUpdateModule};
-use nalgebra::{Isometry3, Quaternion as NaQuaternion, Translation3, UnitQuaternion, Vector3};
+use nalgebra::Vector3;
 #[cfg(feature = "debug-markers")]
 use ndt_cuda::AlignmentDebug;
 use params::NdtParams;
@@ -37,10 +39,6 @@ use rclrs::{
 };
 use scan_queue::{QueuedScan, ScanQueue, ScanQueueConfig, ScanResult};
 use sensor_msgs::msg::PointCloud2;
-#[cfg(feature = "debug-output")]
-use std::fs::OpenOptions;
-#[cfg(feature = "debug-output")]
-use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -60,44 +58,7 @@ type PoseWithCovSrvRequest =
 type PoseWithCovSrvResponse =
     autoware_internal_localization_msgs::srv::PoseWithCovarianceStamped_Response;
 
-/// Write init-to-tracking time to debug file (only with debug-output feature)
-#[cfg(feature = "debug-output")]
-fn write_init_to_tracking_debug(elapsed_ms: f64) {
-    let debug_file =
-        std::env::var("NDT_DEBUG_FILE").unwrap_or_else(|_| "/tmp/ndt_cuda_debug.jsonl".to_string());
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&debug_file)
-    {
-        let json = format!(
-            r#"{{"type":"init_to_tracking","elapsed_ms":{:.2}}}"#,
-            elapsed_ms
-        );
-        let _ = writeln!(file, "{}", json);
-    }
-}
-
 const NODE_NAME: &str = "ndt_scan_matcher";
-
-/// Convert nalgebra Isometry3 to geometry_msgs Pose
-fn isometry_to_pose(iso: &Isometry3<f64>) -> Pose {
-    let t = iso.translation;
-    let q = iso.rotation.quaternion();
-    Pose {
-        position: Point {
-            x: t.x,
-            y: t.y,
-            z: t.z,
-        },
-        orientation: geometry_msgs::msg::Quaternion {
-            x: q.i,
-            y: q.j,
-            z: q.k,
-            w: q.w,
-        },
-    }
-}
 
 /// Holds debug and visualization publishers
 #[derive(Clone)]
@@ -140,6 +101,31 @@ struct DebugPublishers {
 
     // Debug map: currently loaded point cloud map
     debug_loaded_pointcloud_map_pub: Publisher<PointCloud2>,
+}
+
+/// Shared state passed to the `on_points` callback.
+///
+/// Groups the 18 parameters that were previously passed individually,
+/// making the callback signature manageable and the cloning explicit.
+#[derive(Clone)]
+struct OnPointsContext {
+    ndt_manager: Arc<DualNdtManager>,
+    map_module: Arc<MapUpdateModule>,
+    map_loader: Arc<DynamicMapLoader>,
+    map_points: Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
+    pose_buffer: Arc<SmartPoseBuffer>,
+    latest_sensor_points: Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
+    enabled: Arc<AtomicBool>,
+    skip_counter: Arc<AtomicI32>,
+    callback_count: Arc<AtomicI32>,
+    align_count: Arc<AtomicI32>,
+    pose_pub: Publisher<PoseStamped>,
+    pose_cov_pub: Publisher<PoseWithCovarianceStamped>,
+    debug_pubs: DebugPublishers,
+    diagnostics: Arc<Mutex<DiagnosticsInterface>>,
+    params: Arc<NdtParams>,
+    tf_handler: Arc<tf_handler::TfHandler>,
+    scan_queue: Option<Arc<ScanQueue>>,
 }
 
 // Note: Many fields appear "unused" but are actually used via cloned references
@@ -338,7 +324,7 @@ impl NdtScanMatcherNode {
                         }
 
                         // Convert Isometry3 to Pose
-                        let pose = isometry_to_pose(&result.pose);
+                        let pose = pose_utils::pose_from_isometry(&result.pose);
 
                         // Publish PoseStamped
                         let pose_msg = PoseStamped {
@@ -393,48 +379,31 @@ impl NdtScanMatcherNode {
         // Uses QoS KeepLast(1) to ensure we only process the latest message,
         // matching Autoware's approach (no explicit timestamp deduplication needed)
         let points_sub = {
-            let ndt_manager = Arc::clone(&ndt_manager);
-            let map_module = Arc::clone(&map_module);
-            let map_loader = Arc::clone(&map_loader);
-            let map_points = Arc::clone(&map_points);
-            let pose_buffer = Arc::clone(&pose_buffer);
-            let latest_sensor_points = Arc::clone(&latest_sensor_points);
-            let enabled = Arc::clone(&enabled);
-            let pose_pub = pose_pub.clone();
-            let pose_cov_pub = pose_cov_pub.clone();
-            let debug_pubs = debug_pubs.clone();
-            let diagnostics = Arc::clone(&diagnostics);
-            let params = Arc::clone(&params);
-            let tf_handler = Arc::clone(&tf_handler);
-            let skip_counter = Arc::clone(&skip_counter);
-            let callback_count = Arc::clone(&callback_count);
-            let align_count = Arc::clone(&align_count);
-            let scan_queue = scan_queue.clone();
+            let ctx = OnPointsContext {
+                ndt_manager: Arc::clone(&ndt_manager),
+                map_module: Arc::clone(&map_module),
+                map_loader: Arc::clone(&map_loader),
+                map_points: Arc::clone(&map_points),
+                pose_buffer: Arc::clone(&pose_buffer),
+                latest_sensor_points: Arc::clone(&latest_sensor_points),
+                enabled: Arc::clone(&enabled),
+                skip_counter: Arc::clone(&skip_counter),
+                callback_count: Arc::clone(&callback_count),
+                align_count: Arc::clone(&align_count),
+                pose_pub: pose_pub.clone(),
+                pose_cov_pub: pose_cov_pub.clone(),
+                debug_pubs: debug_pubs.clone(),
+                diagnostics: Arc::clone(&diagnostics),
+                params: Arc::clone(&params),
+                tf_handler: Arc::clone(&tf_handler),
+                scan_queue: scan_queue.clone(),
+            };
 
             let mut opts = SubscriptionOptions::new("points_raw");
             opts.qos = sensor_qos;
 
             node.create_subscription(opts, move |msg: PointCloud2| {
-                Self::on_points(
-                    msg,
-                    &ndt_manager,
-                    &map_module,
-                    &map_loader,
-                    &map_points,
-                    &pose_buffer,
-                    &latest_sensor_points,
-                    &enabled,
-                    &skip_counter,
-                    &callback_count,
-                    &align_count,
-                    &pose_pub,
-                    &pose_cov_pub,
-                    &debug_pubs,
-                    &diagnostics,
-                    &params,
-                    &tf_handler,
-                    &scan_queue,
-                );
+                Self::on_points(msg, &ctx);
             })?
         };
 
@@ -551,7 +520,7 @@ impl NdtScanMatcherNode {
                                 let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
                                 log_info!(NODE_NAME, "Init-to-tracking time: {:.2}ms", elapsed_ms);
                                 // Write to debug file
-                                write_init_to_tracking_debug(elapsed_ms);
+                                debug_writer::write_init_to_tracking(elapsed_ms);
                             }
                         }
                         pose_buffer.clear();
@@ -622,22 +591,12 @@ impl NdtScanMatcherNode {
         // Clear debug file at startup (only with debug-output feature)
         #[cfg(feature = "debug-output")]
         {
-            let debug_file = std::env::var("NDT_DEBUG_FILE")
-                .unwrap_or_else(|_| "/tmp/ndt_cuda_debug.jsonl".to_string());
-            // Truncate the file by opening with write-only (not append)
-            if let Ok(mut file) = std::fs::File::create(&debug_file) {
-                use std::io::Write;
-                use std::time::SystemTime;
-                let timestamp = SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                let _ = writeln!(
-                    file,
-                    r#"{{"run_start": true, "unix_timestamp": {timestamp}}}"#
-                );
-                log_info!(NODE_NAME, "Debug output cleared: {debug_file}");
-            }
+            debug_writer::clear_debug_file();
+            log_info!(
+                NODE_NAME,
+                "Debug output cleared: {}",
+                debug_writer::debug_file_path()
+            );
         }
 
         log_info!(NODE_NAME, "NDT scan matcher node initialized");
@@ -667,29 +626,9 @@ impl NdtScanMatcherNode {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn on_points(
-        msg: PointCloud2,
-        ndt_manager: &Arc<DualNdtManager>,
-        map_module: &Arc<MapUpdateModule>,
-        map_loader: &Arc<DynamicMapLoader>,
-        map_points: &Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
-        pose_buffer: &Arc<SmartPoseBuffer>,
-        latest_sensor_points: &Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
-        enabled: &Arc<AtomicBool>,
-        skip_counter: &Arc<AtomicI32>,
-        callback_count: &Arc<AtomicI32>,
-        align_count: &Arc<AtomicI32>,
-        pose_pub: &Publisher<PoseStamped>,
-        pose_cov_pub: &Publisher<PoseWithCovarianceStamped>,
-        debug_pubs: &DebugPublishers,
-        diagnostics: &Arc<Mutex<DiagnosticsInterface>>,
-        params: &NdtParams,
-        tf_handler: &Arc<tf_handler::TfHandler>,
-        scan_queue: &Option<Arc<ScanQueue>>,
-    ) {
+    fn on_points(msg: PointCloud2, ctx: &OnPointsContext) {
         // Track callback invocation
-        let _cb_num = callback_count.fetch_add(1, Ordering::SeqCst) + 1;
+        let _cb_num = ctx.callback_count.fetch_add(1, Ordering::SeqCst) + 1;
 
         // Extract timestamp for debug output
         let timestamp_ns =
@@ -730,12 +669,12 @@ impl NdtScanMatcherNode {
         // Transform sensor points from sensor frame to base_link
         // The sensor frame comes from the PointCloud2 header, target is base_frame from params
         let sensor_frame = &msg.header.frame_id;
-        let base_frame = &params.frame.base_frame;
+        let base_frame = &ctx.params.frame.base_frame;
         let stamp_ns =
             msg.header.stamp.sec as i64 * 1_000_000_000 + msg.header.stamp.nanosec as i64;
 
         let sensor_points = if sensor_frame != base_frame {
-            match tf_handler.transform_points(
+            match ctx.tf_handler.transform_points(
                 &sensor_points,
                 sensor_frame,
                 base_frame,
@@ -769,10 +708,10 @@ impl NdtScanMatcherNode {
 
         // Always store sensor points for initial pose estimation service (ndt_align_srv)
         // This must happen before any early returns so the align service can work
-        latest_sensor_points.store(Arc::new(Some(sensor_points.clone())));
+        ctx.latest_sensor_points.store(Arc::new(Some(sensor_points.clone())));
 
         // Check if enabled for regular NDT alignment
-        if !enabled.load(Ordering::SeqCst) {
+        if !ctx.enabled.load(Ordering::SeqCst) {
             return;
         }
 
@@ -781,19 +720,15 @@ impl NdtScanMatcherNode {
         let sensor_time_ns =
             msg.header.stamp.sec as i64 * 1_000_000_000 + msg.header.stamp.nanosec as i64;
 
-        let interpolate_result = pose_buffer.interpolate(sensor_time_ns);
+        let interpolate_result = ctx.pose_buffer.interpolate(sensor_time_ns);
         let initial_pose = match &interpolate_result {
             Some(result) => {
                 // Debug: log interpolated pose (only with debug-output feature)
                 #[cfg(feature = "debug-output")]
                 {
                     let p = &result.interpolated_pose.pose.pose.position;
-                    let q = &result.interpolated_pose.pose.pose.orientation;
                     let ts = &result.interpolated_pose.header.stamp;
-                    // Convert quaternion to euler angles for easier comparison
-                    let quat =
-                        UnitQuaternion::from_quaternion(NaQuaternion::new(q.w, q.x, q.y, q.z));
-                    let (roll, pitch, yaw) = quat.euler_angles();
+                    let (roll, pitch, yaw) = pose_utils::euler_from_pose(&result.interpolated_pose.pose.pose);
                     log_info!(
                         NODE_NAME,
                         "[INTERP] ts={}.{:09} pos=({:.3}, {:.3}, {:.3}) rpy=({:.3}, {:.3}, {:.3}) sensor_ts={}",
@@ -807,11 +742,11 @@ impl NdtScanMatcherNode {
             }
             None => {
                 // Interpolation failed - need at least 2 poses, or validation failed
-                if pose_buffer.len() < 2 {
+                if ctx.pose_buffer.len() < 2 {
                     log_debug!(
                         NODE_NAME,
                         "Waiting for pose buffer to fill (size={}, need 2)",
-                        pose_buffer.len()
+                        ctx.pose_buffer.len()
                     );
                 } else {
                     log_warn!(
@@ -824,7 +759,7 @@ impl NdtScanMatcherNode {
         };
 
         // Pop old poses to prevent unbounded buffer growth
-        pose_buffer.pop_old(sensor_time_ns);
+        ctx.pose_buffer.pop_old(sensor_time_ns);
 
         // Note: Early alignments may have roll=0, pitch=0 (unrefined initial pose)
         // before EKF has fused any NDT output. These alignments may have indefinite
@@ -833,7 +768,7 @@ impl NdtScanMatcherNode {
 
         // Check if map needs updating based on current position
         // This implements Autoware's dynamic map loading behavior
-        let current_position = Point {
+        let current_position = geometry_msgs::msg::Point {
             x: initial_pose.pose.pose.position.x,
             y: initial_pose.pose.pose.position.y,
             z: initial_pose.pose.pose.position.z,
@@ -841,33 +776,33 @@ impl NdtScanMatcherNode {
 
         // Check if we should request new map tiles via service
         // This is non-blocking - the callback will update map_module when response arrives
-        if map_module.should_update(&current_position) {
-            if let Err(e) = map_loader
-                .request_map_update(&current_position, params.dynamic_map.map_radius as f32)
+        if ctx.map_module.should_update(&current_position) {
+            if let Err(e) = ctx.map_loader
+                .request_map_update(&current_position, ctx.params.dynamic_map.map_radius as f32)
             {
                 log_error!(NODE_NAME, "Failed to request map update: {e}");
             }
         }
 
         // Check and apply any pending updates from the map module (local filtering)
-        if let Some(filtered_map) = map_module.check_and_update(&current_position) {
+        if let Some(filtered_map) = ctx.map_module.check_and_update(&current_position) {
             // Map was updated - refresh the shared map points
-            map_points.store(Arc::new(Some(filtered_map.clone())));
+            ctx.map_points.store(Arc::new(Some(filtered_map.clone())));
 
             // Publish debug map for visualization
             let debug_map_msg = pointcloud::to_pointcloud2(
                 &filtered_map,
                 &Header {
                     stamp: msg.header.stamp.clone(),
-                    frame_id: params.frame.map_frame.clone(),
+                    frame_id: ctx.params.frame.map_frame.clone(),
                 },
             );
-            let _ = debug_pubs
+            let _ = ctx.debug_pubs
                 .debug_loaded_pointcloud_map_pub
                 .publish(&debug_map_msg);
 
             // Start non-blocking NDT target update in background thread
-            let started = ndt_manager.start_background_update(filtered_map.clone());
+            let started = ctx.ndt_manager.start_background_update(filtered_map.clone());
             log_debug!(
                 NODE_NAME,
                 "Background NDT update started={started} with {} points",
@@ -876,7 +811,7 @@ impl NdtScanMatcherNode {
         }
 
         // Get map points (may have been updated above)
-        let map = map_points.load();
+        let map = ctx.map_points.load();
         let map = match map.as_ref() {
             Some(m) => m,
             None => {
@@ -891,11 +826,11 @@ impl NdtScanMatcherNode {
             .map(|p| (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt())
             .fold(0.0f32, f32::max);
 
-        if max_dist < params.sensor_points.required_distance {
+        if max_dist < ctx.params.sensor_points.required_distance {
             log_warn!(
                 NODE_NAME,
                 "Sensor points max distance {max_dist:.1}m < required {:.1}m",
-                params.sensor_points.required_distance
+                ctx.params.sensor_points.required_distance
             );
             return;
         }
@@ -904,13 +839,9 @@ impl NdtScanMatcherNode {
         // If batch processing is enabled, enqueue the scan for parallel GPU processing
         // and return immediately. Results will be published asynchronously by the
         // scan queue's result callback.
-        if let Some(queue) = scan_queue {
+        if let Some(queue) = &ctx.scan_queue {
             // Convert initial pose to Isometry3
-            let p = &initial_pose.pose.pose.position;
-            let q = &initial_pose.pose.pose.orientation;
-            let translation = Translation3::new(p.x, p.y, p.z);
-            let quaternion = UnitQuaternion::from_quaternion(NaQuaternion::new(q.w, q.x, q.y, q.z));
-            let initial_isometry = Isometry3::from_parts(translation, quaternion);
+            let initial_isometry = pose_utils::isometry_from_pose(&initial_pose.pose.pose);
 
             let queued_scan = QueuedScan {
                 points: sensor_points.clone(),
@@ -941,9 +872,7 @@ impl NdtScanMatcherNode {
         #[cfg(feature = "debug-output")]
         {
             let p = &initial_pose.pose.pose.position;
-            let q = &initial_pose.pose.pose.orientation;
-            let quat = UnitQuaternion::from_quaternion(NaQuaternion::new(q.w, q.x, q.y, q.z));
-            let (roll, pitch, yaw) = quat.euler_angles();
+            let (roll, pitch, yaw) = pose_utils::euler_from_pose(&initial_pose.pose.pose);
             log_info!(
                 NODE_NAME,
                 "[NDT_IN] ts_ns={} pos=({:.3}, {:.3}, {:.3}) rpy=({:.3}, {:.3}, {:.3}) n_pts={}",
@@ -959,7 +888,7 @@ impl NdtScanMatcherNode {
         }
 
         // Get lock on active NDT manager (also checks for pending swap from background update)
-        let mut manager = ndt_manager.lock();
+        let mut manager = ctx.ndt_manager.lock();
 
         // Compute "before" scores at initial pose (for diagnostics comparison)
         let transform_prob_before = manager
@@ -983,15 +912,7 @@ impl NdtScanMatcherNode {
             Ok((r, debug)) => {
                 // Write debug JSON to file
                 if let Ok(json) = debug.to_json() {
-                    let debug_file = std::env::var("NDT_DEBUG_FILE")
-                        .unwrap_or_else(|_| "/tmp/ndt_cuda_debug.jsonl".to_string());
-                    if let Ok(mut file) = OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(&debug_file)
-                    {
-                        let _ = writeln!(file, "{json}");
-                    }
+                    debug_writer::append_debug_line(&json);
                 }
                 (r, Some(debug))
             }
@@ -1030,9 +951,7 @@ impl NdtScanMatcherNode {
         #[cfg(feature = "debug-output")]
         {
             let p = &result.pose.position;
-            let q = &result.pose.orientation;
-            let quat = UnitQuaternion::from_quaternion(NaQuaternion::new(q.w, q.x, q.y, q.z));
-            let (roll, pitch, yaw) = quat.euler_angles();
+            let (roll, pitch, yaw) = pose_utils::euler_from_pose(&result.pose);
             log_info!(
                 NODE_NAME,
                 "[NDT_OUT] ts_ns={} pos=({:.3}, {:.3}, {:.3}) rpy=({:.3}, {:.3}, {:.3}) iter={} conv={} osc={}",
@@ -1071,16 +990,16 @@ impl NdtScanMatcherNode {
 
         // Check 3: Score threshold
         // converged_param_type: 0 = transform_probability, 1 = NVTL
-        let (score_for_check, threshold, score_name) = if params.score.converged_param_type == 0 {
+        let (score_for_check, threshold, score_name) = if ctx.params.score.converged_param_type == 0 {
             (
                 transform_prob,
-                params.score.converged_param_transform_probability,
+                ctx.params.score.converged_param_transform_probability,
                 "transform_probability",
             )
         } else {
             (
                 nvtl_score,
-                params
+                ctx.params
                     .score
                     .converged_param_nearest_voxel_transformation_likelihood,
                 "NVTL",
@@ -1093,7 +1012,7 @@ impl NdtScanMatcherNode {
 
         // Track consecutive skips for diagnostics and log reasons
         let skipping_publish_num = if !is_converged {
-            let skips = skip_counter.fetch_add(1, Ordering::SeqCst) + 1;
+            let skips = ctx.skip_counter.fetch_add(1, Ordering::SeqCst) + 1;
 
             // Log specific reason(s) for skipping
             if !is_ok_iteration_num {
@@ -1118,14 +1037,14 @@ impl NdtScanMatcherNode {
             }
             skips
         } else {
-            skip_counter.store(0, Ordering::SeqCst);
+            ctx.skip_counter.store(0, Ordering::SeqCst);
             0
         };
 
         // Create output header (needed for debug publishers even if we skip pose publishing)
         let header = Header {
             stamp: msg.header.stamp.clone(),
-            frame_id: params.frame.map_frame.clone(),
+            frame_id: ctx.params.frame.map_frame.clone(),
         };
 
         // Only publish pose if all convergence conditions pass
@@ -1134,7 +1053,7 @@ impl NdtScanMatcherNode {
             // For MULTI_NDT modes, we use parallel batch evaluation (Rayon)
             // NOTE: We reuse the manager lock from the alignment - don't try to lock again!
             let covariance_result = covariance::estimate_covariance_full(
-                &params.covariance,
+                &ctx.params.covariance,
                 &result.hessian,
                 &result.pose,
                 Some(&mut *manager), // Reuse existing lock to avoid deadlock
@@ -1147,7 +1066,7 @@ impl NdtScanMatcherNode {
                 header: header.clone(),
                 pose: result.pose.clone(),
             };
-            if let Err(e) = pose_pub.publish(&pose_msg) {
+            if let Err(e) = ctx.pose_pub.publish(&pose_msg) {
                 log_error!(NODE_NAME, "Failed to publish pose: {e}");
             }
 
@@ -1159,18 +1078,18 @@ impl NdtScanMatcherNode {
                     covariance: covariance_result.covariance,
                 },
             };
-            if let Err(e) = pose_cov_pub.publish(&pose_cov_msg) {
+            if let Err(e) = ctx.pose_cov_pub.publish(&pose_cov_msg) {
                 log_error!(NODE_NAME, "Failed to publish pose with covariance: {e}");
             }
 
             // Publish TF transform (map -> ndt_base_link)
             // This matches Autoware's publish_tf() behavior
             Self::publish_tf(
-                &debug_pubs.tf_pub,
+                &ctx.debug_pubs.tf_pub,
                 &msg.header.stamp,
                 &result.pose,
-                &params.frame.map_frame,
-                &params.frame.ndt_base_frame,
+                &ctx.params.frame.map_frame,
+                &ctx.params.frame.ndt_base_frame,
             );
 
             // Publish MULTI_NDT poses for debug visualization (only for MULTI_NDT modes)
@@ -1179,7 +1098,7 @@ impl NdtScanMatcherNode {
                     header: header.clone(),
                     poses,
                 };
-                let _ = debug_pubs.multi_ndt_pose_pub.publish(&pose_array_msg);
+                let _ = ctx.debug_pubs.multi_ndt_pose_pub.publish(&pose_array_msg);
             }
 
             // Publish MULTI_NDT initial poses for debug visualization
@@ -1188,18 +1107,18 @@ impl NdtScanMatcherNode {
                     header: header.clone(),
                     poses,
                 };
-                let _ = debug_pubs.multi_initial_pose_pub.publish(&pose_array_msg);
+                let _ = ctx.debug_pubs.multi_initial_pose_pub.publish(&pose_array_msg);
             }
         }
 
         // ---- Debug Publishers (always publish for monitoring) ----
 
         // Track successful alignment
-        let align_num = align_count.fetch_add(1, Ordering::SeqCst) + 1;
+        let align_num = ctx.align_count.fetch_add(1, Ordering::SeqCst) + 1;
 
         // Log periodic summary every 50 alignments
         if align_num % 50 == 0 {
-            let total_cb = callback_count.load(Ordering::SeqCst);
+            let total_cb = ctx.callback_count.load(Ordering::SeqCst);
             log_info!(
                 NODE_NAME,
                 "Callback stats: total={total_cb}, aligned={align_num}"
@@ -1211,28 +1130,28 @@ impl NdtScanMatcherNode {
             stamp: msg.header.stamp.clone(),
             data: exe_time_ms,
         };
-        let _ = debug_pubs.exe_time_pub.publish(&exe_time_msg);
+        let _ = ctx.debug_pubs.exe_time_pub.publish(&exe_time_msg);
 
         // Publish iteration count
         let iteration_msg = Int32Stamped {
             stamp: msg.header.stamp.clone(),
             data: result.iterations,
         };
-        let _ = debug_pubs.iteration_num_pub.publish(&iteration_msg);
+        let _ = ctx.debug_pubs.iteration_num_pub.publish(&iteration_msg);
 
         // Publish oscillation count (detects if optimizer is bouncing between poses)
         let oscillation_msg = Int32Stamped {
             stamp: msg.header.stamp.clone(),
             data: result.oscillation_count as i32,
         };
-        let _ = debug_pubs.oscillation_count_pub.publish(&oscillation_msg);
+        let _ = ctx.debug_pubs.oscillation_count_pub.publish(&oscillation_msg);
 
         // Publish transform probability
         let transform_prob_msg = Float32Stamped {
             stamp: msg.header.stamp.clone(),
             data: transform_prob as f32,
         };
-        let _ = debug_pubs
+        let _ = ctx.debug_pubs
             .transform_probability_pub
             .publish(&transform_prob_msg);
 
@@ -1241,10 +1160,10 @@ impl NdtScanMatcherNode {
             stamp: msg.header.stamp.clone(),
             data: nvtl_score as f32,
         };
-        let _ = debug_pubs.nvtl_pub.publish(&nvtl_msg);
+        let _ = ctx.debug_pubs.nvtl_pub.publish(&nvtl_msg);
 
         // Publish initial pose with covariance
-        let _ = debug_pubs.initial_pose_cov_pub.publish(initial_pose);
+        let _ = ctx.debug_pubs.initial_pose_cov_pub.publish(initial_pose);
 
         // Calculate initial to result distance
         let dx = result.pose.position.x - initial_pose.pose.pose.position.x;
@@ -1255,7 +1174,7 @@ impl NdtScanMatcherNode {
             stamp: msg.header.stamp.clone(),
             data: distance as f32,
         };
-        let _ = debug_pubs
+        let _ = ctx.debug_pubs
             .initial_to_result_distance_pub
             .publish(&distance_msg);
 
@@ -1267,7 +1186,7 @@ impl NdtScanMatcherNode {
             let dy_old = result.pose.position.y - interp.old_pose.pose.pose.position.y;
             let dz_old = result.pose.position.z - interp.old_pose.pose.pose.position.z;
             let distance_old = (dx_old * dx_old + dy_old * dy_old + dz_old * dz_old).sqrt();
-            let _ = debug_pubs
+            let _ = ctx.debug_pubs
                 .initial_to_result_distance_old_pub
                 .publish(&Float32Stamped {
                     stamp: msg.header.stamp.clone(),
@@ -1279,7 +1198,7 @@ impl NdtScanMatcherNode {
             let dy_new = result.pose.position.y - interp.new_pose.pose.pose.position.y;
             let dz_new = result.pose.position.z - interp.new_pose.pose.pose.position.z;
             let distance_new = (dx_new * dx_new + dy_new * dy_new + dz_new * dz_new).sqrt();
-            let _ = debug_pubs
+            let _ = ctx.debug_pubs
                 .initial_to_result_distance_new_pub
                 .publish(&Float32Stamped {
                     stamp: msg.header.stamp.clone(),
@@ -1290,36 +1209,18 @@ impl NdtScanMatcherNode {
         // Publish relative pose (result relative to initial)
         // Compute actual relative transform: relative = result * initial^(-1)
         // This gives the transform that takes you from initial pose to result pose
-        let initial_p = &initial_pose.pose.pose.position;
-        let initial_q = &initial_pose.pose.pose.orientation;
-        let initial_translation = Translation3::new(initial_p.x, initial_p.y, initial_p.z);
-        let initial_quaternion = UnitQuaternion::from_quaternion(NaQuaternion::new(
-            initial_q.w,
-            initial_q.x,
-            initial_q.y,
-            initial_q.z,
-        ));
-        let initial_isometry: Isometry3<f64> =
-            Isometry3::from_parts(initial_translation, initial_quaternion);
-
-        let result_p = &result.pose.position;
-        let result_q = &result.pose.orientation;
-        let result_translation_rel = Translation3::new(result_p.x, result_p.y, result_p.z);
-        let result_quaternion_rel = UnitQuaternion::from_quaternion(NaQuaternion::new(
-            result_q.w, result_q.x, result_q.y, result_q.z,
-        ));
-        let result_isometry_rel: Isometry3<f64> =
-            Isometry3::from_parts(result_translation_rel, result_quaternion_rel);
+        let initial_isometry = pose_utils::isometry_from_pose(&initial_pose.pose.pose);
+        let result_isometry_rel = pose_utils::isometry_from_pose(&result.pose);
 
         // Compute relative transform: result * initial^(-1)
         let relative_isometry = result_isometry_rel * initial_isometry.inverse();
-        let relative_pose = isometry_to_pose(&relative_isometry);
+        let relative_pose = pose_utils::pose_from_isometry(&relative_isometry);
 
         let relative_pose_msg = PoseStamped {
             header: header.clone(),
             pose: relative_pose,
         };
-        let _ = debug_pubs
+        let _ = ctx.debug_pubs
             .initial_to_result_relative_pose_pub
             .publish(&relative_pose_msg);
 
@@ -1344,23 +1245,11 @@ impl NdtScanMatcherNode {
             }
         };
 
-        let _ = debug_pubs.ndt_marker_pub.publish(&marker_array);
+        let _ = ctx.debug_pubs.ndt_marker_pub.publish(&marker_array);
 
         // Publish aligned points (transformed sensor points with proper rotation)
         // Build isometry from result pose for proper point transformation
-        let result_translation = Translation3::new(
-            result.pose.position.x,
-            result.pose.position.y,
-            result.pose.position.z,
-        );
-        let result_quaternion = UnitQuaternion::from_quaternion(NaQuaternion::new(
-            result.pose.orientation.w,
-            result.pose.orientation.x,
-            result.pose.orientation.y,
-            result.pose.orientation.z,
-        ));
-        let result_isometry: Isometry3<f64> =
-            Isometry3::from_parts(result_translation, result_quaternion);
+        let result_isometry = pose_utils::isometry_from_pose(&result.pose);
 
         let aligned_points: Vec<[f32; 3]> = sensor_points
             .iter()
@@ -1372,7 +1261,7 @@ impl NdtScanMatcherNode {
             })
             .collect();
         let aligned_msg = pointcloud::to_pointcloud2(&aligned_points, &header);
-        let _ = debug_pubs.points_aligned_pub.publish(&aligned_msg);
+        let _ = ctx.debug_pubs.points_aligned_pub.publish(&aligned_msg);
 
         // ---- Per-Point Score Visualization (requires debug-markers feature) ----
         // Compute per-point NDT scores and publish as RGB-colored point cloud.
@@ -1395,21 +1284,17 @@ impl NdtScanMatcherNode {
 
             let score_cloud_msg =
                 pointcloud::to_pointcloud2_with_rgb(&score_points, &rgb_values, &header);
-            let _ = debug_pubs.voxel_score_points_pub.publish(&score_cloud_msg);
+            let _ = ctx.debug_pubs.voxel_score_points_pub.publish(&score_cloud_msg);
         }
 
         // ---- No-Ground Scoring (optional) ----
         // When enabled, filters out ground points and computes scores on the remaining points.
         // Ground is defined as points with transformed_z - base_link_z <= z_margin.
-        if params.score.no_ground_points.enable {
+        if ctx.params.score.no_ground_points.enable {
             // Build isometry from result pose for transforming points
-            let p = &result.pose.position;
-            let q = &result.pose.orientation;
-            let translation = Translation3::new(p.x, p.y, p.z);
-            let quaternion = UnitQuaternion::from_quaternion(NaQuaternion::new(q.w, q.x, q.y, q.z));
-            let pose_isometry: Isometry3<f64> = Isometry3::from_parts(translation, quaternion);
-            let base_link_z = p.z;
-            let z_threshold = params.score.no_ground_points.z_margin_for_ground_removal as f64;
+            let pose_isometry = pose_utils::isometry_from_pose(&result.pose);
+            let base_link_z = result.pose.position.z;
+            let z_threshold = ctx.params.score.no_ground_points.z_margin_for_ground_removal as f64;
 
             // Filter sensor points: keep those whose transformed z is above ground threshold
             let no_ground_points: Vec<[f32; 3]> = sensor_points
@@ -1443,7 +1328,7 @@ impl NdtScanMatcherNode {
                     })
                     .collect();
                 let no_ground_cloud_msg = pointcloud::to_pointcloud2(&no_ground_aligned, &header);
-                let _ = debug_pubs
+                let _ = ctx.debug_pubs
                     .no_ground_points_aligned_pub
                     .publish(&no_ground_cloud_msg);
 
@@ -1452,7 +1337,7 @@ impl NdtScanMatcherNode {
                     stamp: msg.header.stamp.clone(),
                     data: no_ground_tp as f32,
                 };
-                let _ = debug_pubs
+                let _ = ctx.debug_pubs
                     .no_ground_transform_probability_pub
                     .publish(&no_ground_tp_msg);
 
@@ -1461,7 +1346,7 @@ impl NdtScanMatcherNode {
                     stamp: msg.header.stamp.clone(),
                     data: no_ground_nvtl as f32,
                 };
-                let _ = debug_pubs.no_ground_nvtl_pub.publish(&no_ground_nvtl_msg);
+                let _ = ctx.debug_pubs.no_ground_nvtl_pub.publish(&no_ground_nvtl_msg);
             }
         }
 
@@ -1522,11 +1407,11 @@ impl NdtScanMatcherNode {
         };
 
         {
-            let mut diag = diagnostics.lock();
+            let mut diag = ctx.diagnostics.lock();
             scan_diag.apply_to(diag.scan_matching_mut());
 
             // Add map update diagnostics
-            let map_status = map_loader.get_status();
+            let map_status = ctx.map_loader.get_status();
             let map_diag = diag.map_update_mut();
             map_diag.clear();
             map_diag.add_key_value(
@@ -1534,14 +1419,14 @@ impl NdtScanMatcherNode {
                 map_status.last_request_success,
             );
             map_diag.add_key_value("pcd_loader_service_available", map_status.service_available);
-            map_diag.add_key_value("tiles_loaded", map_module.tile_count());
+            map_diag.add_key_value("tiles_loaded", ctx.map_module.tile_count());
             map_diag.add_key_value("tiles_added", map_status.tiles_added);
             map_diag.add_key_value("tiles_removed", map_status.tiles_removed);
             map_diag.add_key_value("points_added", map_status.points_added);
             if let Some(err) = &map_status.error_message {
                 map_diag.add_key_value("error_message", err);
                 map_diag.set_level_and_message(DiagnosticLevel::Warn, err);
-            } else if !map_status.service_available && map_module.tile_count() == 0 {
+            } else if !map_status.service_available && ctx.map_module.tile_count() == 0 {
                 map_diag.set_level_and_message(
                     DiagnosticLevel::Warn,
                     "pcd_loader_service not available, no map loaded",
@@ -1603,7 +1488,7 @@ impl NdtScanMatcherNode {
             }
 
             // Extract translation from matrix (last column: indices 3, 7, 11)
-            let position = Point {
+            let position = geometry_msgs::msg::Point {
                 x: matrix_flat[3],
                 y: matrix_flat[7],
                 z: matrix_flat[11],
@@ -1623,7 +1508,7 @@ impl NdtScanMatcherNode {
             // Convert rotation matrix to quaternion
             let rot_matrix = nalgebra::Matrix3::new(r00, r01, r02, r10, r11, r12, r20, r21, r22);
             let rotation = nalgebra::Rotation3::from_matrix_unchecked(rot_matrix);
-            let quat = UnitQuaternion::from_rotation_matrix(&rotation);
+            let quat = nalgebra::UnitQuaternion::from_rotation_matrix(&rotation);
 
             let orientation = geometry_msgs::msg::Quaternion {
                 x: quat.i,
@@ -1890,7 +1775,7 @@ impl NdtScanMatcherNode {
     ) -> TriggerResponse {
         // Get current position from latest pose in buffer
         let position = match pose_buffer.latest() {
-            Some(p) => Point {
+            Some(p) => geometry_msgs::msg::Point {
                 x: p.pose.pose.position.x,
                 y: p.pose.pose.position.y,
                 z: p.pose.pose.position.z,
