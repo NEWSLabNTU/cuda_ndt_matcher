@@ -6,10 +6,6 @@
 //! - MULTI_NDT: Run alignments from offset poses, compute sample covariance
 //! - MULTI_NDT_SCORE: Compute NVTL at offset poses, use softmax-weighted covariance
 
-// Allow dead_code: Functions are called from main.rs via dynamic covariance estimation
-// mode selection. Rust's analysis doesn't track usage through config-driven dispatch.
-#![allow(dead_code)]
-
 use crate::ndt_manager::NdtManager;
 use crate::params::{CovarianceEstimationParams, CovarianceEstimationType, CovarianceParams};
 use geometry_msgs::msg::Pose;
@@ -17,23 +13,26 @@ use nalgebra::{Matrix2, Vector2};
 
 /// Result of covariance estimation
 #[derive(Debug, Clone)]
-pub struct CovarianceEstimationResult {
+pub(crate) struct CovarianceEstimationResult {
     /// 6x6 covariance matrix (row-major order)
-    pub covariance: [f64; 36],
+    pub(crate) covariance: [f64; 36],
     /// Estimated 2x2 XY covariance (if dynamic estimation was used)
-    pub xy_covariance: Option<[[f64; 2]; 2]>,
+    #[allow(dead_code)] // Reserved for future diagnostics output
+    pub(crate) xy_covariance: Option<[[f64; 2]; 2]>,
     /// Poses from MULTI_NDT estimation (for debug visualization)
     /// Contains the primary result pose followed by all offset alignment results.
-    pub multi_ndt_poses: Option<Vec<Pose>>,
+    pub(crate) multi_ndt_poses: Option<Vec<Pose>>,
     /// Initial poses used for MULTI_NDT estimation (for debug visualization)
     /// Contains the primary initial pose followed by all offset initial guesses.
-    pub multi_initial_poses: Option<Vec<Pose>>,
+    pub(crate) multi_initial_poses: Option<Vec<Pose>>,
 }
 
 /// Estimate covariance using ndt_cuda result
 ///
 /// Supports FIXED and LAPLACE modes. MULTI_NDT modes fall back to LAPLACE.
-pub fn estimate_covariance(
+/// Superseded by `estimate_covariance_full` which handles all modes including MULTI_NDT.
+#[allow(dead_code)] // Kept for Autoware API completeness; estimate_covariance_full is preferred
+pub(crate) fn estimate_covariance(
     params: &CovarianceParams,
     hessian: &[[f64; 6]; 6],
     result_pose: &Pose,
@@ -149,7 +148,11 @@ fn scale_covariance_2d(cov: &[[f64; 2]; 2], scale: f64) -> [[f64; 2]; 2] {
 }
 
 /// Adjust diagonal covariance to ensure minimum values
-pub fn adjust_diagonal_covariance(cov: &[[f64; 2]; 2], min_xx: f64, min_yy: f64) -> [[f64; 2]; 2] {
+pub(crate) fn adjust_diagonal_covariance(
+    cov: &[[f64; 2]; 2],
+    min_xx: f64,
+    min_yy: f64,
+) -> [[f64; 2]; 2] {
     [
         [cov[0][0].max(min_xx), cov[0][1]],
         [cov[1][0], cov[1][1].max(min_yy)],
@@ -157,7 +160,8 @@ pub fn adjust_diagonal_covariance(cov: &[[f64; 2]; 2], min_xx: f64, min_yy: f64)
 }
 
 /// Calculate sample covariance from 2D points (equal weights)
-pub fn calculate_sample_covariance(points: &[Vector2<f64>]) -> [[f64; 2]; 2] {
+#[cfg(test)]
+pub(crate) fn calculate_sample_covariance(points: &[Vector2<f64>]) -> [[f64; 2]; 2] {
     let n = points.len();
     if n < 2 {
         return [[1.0, 0.0], [0.0, 1.0]];
@@ -182,7 +186,7 @@ pub fn calculate_sample_covariance(points: &[Vector2<f64>]) -> [[f64; 2]; 2] {
 }
 
 /// Calculate softmax weights from scores
-pub fn calculate_softmax_weights(scores: &[f64], temperature: f64) -> Vec<f64> {
+pub(crate) fn calculate_softmax_weights(scores: &[f64], temperature: f64) -> Vec<f64> {
     if scores.is_empty() {
         return Vec::new();
     }
@@ -212,22 +216,27 @@ pub fn calculate_softmax_weights(scores: &[f64], temperature: f64) -> Vec<f64> {
 
 /// Result of multi-NDT covariance estimation
 #[derive(Debug, Clone)]
-pub struct MultiNdtResult {
+pub(crate) struct MultiNdtResult {
     /// Estimated 2D covariance matrix
-    pub covariance: [[f64; 2]; 2],
+    pub(crate) covariance: [[f64; 2]; 2],
     /// Result poses after alignment (MULTI_NDT) or offset poses (MULTI_NDT_SCORE)
-    pub poses_searched: Vec<Pose>,
+    pub(crate) poses_searched: Vec<Pose>,
     /// Initial offset poses before alignment (for debug visualization)
-    pub initial_poses: Vec<Pose>,
+    pub(crate) initial_poses: Vec<Pose>,
     /// NVTL scores at each pose (for MULTI_NDT_SCORE mode)
-    pub nvtl_scores: Vec<f64>,
+    #[allow(dead_code)] // Populated but not yet consumed; reserved for future diagnostics
+    pub(crate) nvtl_scores: Vec<f64>,
 }
 
 /// Create offset poses from a result pose for multi-NDT estimation.
 ///
 /// The offsets are rotated by the result pose orientation so they are
 /// in the vehicle's local coordinate frame.
-pub fn propose_offset_poses(result_pose: &Pose, offset_x: &[f64], offset_y: &[f64]) -> Vec<Pose> {
+pub(crate) fn propose_offset_poses(
+    result_pose: &Pose,
+    offset_x: &[f64],
+    offset_y: &[f64],
+) -> Vec<Pose> {
     assert_eq!(
         offset_x.len(),
         offset_y.len(),
@@ -262,7 +271,7 @@ pub fn propose_offset_poses(result_pose: &Pose, offset_x: &[f64], offset_y: &[f6
 ///
 /// This runs NDT alignment from each offset pose in parallel and computes the sample
 /// covariance from all resulting aligned poses.
-pub fn estimate_xy_covariance_by_multi_ndt(
+pub(crate) fn estimate_xy_covariance_by_multi_ndt(
     ndt_manager: &NdtManager,
     sensor_points: &[[f32; 3]],
     _map_points: &[[f32; 3]], // Not needed, target already set
@@ -329,7 +338,7 @@ pub fn estimate_xy_covariance_by_multi_ndt(
 /// 1. Computes NVTL at all poses in parallel (fast, no iteration)
 /// 2. Uses softmax weights based on NVTL scores
 /// 3. Computes weighted covariance from offset poses
-pub fn estimate_xy_covariance_by_multi_ndt_score(
+pub(crate) fn estimate_xy_covariance_by_multi_ndt_score(
     ndt_manager: &mut NdtManager,
     sensor_points: &[[f32; 3]],
     _map_points: &[[f32; 3]], // Not needed, target already set
@@ -403,7 +412,7 @@ fn calculate_weighted_covariance(points: &[Vector2<f64>], weights: &[f64]) -> [[
 ///
 /// Note: Multi-NDT modes use parallel batch evaluation (via Rayon) for
 /// efficient covariance estimation from multiple poses.
-pub fn estimate_covariance_full(
+pub(crate) fn estimate_covariance_full(
     params: &CovarianceParams,
     hessian: &[[f64; 6]; 6],
     result_pose: &Pose,

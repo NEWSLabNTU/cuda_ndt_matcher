@@ -7,17 +7,17 @@ use std_msgs::msg::Header;
 
 /// Parameters for filtering sensor points
 #[derive(Clone, Debug)]
-pub struct PointFilterParams {
+pub(crate) struct PointFilterParams {
     /// Minimum distance from sensor origin (default: 0.0)
-    pub min_distance: f32,
+    pub(crate) min_distance: f32,
     /// Maximum distance from sensor origin (default: f32::MAX)
-    pub max_distance: f32,
+    pub(crate) max_distance: f32,
     /// Minimum z value (ground filtering, default: -f32::MAX)
-    pub min_z: f32,
+    pub(crate) min_z: f32,
     /// Maximum z value (ceiling filtering, default: f32::MAX)
-    pub max_z: f32,
+    pub(crate) max_z: f32,
     /// Voxel grid downsampling resolution (None = no downsampling)
-    pub downsample_resolution: Option<f32>,
+    pub(crate) downsample_resolution: Option<f32>,
 }
 
 impl Default for PointFilterParams {
@@ -34,17 +34,17 @@ impl Default for PointFilterParams {
 
 /// Result of point filtering operation
 #[derive(Debug)]
-pub struct FilterResult {
+pub(crate) struct FilterResult {
     /// Filtered points
-    pub points: Vec<[f32; 3]>,
+    pub(crate) points: Vec<[f32; 3]>,
     /// Number of points removed by distance filter
-    pub removed_by_distance: usize,
+    pub(crate) removed_by_distance: usize,
     /// Number of points removed by z filter
-    pub removed_by_z: usize,
+    pub(crate) removed_by_z: usize,
     /// Number of points removed by downsampling
-    pub removed_by_downsampling: usize,
+    pub(crate) removed_by_downsampling: usize,
     /// Whether GPU acceleration was used
-    pub used_gpu: bool,
+    pub(crate) used_gpu: bool,
 }
 
 /// Filter sensor points based on distance and z-height constraints
@@ -56,7 +56,10 @@ pub struct FilterResult {
 ///
 /// Uses GPU acceleration for large point clouds (>10k points) when available,
 /// falling back to CPU for small clouds or when GPU is unavailable.
-pub fn filter_sensor_points(points: &[[f32; 3]], params: &PointFilterParams) -> FilterResult {
+pub(crate) fn filter_sensor_points(
+    points: &[[f32; 3]],
+    params: &PointFilterParams,
+) -> FilterResult {
     // Convert to ndt_cuda filter params
     let gpu_params = GpuFilterParams {
         min_distance: params.min_distance,
@@ -131,7 +134,7 @@ impl XyzOffsets {
 }
 
 /// Convert PointCloud2 message to Vec of [x, y, z] points
-pub fn from_pointcloud2(msg: &PointCloud2) -> Result<Vec<[f32; 3]>> {
+pub(crate) fn from_pointcloud2(msg: &PointCloud2) -> Result<Vec<[f32; 3]>> {
     if msg.data.is_empty() {
         return Ok(Vec::new());
     }
@@ -215,7 +218,8 @@ fn encode_xyz_data(points: &[[f32; 3]]) -> Vec<u8> {
 ///
 /// Each point has xyz coordinates and a packed RGB value (0x00RRGGBB format).
 /// This is used for per-point score visualization where colors indicate quality.
-pub fn to_pointcloud2_with_rgb(
+#[cfg(feature = "debug-markers")]
+pub(crate) fn to_pointcloud2_with_rgb(
     points: &[[f32; 3]],
     rgb_values: &[u32],
     header: &Header,
@@ -256,7 +260,7 @@ pub fn to_pointcloud2_with_rgb(
 }
 
 /// Convert Vec of [x, y, z] points to PointCloud2 message
-pub fn to_pointcloud2(points: &[[f32; 3]], header: &Header) -> PointCloud2 {
+pub(crate) fn to_pointcloud2(points: &[[f32; 3]], header: &Header) -> PointCloud2 {
     let point_step = 12u32; // 3 * sizeof(f32)
     let data = encode_xyz_data(points);
 

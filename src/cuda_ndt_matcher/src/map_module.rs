@@ -18,10 +18,6 @@
 //! | Update Trigger | Timer callback | Position-based check on each alignment |
 //! | Secondary NDT | Yes (non-blocking updates) | No (direct update with lock) |
 
-// Allow dead_code: MapUpdateModule and DynamicMapLoader are used from main.rs
-// but Rust doesn't track field usage through Arc<ArcSwap<T>> patterns.
-#![allow(dead_code)]
-
 use crate::params::DynamicMapParams;
 use crate::pointcloud;
 use autoware_map_msgs::msg::{AreaInfo, PointCloudMapCellWithID};
@@ -38,47 +34,34 @@ const LOGGER_NAME: &str = "ndt_scan_matcher.map_module";
 
 /// A map tile with its point cloud data
 #[derive(Debug, Clone)]
-pub struct MapTile {
+pub(crate) struct MapTile {
     /// Unique identifier for this tile
-    pub id: String,
+    pub(crate) id: String,
     /// Center position of the tile
-    pub center: Point,
+    #[allow(dead_code)] // Tile metadata; used indirectly via Arc patterns
+    pub(crate) center: Point,
     /// Point cloud data as [x, y, z] points
-    pub points: Vec<[f32; 3]>,
+    pub(crate) points: Vec<[f32; 3]>,
 }
 
 /// Result of a map update check
 #[derive(Debug, Clone)]
-pub struct MapUpdateResult {
+pub(crate) struct MapUpdateResult {
     /// Whether the map was updated
-    pub updated: bool,
+    pub(crate) updated: bool,
     /// Number of tiles currently loaded
-    pub tiles_loaded: usize,
+    pub(crate) tiles_loaded: usize,
     /// Total points in combined map
-    pub total_points: usize,
+    pub(crate) total_points: usize,
     /// Distance from last update position
-    pub distance_from_last_update: f64,
+    pub(crate) distance_from_last_update: f64,
     /// Time taken for map update (if updated)
-    pub update_time_ms: f64,
-}
-
-/// Statistics about the current map state
-#[derive(Debug, Clone, Default)]
-pub struct MapStats {
-    /// Number of loaded tiles
-    pub tiles_loaded: usize,
-    /// Total points in full map (before filtering)
-    pub total_points_full: usize,
-    /// Points in filtered/cached map
-    pub total_points_filtered: usize,
-    /// Last update position
-    pub last_update_position: Option<Point>,
-    /// Whether map needs rebuild
-    pub needs_rebuild: bool,
+    #[allow(dead_code)] // Monitoring field; logged but not read in code
+    pub(crate) update_time_ms: f64,
 }
 
 /// Manages dynamic map loading and caching
-pub struct MapUpdateModule {
+pub(crate) struct MapUpdateModule {
     /// Map tiles indexed by ID
     tiles: RwLock<HashMap<String, MapTile>>,
     /// Last position where map was updated
@@ -93,7 +76,7 @@ pub struct MapUpdateModule {
 
 impl MapUpdateModule {
     /// Create a new map update module
-    pub fn new(params: DynamicMapParams) -> Self {
+    pub(crate) fn new(params: DynamicMapParams) -> Self {
         Self {
             tiles: RwLock::new(HashMap::new()),
             last_update_position: RwLock::new(None),
@@ -109,7 +92,7 @@ impl MapUpdateModule {
     /// - No tiles are loaded (initial map load)
     /// - No previous update position exists (first update)
     /// - Distance from last update exceeds update_distance threshold
-    pub fn should_update(&self, current_position: &Point) -> bool {
+    pub(crate) fn should_update(&self, current_position: &Point) -> bool {
         // Always update if no tiles are loaded (need initial map)
         if self.tiles.read().is_empty() {
             return true;
@@ -127,7 +110,7 @@ impl MapUpdateModule {
     }
 
     /// Get distance from last update position
-    pub fn distance_from_last_update(&self, current_position: &Point) -> f64 {
+    pub(crate) fn distance_from_last_update(&self, current_position: &Point) -> f64 {
         let last_pos = self.last_update_position.read();
         match last_pos.as_ref() {
             None => f64::INFINITY,
@@ -139,7 +122,7 @@ impl MapUpdateModule {
     ///
     /// Returns true if the current position plus lidar radius
     /// exceeds the map radius from the last update position
-    pub fn out_of_map_range(&self, current_position: &Point) -> bool {
+    pub(crate) fn out_of_map_range(&self, current_position: &Point) -> bool {
         let last_pos = self.last_update_position.read();
 
         match last_pos.as_ref() {
@@ -152,14 +135,14 @@ impl MapUpdateModule {
     }
 
     /// Add or update a map tile
-    pub fn add_tile(&self, tile: MapTile) {
+    pub(crate) fn add_tile(&self, tile: MapTile) {
         let mut tiles = self.tiles.write();
         tiles.insert(tile.id.clone(), tile);
         *self.needs_rebuild.write() = true;
     }
 
     /// Remove a map tile by ID
-    pub fn remove_tile(&self, tile_id: &str) -> bool {
+    pub(crate) fn remove_tile(&self, tile_id: &str) -> bool {
         let mut tiles = self.tiles.write();
         let removed = tiles.remove(tile_id).is_some();
         if removed {
@@ -169,12 +152,12 @@ impl MapUpdateModule {
     }
 
     /// Get list of currently loaded tile IDs
-    pub fn get_loaded_tile_ids(&self) -> Vec<String> {
+    pub(crate) fn get_loaded_tile_ids(&self) -> Vec<String> {
         self.tiles.read().keys().cloned().collect()
     }
 
     /// Get number of loaded tiles
-    pub fn tile_count(&self) -> usize {
+    pub(crate) fn tile_count(&self) -> usize {
         self.tiles.read().len()
     }
 
@@ -189,7 +172,7 @@ impl MapUpdateModule {
     /// - Filters points within `map_radius` of current position
     ///
     /// Returns update result with statistics
-    pub fn update_map(&self, current_position: &Point) -> MapUpdateResult {
+    pub(crate) fn update_map(&self, current_position: &Point) -> MapUpdateResult {
         let distance = self.distance_from_last_update(current_position);
         let needs_rebuild = *self.needs_rebuild.read();
 
@@ -257,22 +240,6 @@ impl MapUpdateModule {
         }
     }
 
-    /// Get statistics about the current map state
-    pub fn get_stats(&self) -> MapStats {
-        let tiles = self.tiles.read();
-        let total_points_full: usize = tiles.values().map(|t| t.points.len()).sum();
-        let tiles_loaded = tiles.len();
-        drop(tiles);
-
-        MapStats {
-            tiles_loaded,
-            total_points_full,
-            total_points_filtered: self.cached_map_points.read().len(),
-            last_update_position: self.last_update_position.read().clone(),
-            needs_rebuild: *self.needs_rebuild.read(),
-        }
-    }
-
     /// Check and update map if needed, returning whether NDT target needs updating
     ///
     /// This is a convenience method that combines `should_update` and `update_map`,
@@ -281,7 +248,7 @@ impl MapUpdateModule {
     /// # Returns
     /// - `Some(points)` if map was updated and NDT target should be refreshed
     /// - `None` if no update was needed
-    pub fn check_and_update(&self, current_position: &Point) -> Option<Vec<[f32; 3]>> {
+    pub(crate) fn check_and_update(&self, current_position: &Point) -> Option<Vec<[f32; 3]>> {
         let result = self.update_map(current_position);
         if result.updated {
             self.get_map_points()
@@ -293,7 +260,7 @@ impl MapUpdateModule {
     /// Get the current cached map points
     ///
     /// Returns None if no map is loaded
-    pub fn get_map_points(&self) -> Option<Vec<[f32; 3]>> {
+    pub(crate) fn get_map_points(&self) -> Option<Vec<[f32; 3]>> {
         let cached = self.cached_map_points.read();
         if cached.is_empty() {
             None
@@ -302,13 +269,8 @@ impl MapUpdateModule {
         }
     }
 
-    /// Get a reference to the cached map points for reading
-    pub fn get_map_points_ref(&self) -> Arc<Vec<[f32; 3]>> {
-        Arc::new(self.cached_map_points.read().clone())
-    }
-
     /// Clear all map data
-    pub fn clear(&self) {
+    pub(crate) fn clear(&self) {
         self.tiles.write().clear();
         self.cached_map_points.write().clear();
         *self.last_update_position.write() = None;
@@ -319,7 +281,7 @@ impl MapUpdateModule {
     ///
     /// This is a convenience method for loading a single large map
     /// without tile management.
-    pub fn load_full_map(&self, points: Vec<[f32; 3]>) {
+    pub(crate) fn load_full_map(&self, points: Vec<[f32; 3]>) {
         let center = if points.is_empty() {
             Point {
                 x: 0.0,
@@ -353,11 +315,6 @@ impl MapUpdateModule {
         self.clear();
         self.add_tile(tile);
     }
-
-    /// Get the parameters
-    pub fn params(&self) -> &DynamicMapParams {
-        &self.params
-    }
 }
 
 /// Calculate 2D Euclidean distance between two points
@@ -373,21 +330,21 @@ fn euclidean_distance_2d(a: &Point, b: &Point) -> f64 {
 
 /// Status of the last map loader request.
 #[derive(Debug, Clone, Default)]
-pub struct MapLoaderStatus {
+pub(crate) struct MapLoaderStatus {
     /// Whether the pcd_loader service is available
-    pub service_available: bool,
+    pub(crate) service_available: bool,
     /// Whether the last request was successful
-    pub last_request_success: bool,
+    pub(crate) last_request_success: bool,
     /// Number of tiles added in last update
-    pub tiles_added: usize,
+    pub(crate) tiles_added: usize,
     /// Number of tiles removed in last update
-    pub tiles_removed: usize,
+    pub(crate) tiles_removed: usize,
     /// Points added in last update
-    pub points_added: usize,
+    pub(crate) points_added: usize,
     /// Time of last update (epoch seconds)
-    pub last_update_time: f64,
+    pub(crate) last_update_time: f64,
     /// Error message if last request failed
-    pub error_message: Option<String>,
+    pub(crate) error_message: Option<String>,
 }
 
 /// Dynamic map loader using GetDifferentialPointCloudMap service.
@@ -398,7 +355,7 @@ pub struct MapLoaderStatus {
 /// 3. Updates the MapUpdateModule with the differential changes
 ///
 /// The service client requires the node to spin for callbacks to work.
-pub struct DynamicMapLoader {
+pub(crate) struct DynamicMapLoader {
     /// Service client for map loading
     client: Client<GetDifferentialPointCloudMap>,
     /// Map update module to populate
@@ -416,7 +373,7 @@ impl DynamicMapLoader {
     /// * `node` - The ROS node to create the client on
     /// * `service_name` - Name of the pcd_loader_service (typically "pcd_loader_service")
     /// * `map_module` - The map module to populate with loaded tiles
-    pub fn new(
+    pub(crate) fn new(
         node: &Node,
         service_name: &str,
         map_module: Arc<MapUpdateModule>,
@@ -436,19 +393,20 @@ impl DynamicMapLoader {
     }
 
     /// Check if the map service is available.
-    pub fn service_is_ready(&self) -> bool {
+    pub(crate) fn service_is_ready(&self) -> bool {
         let is_ready = self.client.service_is_ready().unwrap_or(false);
         self.status.write().service_available = is_ready;
         is_ready
     }
 
     /// Check if a request is currently pending.
-    pub fn is_request_pending(&self) -> bool {
+    #[allow(dead_code)] // Monitoring API; reserved for future diagnostics
+    pub(crate) fn is_request_pending(&self) -> bool {
         self.request_pending.load(Ordering::SeqCst)
     }
 
     /// Get the current loader status.
-    pub fn get_status(&self) -> MapLoaderStatus {
+    pub(crate) fn get_status(&self) -> MapLoaderStatus {
         self.status.read().clone()
     }
 
@@ -465,7 +423,7 @@ impl DynamicMapLoader {
     /// * `Ok(true)` - Request was sent successfully
     /// * `Ok(false)` - Request not sent (service unavailable or request pending)
     /// * `Err(_)` - Error sending request
-    pub fn request_map_update(
+    pub(crate) fn request_map_update(
         &self,
         position: &Point,
         map_radius: f32,
@@ -793,31 +751,6 @@ mod tests {
         // Call at distant position should update
         let points = module.check_and_update(&make_point(10.0, 0.0, 0.0));
         assert!(points.is_some());
-    }
-
-    #[test]
-    fn test_get_stats() {
-        let module = MapUpdateModule::new(make_params());
-
-        let tile = MapTile {
-            id: "tile_1".to_string(),
-            center: make_point(0.0, 0.0, 0.0),
-            points: vec![[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]],
-        };
-        module.add_tile(tile);
-
-        let stats = module.get_stats();
-        assert_eq!(stats.tiles_loaded, 1);
-        assert_eq!(stats.total_points_full, 3);
-        assert_eq!(stats.total_points_filtered, 0); // Not updated yet
-        assert!(stats.needs_rebuild);
-
-        // Update map
-        module.update_map(&make_point(0.0, 0.0, 0.0));
-
-        let stats = module.get_stats();
-        assert!(!stats.needs_rebuild);
-        assert!(stats.total_points_filtered > 0);
     }
 
     #[test]

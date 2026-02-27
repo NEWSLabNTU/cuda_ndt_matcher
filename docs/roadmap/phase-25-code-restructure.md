@@ -143,9 +143,9 @@ Reduce duplication before the structural moves (smaller diffs in later sub-phase
 Tighten up compiler warnings and API surface.
 
 **Criteria**:
-- [ ] `#![allow(dead_code)]` removed from `ndt_manager.rs` and `params.rs`; individual `#[allow(dead_code)]` added only to items genuinely used via `Arc<Mutex<T>>` or closure captures; truly dead code removed
-- [ ] All `pub fn` / `pub struct` in `cuda_ndt_matcher/src/*.rs` audited; internal-only items changed to `pub(crate)`
-- [ ] `just lint` passes with no new warnings
+- [x] `#![allow(dead_code)]` removed from all 8 modules (`covariance.rs`, `scan_queue.rs`, `ndt_manager.rs`, `diagnostics.rs`, `particle.rs`, `map_module.rs`, `params.rs`, `nvtl.rs`); individual `#[allow(dead_code)]` added only to items genuinely used via `Arc<Mutex<T>>` or closure captures; truly dead code removed (`ExecutionTimer`, `MapStats`, `get_stats`, `get_map_points_ref`, `params`, `estimate_covariance`); feature-gated items given proper `#[cfg]`; `nvtl.rs` retains module-level allow as CPU-only reference implementation
+- [x] All `pub fn` / `pub struct` in `cuda_ndt_matcher/src/*.rs` audited; internal-only items changed to `pub(crate)` across all 17 module files
+- [x] `just lint` passes with no new warnings (3 pre-existing clippy warnings in visualization.rs unchanged)
 
 ---
 

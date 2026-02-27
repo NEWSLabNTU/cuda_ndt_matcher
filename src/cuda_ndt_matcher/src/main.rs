@@ -91,6 +91,7 @@ struct DebugPublishers {
     no_ground_nvtl_pub: Publisher<Float32Stamped>,
 
     // Per-point score visualization (voxel_score_points with RGB colors)
+    #[cfg(feature = "debug-markers")]
     voxel_score_points_pub: Publisher<PointCloud2>,
 
     // MULTI_NDT covariance debug: poses from offset alignments
@@ -269,6 +270,7 @@ impl NdtScanMatcherNode {
             no_ground_nvtl_pub: node
                 .create_publisher("no_ground_nearest_voxel_transformation_likelihood")?,
             // Per-point score visualization
+            #[cfg(feature = "debug-markers")]
             voxel_score_points_pub: node.create_publisher("voxel_score_points")?,
             // MULTI_NDT covariance debug
             multi_ndt_pose_pub: node.create_publisher("multi_ndt_pose")?,
@@ -708,7 +710,8 @@ impl NdtScanMatcherNode {
 
         // Always store sensor points for initial pose estimation service (ndt_align_srv)
         // This must happen before any early returns so the align service can work
-        ctx.latest_sensor_points.store(Arc::new(Some(sensor_points.clone())));
+        ctx.latest_sensor_points
+            .store(Arc::new(Some(sensor_points.clone())));
 
         // Check if enabled for regular NDT alignment
         if !ctx.enabled.load(Ordering::SeqCst) {
@@ -728,7 +731,8 @@ impl NdtScanMatcherNode {
                 {
                     let p = &result.interpolated_pose.pose.pose.position;
                     let ts = &result.interpolated_pose.header.stamp;
-                    let (roll, pitch, yaw) = pose_utils::euler_from_pose(&result.interpolated_pose.pose.pose);
+                    let (roll, pitch, yaw) =
+                        pose_utils::euler_from_pose(&result.interpolated_pose.pose.pose);
                     log_info!(
                         NODE_NAME,
                         "[INTERP] ts={}.{:09} pos=({:.3}, {:.3}, {:.3}) rpy=({:.3}, {:.3}, {:.3}) sensor_ts={}",
@@ -777,7 +781,8 @@ impl NdtScanMatcherNode {
         // Check if we should request new map tiles via service
         // This is non-blocking - the callback will update map_module when response arrives
         if ctx.map_module.should_update(&current_position) {
-            if let Err(e) = ctx.map_loader
+            if let Err(e) = ctx
+                .map_loader
                 .request_map_update(&current_position, ctx.params.dynamic_map.map_radius as f32)
             {
                 log_error!(NODE_NAME, "Failed to request map update: {e}");
@@ -797,12 +802,15 @@ impl NdtScanMatcherNode {
                     frame_id: ctx.params.frame.map_frame.clone(),
                 },
             );
-            let _ = ctx.debug_pubs
+            let _ = ctx
+                .debug_pubs
                 .debug_loaded_pointcloud_map_pub
                 .publish(&debug_map_msg);
 
             // Start non-blocking NDT target update in background thread
-            let started = ctx.ndt_manager.start_background_update(filtered_map.clone());
+            let started = ctx
+                .ndt_manager
+                .start_background_update(filtered_map.clone());
             log_debug!(
                 NODE_NAME,
                 "Background NDT update started={started} with {} points",
@@ -990,7 +998,8 @@ impl NdtScanMatcherNode {
 
         // Check 3: Score threshold
         // converged_param_type: 0 = transform_probability, 1 = NVTL
-        let (score_for_check, threshold, score_name) = if ctx.params.score.converged_param_type == 0 {
+        let (score_for_check, threshold, score_name) = if ctx.params.score.converged_param_type == 0
+        {
             (
                 transform_prob,
                 ctx.params.score.converged_param_transform_probability,
@@ -1107,7 +1116,10 @@ impl NdtScanMatcherNode {
                     header: header.clone(),
                     poses,
                 };
-                let _ = ctx.debug_pubs.multi_initial_pose_pub.publish(&pose_array_msg);
+                let _ = ctx
+                    .debug_pubs
+                    .multi_initial_pose_pub
+                    .publish(&pose_array_msg);
             }
         }
 
@@ -1144,14 +1156,18 @@ impl NdtScanMatcherNode {
             stamp: msg.header.stamp.clone(),
             data: result.oscillation_count as i32,
         };
-        let _ = ctx.debug_pubs.oscillation_count_pub.publish(&oscillation_msg);
+        let _ = ctx
+            .debug_pubs
+            .oscillation_count_pub
+            .publish(&oscillation_msg);
 
         // Publish transform probability
         let transform_prob_msg = Float32Stamped {
             stamp: msg.header.stamp.clone(),
             data: transform_prob as f32,
         };
-        let _ = ctx.debug_pubs
+        let _ = ctx
+            .debug_pubs
             .transform_probability_pub
             .publish(&transform_prob_msg);
 
@@ -1174,7 +1190,8 @@ impl NdtScanMatcherNode {
             stamp: msg.header.stamp.clone(),
             data: distance as f32,
         };
-        let _ = ctx.debug_pubs
+        let _ = ctx
+            .debug_pubs
             .initial_to_result_distance_pub
             .publish(&distance_msg);
 
@@ -1186,7 +1203,8 @@ impl NdtScanMatcherNode {
             let dy_old = result.pose.position.y - interp.old_pose.pose.pose.position.y;
             let dz_old = result.pose.position.z - interp.old_pose.pose.pose.position.z;
             let distance_old = (dx_old * dx_old + dy_old * dy_old + dz_old * dz_old).sqrt();
-            let _ = ctx.debug_pubs
+            let _ = ctx
+                .debug_pubs
                 .initial_to_result_distance_old_pub
                 .publish(&Float32Stamped {
                     stamp: msg.header.stamp.clone(),
@@ -1198,7 +1216,8 @@ impl NdtScanMatcherNode {
             let dy_new = result.pose.position.y - interp.new_pose.pose.pose.position.y;
             let dz_new = result.pose.position.z - interp.new_pose.pose.pose.position.z;
             let distance_new = (dx_new * dx_new + dy_new * dy_new + dz_new * dz_new).sqrt();
-            let _ = ctx.debug_pubs
+            let _ = ctx
+                .debug_pubs
                 .initial_to_result_distance_new_pub
                 .publish(&Float32Stamped {
                     stamp: msg.header.stamp.clone(),
@@ -1220,7 +1239,8 @@ impl NdtScanMatcherNode {
             header: header.clone(),
             pose: relative_pose,
         };
-        let _ = ctx.debug_pubs
+        let _ = ctx
+            .debug_pubs
             .initial_to_result_relative_pose_pub
             .publish(&relative_pose_msg);
 
@@ -1284,7 +1304,10 @@ impl NdtScanMatcherNode {
 
             let score_cloud_msg =
                 pointcloud::to_pointcloud2_with_rgb(&score_points, &rgb_values, &header);
-            let _ = ctx.debug_pubs.voxel_score_points_pub.publish(&score_cloud_msg);
+            let _ = ctx
+                .debug_pubs
+                .voxel_score_points_pub
+                .publish(&score_cloud_msg);
         }
 
         // ---- No-Ground Scoring (optional) ----
@@ -1294,7 +1317,11 @@ impl NdtScanMatcherNode {
             // Build isometry from result pose for transforming points
             let pose_isometry = pose_utils::isometry_from_pose(&result.pose);
             let base_link_z = result.pose.position.z;
-            let z_threshold = ctx.params.score.no_ground_points.z_margin_for_ground_removal as f64;
+            let z_threshold = ctx
+                .params
+                .score
+                .no_ground_points
+                .z_margin_for_ground_removal as f64;
 
             // Filter sensor points: keep those whose transformed z is above ground threshold
             let no_ground_points: Vec<[f32; 3]> = sensor_points
@@ -1328,7 +1355,8 @@ impl NdtScanMatcherNode {
                     })
                     .collect();
                 let no_ground_cloud_msg = pointcloud::to_pointcloud2(&no_ground_aligned, &header);
-                let _ = ctx.debug_pubs
+                let _ = ctx
+                    .debug_pubs
                     .no_ground_points_aligned_pub
                     .publish(&no_ground_cloud_msg);
 
@@ -1337,7 +1365,8 @@ impl NdtScanMatcherNode {
                     stamp: msg.header.stamp.clone(),
                     data: no_ground_tp as f32,
                 };
-                let _ = ctx.debug_pubs
+                let _ = ctx
+                    .debug_pubs
                     .no_ground_transform_probability_pub
                     .publish(&no_ground_tp_msg);
 
@@ -1346,7 +1375,10 @@ impl NdtScanMatcherNode {
                     stamp: msg.header.stamp.clone(),
                     data: no_ground_nvtl as f32,
                 };
-                let _ = ctx.debug_pubs.no_ground_nvtl_pub.publish(&no_ground_nvtl_msg);
+                let _ = ctx
+                    .debug_pubs
+                    .no_ground_nvtl_pub
+                    .publish(&no_ground_nvtl_msg);
             }
         }
 
@@ -1840,7 +1872,7 @@ impl NdtScanMatcherNode {
 
     /// Load map from points (called externally or via service)
     #[allow(dead_code)]
-    pub fn set_map(&self, points: Vec<[f32; 3]>) {
+    fn set_map(&self, points: Vec<[f32; 3]>) {
         log_info!(NODE_NAME, "Loading map with {} points", points.len());
         self.map_points.store(Arc::new(Some(points.clone())));
 

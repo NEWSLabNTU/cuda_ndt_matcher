@@ -1,27 +1,23 @@
 //! Particle representation for Monte Carlo initial pose estimation.
 
-// Allow dead_code: Particle struct is used in initial_pose.rs for Monte Carlo
-// sampling. Rust doesn't track usage across module boundaries with generics.
-#![allow(dead_code)]
-
 use geometry_msgs::msg::Pose;
 
 /// A particle represents a candidate pose hypothesis for initial pose estimation.
 #[derive(Debug, Clone)]
-pub struct Particle {
+pub(crate) struct Particle {
     /// The initial pose hypothesis (before NDT alignment)
-    pub initial_pose: Pose,
+    pub(crate) initial_pose: Pose,
     /// The result pose after NDT alignment converged
-    pub result_pose: Pose,
+    pub(crate) result_pose: Pose,
     /// NDT alignment score (higher is better)
-    pub score: f64,
+    pub(crate) score: f64,
     /// Number of NDT iterations needed for convergence
-    pub iterations: i32,
+    pub(crate) iterations: i32,
 }
 
 impl Particle {
     /// Create a new particle with alignment results
-    pub fn new(initial_pose: Pose, result_pose: Pose, score: f64, iterations: i32) -> Self {
+    pub(crate) fn new(initial_pose: Pose, result_pose: Pose, score: f64, iterations: i32) -> Self {
         Self {
             initial_pose,
             result_pose,
@@ -33,7 +29,7 @@ impl Particle {
 
 /// Find the best particle (highest likelihood score) from a collection
 /// Note: likelihood score is "higher = better" (converted from fitness_score)
-pub fn select_best_particle(particles: &[Particle]) -> Option<&Particle> {
+pub(crate) fn select_best_particle(particles: &[Particle]) -> Option<&Particle> {
     particles.iter().max_by(|a, b| {
         a.score
             .partial_cmp(&b.score)

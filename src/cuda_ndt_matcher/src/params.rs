@@ -1,83 +1,85 @@
 //! NDT scan matcher parameters
 
-// Allow dead_code: Parameter structs are loaded from ROS config and accessed
-// by various modules. Some fields are for future features or optional modes.
-#![allow(dead_code)]
-
 use anyhow::Result;
 use rclrs::Node;
 use std::sync::Arc;
 
 /// Frame configuration
 #[derive(Clone)]
-pub struct FrameParams {
-    pub base_frame: String,
-    pub ndt_base_frame: String,
-    pub map_frame: String,
+pub(crate) struct FrameParams {
+    pub(crate) base_frame: String,
+    pub(crate) ndt_base_frame: String,
+    pub(crate) map_frame: String,
 }
 
 /// Sensor points configuration
 #[derive(Clone)]
-pub struct SensorPointsParams {
-    pub timeout_sec: f64,
+pub(crate) struct SensorPointsParams {
+    #[allow(dead_code)] // Loaded from ROS config; reserved for future timeout validation
+    pub(crate) timeout_sec: f64,
     /// Minimum max distance required (for validation, not filtering)
-    pub required_distance: f32,
+    pub(crate) required_distance: f32,
 }
 
 /// NDT algorithm configuration
 #[derive(Clone)]
-pub struct NdtAlgorithmParams {
-    pub trans_epsilon: f64,
-    pub step_size: f64,
-    pub resolution: f64,
-    pub max_iterations: i32,
-    pub num_threads: i32,
-    pub use_line_search: bool,
+pub(crate) struct NdtAlgorithmParams {
+    pub(crate) trans_epsilon: f64,
+    pub(crate) step_size: f64,
+    pub(crate) resolution: f64,
+    pub(crate) max_iterations: i32,
+    #[allow(dead_code)] // Loaded from ROS config; reserved for CPU thread pool configuration
+    pub(crate) num_threads: i32,
+    pub(crate) use_line_search: bool,
 }
 
 /// Initial pose estimation configuration
 #[derive(Clone)]
-pub struct InitialPoseParams {
-    pub particles_num: i32,
-    pub n_startup_trials: i32,
+pub(crate) struct InitialPoseParams {
+    pub(crate) particles_num: i32,
+    pub(crate) n_startup_trials: i32,
     /// Yaw weight sigma for biasing toward initial yaw (degrees)
     /// Smaller values give stronger bias toward the initial yaw
-    pub yaw_weight_sigma: f64,
+    #[allow(dead_code)] // Loaded from ROS config; reserved for yaw-weighted particle sampling
+    pub(crate) yaw_weight_sigma: f64,
 }
 
 /// Validation configuration
 #[derive(Clone)]
-pub struct ValidationParams {
-    pub initial_pose_timeout_sec: f64,
-    pub initial_pose_distance_tolerance_m: f64,
-    pub initial_to_result_distance_tolerance_m: f64,
-    pub critical_upper_bound_exe_time_ms: f64,
-    pub skipping_publish_num: i32,
+pub(crate) struct ValidationParams {
+    pub(crate) initial_pose_timeout_sec: f64,
+    pub(crate) initial_pose_distance_tolerance_m: f64,
+    #[allow(dead_code)] // Loaded from ROS config; reserved for initial-to-result distance gating
+    pub(crate) initial_to_result_distance_tolerance_m: f64,
+    #[allow(dead_code)] // Loaded from ROS config; reserved for execution time monitoring
+    pub(crate) critical_upper_bound_exe_time_ms: f64,
+    #[allow(dead_code)] // Loaded from ROS config; reserved for skip-based publish gating
+    pub(crate) skipping_publish_num: i32,
 }
 
 /// No-ground points configuration for score estimation
 #[derive(Clone)]
-pub struct NoGroundPointsParams {
+pub(crate) struct NoGroundPointsParams {
     /// Enable no-ground scoring (computes scores excluding ground points)
-    pub enable: bool,
+    pub(crate) enable: bool,
     /// Z threshold for ground removal: points with z - base_link_z <= threshold are ground
-    pub z_margin_for_ground_removal: f32,
+    pub(crate) z_margin_for_ground_removal: f32,
 }
 
 /// Score estimation configuration
 #[derive(Clone)]
-pub struct ScoreParams {
-    pub converged_param_type: i32,
-    pub converged_param_transform_probability: f64,
-    pub converged_param_nearest_voxel_transformation_likelihood: f64,
+pub(crate) struct ScoreParams {
+    pub(crate) converged_param_type: i32,
+    pub(crate) converged_param_transform_probability: f64,
+    pub(crate) converged_param_nearest_voxel_transformation_likelihood: f64,
     /// No-ground scoring parameters
-    pub no_ground_points: NoGroundPointsParams,
+    pub(crate) no_ground_points: NoGroundPointsParams,
 }
 
 /// Covariance estimation type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
-pub enum CovarianceEstimationType {
+pub(crate) enum CovarianceEstimationType {
     /// Use fixed covariance matrix
     Fixed = 0,
     /// Use Laplace approximation (inverse of Hessian)
@@ -89,7 +91,7 @@ pub enum CovarianceEstimationType {
 }
 
 impl CovarianceEstimationType {
-    pub fn from_i32(value: i32) -> Self {
+    pub(crate) fn from_i32(value: i32) -> Self {
         match value {
             0 => Self::Fixed,
             1 => Self::LaplaceApproximation,
@@ -102,15 +104,15 @@ impl CovarianceEstimationType {
 
 /// Covariance estimation sub-parameters
 #[derive(Clone)]
-pub struct CovarianceEstimationParams {
+pub(crate) struct CovarianceEstimationParams {
     /// Initial pose offset model X coordinates (meters)
-    pub initial_pose_offset_model_x: Vec<f64>,
+    pub(crate) initial_pose_offset_model_x: Vec<f64>,
     /// Initial pose offset model Y coordinates (meters)
-    pub initial_pose_offset_model_y: Vec<f64>,
+    pub(crate) initial_pose_offset_model_y: Vec<f64>,
     /// Softmax temperature for MULTI_NDT_SCORE (lower = sharper weights)
-    pub temperature: f64,
+    pub(crate) temperature: f64,
     /// Scale factor for estimated covariance
-    pub scale_factor: f64,
+    pub(crate) scale_factor: f64,
 }
 
 impl Default for CovarianceEstimationParams {
@@ -127,65 +129,65 @@ impl Default for CovarianceEstimationParams {
 
 /// Covariance configuration
 #[derive(Clone)]
-pub struct CovarianceParams {
+pub(crate) struct CovarianceParams {
     /// Static 6x6 covariance matrix (used for FIXED mode and as fallback)
-    pub output_pose_covariance: [f64; 36],
+    pub(crate) output_pose_covariance: [f64; 36],
     /// Covariance estimation type
-    pub covariance_estimation_type: CovarianceEstimationType,
+    pub(crate) covariance_estimation_type: CovarianceEstimationType,
     /// Estimation parameters for dynamic modes
-    pub estimation: CovarianceEstimationParams,
+    pub(crate) estimation: CovarianceEstimationParams,
 }
 
 /// Dynamic map loading configuration
 #[derive(Clone)]
-pub struct DynamicMapParams {
-    pub update_distance: f64,
-    pub map_radius: f64,
-    pub lidar_radius: f64,
+pub(crate) struct DynamicMapParams {
+    pub(crate) update_distance: f64,
+    pub(crate) map_radius: f64,
+    pub(crate) lidar_radius: f64,
 }
 
 /// GNSS regularization configuration
 #[derive(Clone)]
-pub struct RegularizationParams {
+pub(crate) struct RegularizationParams {
     /// Enable regularization (penalizes deviation from GNSS pose)
-    pub enabled: bool,
+    pub(crate) enabled: bool,
     /// Scale factor for regularization term (higher = more weight to GNSS)
-    pub scale_factor: f64,
+    pub(crate) scale_factor: f64,
 }
 
 /// Batch processing configuration for GPU parallel alignment
 #[derive(Clone)]
-pub struct BatchParams {
+pub(crate) struct BatchParams {
     /// Enable batch processing (default: false)
-    pub enabled: bool,
+    pub(crate) enabled: bool,
     /// Maximum scans in queue before dropping oldest (default: 8)
-    pub max_queue_depth: i32,
+    pub(crate) max_queue_depth: i32,
     /// Maximum scan age in milliseconds before dropping (default: 100)
-    pub max_scan_age_ms: i32,
+    pub(crate) max_scan_age_ms: i32,
     /// Number of scans to trigger batch processing (default: 4)
-    pub batch_trigger: i32,
+    pub(crate) batch_trigger: i32,
     /// Timeout in milliseconds to process partial batch (default: 20)
-    pub timeout_ms: i32,
+    pub(crate) timeout_ms: i32,
 }
 
 /// All NDT parameters
 #[derive(Clone)]
-pub struct NdtParams {
-    pub frame: FrameParams,
-    pub sensor_points: SensorPointsParams,
-    pub ndt: NdtAlgorithmParams,
-    pub initial_pose: InitialPoseParams,
-    pub validation: ValidationParams,
-    pub score: ScoreParams,
-    pub covariance: CovarianceParams,
-    pub dynamic_map: DynamicMapParams,
-    pub regularization: RegularizationParams,
-    pub batch: BatchParams,
+pub(crate) struct NdtParams {
+    pub(crate) frame: FrameParams,
+    pub(crate) sensor_points: SensorPointsParams,
+    pub(crate) ndt: NdtAlgorithmParams,
+    pub(crate) initial_pose: InitialPoseParams,
+    pub(crate) validation: ValidationParams,
+    pub(crate) score: ScoreParams,
+    pub(crate) covariance: CovarianceParams,
+    pub(crate) dynamic_map: DynamicMapParams,
+    pub(crate) regularization: RegularizationParams,
+    pub(crate) batch: BatchParams,
 }
 
 impl NdtParams {
     /// Load parameters from ROS node
-    pub fn from_node(node: &Node) -> Result<Self> {
+    pub(crate) fn from_node(node: &Node) -> Result<Self> {
         Ok(Self {
             frame: FrameParams {
                 base_frame: node

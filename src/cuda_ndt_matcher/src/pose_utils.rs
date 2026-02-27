@@ -7,12 +7,12 @@ use geometry_msgs::msg::{Point, Pose};
 use nalgebra::{Isometry3, Quaternion as NaQuaternion, Translation3, UnitQuaternion};
 
 /// Convert a geometry_msgs Quaternion to a nalgebra UnitQuaternion.
-pub fn unit_quat_from_msg(q: &geometry_msgs::msg::Quaternion) -> UnitQuaternion<f64> {
+pub(crate) fn unit_quat_from_msg(q: &geometry_msgs::msg::Quaternion) -> UnitQuaternion<f64> {
     UnitQuaternion::from_quaternion(NaQuaternion::new(q.w, q.x, q.y, q.z))
 }
 
 /// Convert a geometry_msgs Pose to a nalgebra Isometry3.
-pub fn isometry_from_pose(pose: &Pose) -> Isometry3<f64> {
+pub(crate) fn isometry_from_pose(pose: &Pose) -> Isometry3<f64> {
     let p = &pose.position;
     let translation = Translation3::new(p.x, p.y, p.z);
     let rotation = unit_quat_from_msg(&pose.orientation);
@@ -20,7 +20,7 @@ pub fn isometry_from_pose(pose: &Pose) -> Isometry3<f64> {
 }
 
 /// Convert a nalgebra Isometry3 to a geometry_msgs Pose.
-pub fn pose_from_isometry(iso: &Isometry3<f64>) -> Pose {
+pub(crate) fn pose_from_isometry(iso: &Isometry3<f64>) -> Pose {
     let t = iso.translation;
     let q = iso.rotation.quaternion();
     Pose {
@@ -39,6 +39,7 @@ pub fn pose_from_isometry(iso: &Isometry3<f64>) -> Pose {
 }
 
 /// Extract Euler angles (roll, pitch, yaw) in radians from a geometry_msgs Pose.
-pub fn euler_from_pose(pose: &Pose) -> (f64, f64, f64) {
+#[cfg(feature = "debug-output")]
+pub(crate) fn euler_from_pose(pose: &Pose) -> (f64, f64, f64) {
     unit_quat_from_msg(&pose.orientation).euler_angles()
 }

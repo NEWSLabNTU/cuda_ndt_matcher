@@ -29,22 +29,22 @@ const LOGGER_NAME: &str = "ndt_scan_matcher.dual_ndt_manager";
 
 /// Status of a background map update.
 #[derive(Debug, Clone, Default)]
-pub struct UpdateStatus {
+pub(crate) struct UpdateStatus {
     /// Whether an update is currently in progress
-    pub in_progress: bool,
+    pub(crate) in_progress: bool,
     /// Number of points in the pending update
-    pub pending_points: usize,
+    pub(crate) pending_points: usize,
     /// Number of completed swaps
-    pub swap_count: usize,
+    pub(crate) swap_count: usize,
     /// Last update duration in milliseconds
-    pub last_update_ms: f64,
+    pub(crate) last_update_ms: f64,
 }
 
 /// Dual NDT manager for non-blocking map updates.
 ///
 /// Maintains two NDT instances and performs map updates in the background.
 #[allow(dead_code)]
-pub struct DualNdtManager {
+pub(crate) struct DualNdtManager {
     /// Active NDT manager used for alignment
     active: Arc<RwLock<NdtManager>>,
 
@@ -71,7 +71,7 @@ pub struct DualNdtManager {
 #[allow(dead_code)]
 impl DualNdtManager {
     /// Create a new dual NDT manager.
-    pub fn new(params: NdtParams) -> Result<Self> {
+    pub(crate) fn new(params: NdtParams) -> Result<Self> {
         let manager = NdtManager::new(&params)?;
 
         Ok(Self {
@@ -86,12 +86,12 @@ impl DualNdtManager {
     }
 
     /// Check if a background update is in progress.
-    pub fn is_update_in_progress(&self) -> bool {
+    pub(crate) fn is_update_in_progress(&self) -> bool {
         self.update_in_progress.load(Ordering::SeqCst)
     }
 
     /// Get the current update status.
-    pub fn get_status(&self) -> UpdateStatus {
+    pub(crate) fn get_status(&self) -> UpdateStatus {
         self.status.read().clone()
     }
 
@@ -109,7 +109,7 @@ impl DualNdtManager {
     /// # Returns
     /// * `true` if background update was started
     /// * `false` if an update is already in progress (points queued for next update)
-    pub fn start_background_update(&self, points: Vec<[f32; 3]>) -> bool {
+    pub(crate) fn start_background_update(&self, points: Vec<[f32; 3]>) -> bool {
         // If update already in progress, queue the points for next update
         if self.update_in_progress.swap(true, Ordering::SeqCst) {
             log_debug!(
@@ -181,7 +181,7 @@ impl DualNdtManager {
     /// # Returns
     /// * `true` if instances were swapped
     /// * `false` if no update was pending or not yet complete
-    pub fn swap_if_ready(&self) -> bool {
+    pub(crate) fn swap_if_ready(&self) -> bool {
         // Check if there's a completed update waiting
         let mut updating_guard = self.updating.lock();
         if updating_guard.is_none() {
@@ -243,20 +243,20 @@ impl DualNdtManager {
     ///
     /// This is a blocking operation that sets the target on the active manager.
     /// Use `start_background_update()` for non-blocking updates during operation.
-    pub fn set_target(&self, points: &[[f32; 3]]) -> Result<()> {
+    pub(crate) fn set_target(&self, points: &[[f32; 3]]) -> Result<()> {
         let mut active = self.active.write();
         active.set_target(points)
     }
 
     /// Check if the active manager has a target set.
-    pub fn has_target(&self) -> bool {
+    pub(crate) fn has_target(&self) -> bool {
         self.active.read().has_target()
     }
 
     /// Perform NDT alignment using the active manager.
     ///
     /// This never blocks on map updates - it always uses the current active manager.
-    pub fn align(
+    pub(crate) fn align(
         &self,
         source_points: &[[f32; 3]],
         target_points: &[[f32; 3]],
@@ -273,7 +273,7 @@ impl DualNdtManager {
     ///
     /// Only available with the `debug-output` feature.
     #[cfg(feature = "debug-output")]
-    pub fn align_with_debug(
+    pub(crate) fn align_with_debug(
         &self,
         source_points: &[[f32; 3]],
         target_points: &[[f32; 3]],
@@ -288,7 +288,7 @@ impl DualNdtManager {
     }
 
     /// Evaluate NVTL score at a given pose.
-    pub fn evaluate_nvtl(
+    pub(crate) fn evaluate_nvtl(
         &self,
         source_points: &[[f32; 3]],
         target_points: &[[f32; 3]],
@@ -300,7 +300,7 @@ impl DualNdtManager {
     }
 
     /// Evaluate NVTL at multiple poses in parallel.
-    pub fn evaluate_nvtl_batch(
+    pub(crate) fn evaluate_nvtl_batch(
         &mut self,
         source_points: &[[f32; 3]],
         poses: &[Pose],
@@ -310,7 +310,7 @@ impl DualNdtManager {
     }
 
     /// Align from multiple initial poses in parallel.
-    pub fn align_batch(
+    pub(crate) fn align_batch(
         &self,
         source_points: &[[f32; 3]],
         initial_poses: &[Pose],
@@ -320,19 +320,19 @@ impl DualNdtManager {
     }
 
     /// Set the GNSS regularization pose.
-    pub fn set_regularization_pose(&self, pose: &Pose) {
+    pub(crate) fn set_regularization_pose(&self, pose: &Pose) {
         let mut active = self.active.write();
         active.set_regularization_pose(pose);
     }
 
     /// Clear the GNSS regularization pose.
-    pub fn clear_regularization_pose(&self) {
+    pub(crate) fn clear_regularization_pose(&self) {
         let mut active = self.active.write();
         active.clear_regularization_pose();
     }
 
     /// Check if GNSS regularization is enabled.
-    pub fn is_regularization_enabled(&self) -> bool {
+    pub(crate) fn is_regularization_enabled(&self) -> bool {
         let active = self.active.read();
         active.is_regularization_enabled()
     }
@@ -340,7 +340,7 @@ impl DualNdtManager {
     /// Get a read lock on the active manager for direct access.
     ///
     /// This is needed for covariance estimation which requires a reference to the manager.
-    pub fn lock(&self) -> parking_lot::RwLockWriteGuard<'_, NdtManager> {
+    pub(crate) fn lock(&self) -> parking_lot::RwLockWriteGuard<'_, NdtManager> {
         // Check for ready swap before returning lock
         self.swap_if_ready();
         self.active.write()

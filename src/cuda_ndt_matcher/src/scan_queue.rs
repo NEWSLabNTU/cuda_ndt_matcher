@@ -9,9 +9,6 @@
 //! - **Max Scan Age**: Drops stale scans to maintain real-time responsiveness
 //! - **Batch Trigger**: Processes when N scans accumulated or timeout expires
 
-// Allow dead_code: Some fields and methods are for future diagnostics/monitoring
-#![allow(dead_code)]
-
 use nalgebra::Isometry3;
 use parking_lot::Mutex;
 use std::collections::VecDeque;
@@ -28,17 +25,17 @@ const NODE_NAME: &str = "ndt_scan_queue";
 
 /// Configuration for the scan queue.
 #[derive(Debug, Clone)]
-pub struct ScanQueueConfig {
+pub(crate) struct ScanQueueConfig {
     /// Maximum number of scans in queue (default: 8)
-    pub max_depth: usize,
+    pub(crate) max_depth: usize,
     /// Maximum scan age in milliseconds before dropping (default: 100)
-    pub max_age_ms: u64,
+    pub(crate) max_age_ms: u64,
     /// Number of scans to trigger batch processing (default: 4)
-    pub batch_trigger: usize,
+    pub(crate) batch_trigger: usize,
     /// Timeout in milliseconds to process partial batch (default: 20)
-    pub timeout_ms: u64,
+    pub(crate) timeout_ms: u64,
     /// Whether batch processing is enabled (default: true)
-    pub enabled: bool,
+    pub(crate) enabled: bool,
 }
 
 impl Default for ScanQueueConfig {
@@ -55,7 +52,7 @@ impl Default for ScanQueueConfig {
 
 impl ScanQueueConfig {
     /// Create config from params.
-    pub fn from_params(params: &crate::params::BatchParams) -> Self {
+    pub(crate) fn from_params(params: &crate::params::BatchParams) -> Self {
         Self {
             max_depth: params.max_queue_depth as usize,
             max_age_ms: params.max_scan_age_ms as u64,
@@ -68,75 +65,80 @@ impl ScanQueueConfig {
 
 /// A queued scan awaiting batch processing.
 #[derive(Clone)]
-pub struct QueuedScan {
+pub(crate) struct QueuedScan {
     /// Source point cloud (downsampled, in base_link frame)
-    pub points: Vec<[f32; 3]>,
+    pub(crate) points: Vec<[f32; 3]>,
     /// Initial pose from EKF interpolation
-    pub initial_pose: Isometry3<f64>,
+    pub(crate) initial_pose: Isometry3<f64>,
     /// Original message timestamp for output correlation
-    pub timestamp: Time,
+    pub(crate) timestamp: Time,
     /// Timestamp in nanoseconds for ordering
-    pub timestamp_ns: u64,
+    pub(crate) timestamp_ns: u64,
     /// Message header for output
-    pub header: std_msgs::msg::Header,
+    pub(crate) header: std_msgs::msg::Header,
     /// Arrival time for latency tracking
-    pub arrival_time: Instant,
+    pub(crate) arrival_time: Instant,
 }
 
 /// Result from batch alignment for a single scan.
 #[derive(Debug, Clone)]
-pub struct ScanResult {
+pub(crate) struct ScanResult {
     /// Original timestamp for correlation
-    pub timestamp: Time,
+    pub(crate) timestamp: Time,
     /// Timestamp in nanoseconds
-    pub timestamp_ns: u64,
+    pub(crate) timestamp_ns: u64,
     /// Message header for output
-    pub header: std_msgs::msg::Header,
+    pub(crate) header: std_msgs::msg::Header,
     /// Aligned pose
-    pub pose: Isometry3<f64>,
+    pub(crate) pose: Isometry3<f64>,
     /// Whether optimization converged
-    pub converged: bool,
+    pub(crate) converged: bool,
     /// NDT score
-    pub score: f64,
+    pub(crate) score: f64,
     /// Number of iterations
-    pub iterations: usize,
+    #[allow(dead_code)] // Read via closure capture in result callback
+    pub(crate) iterations: usize,
     /// Number of correspondences
-    pub num_correspondences: usize,
+    #[allow(dead_code)] // Read via closure capture in result callback
+    pub(crate) num_correspondences: usize,
     /// Oscillation count
-    pub oscillation_count: usize,
+    #[allow(dead_code)] // Read via closure capture in result callback
+    pub(crate) oscillation_count: usize,
     /// Hessian matrix (6x6, row-major)
-    pub hessian: [[f64; 6]; 6],
+    #[allow(dead_code)] // Read via closure capture in result callback
+    pub(crate) hessian: [[f64; 6]; 6],
     /// Processing latency from enqueue to result (milliseconds)
-    pub latency_ms: f32,
+    pub(crate) latency_ms: f32,
 }
 
 /// Statistics about queue operations.
 #[derive(Debug, Default, Clone)]
-pub struct QueueStats {
+pub(crate) struct QueueStats {
     /// Total scans enqueued
-    pub enqueued: u64,
+    pub(crate) enqueued: u64,
     /// Scans dropped due to queue overflow
-    pub dropped_overflow: u64,
+    pub(crate) dropped_overflow: u64,
     /// Scans dropped due to age
-    pub dropped_age: u64,
+    pub(crate) dropped_age: u64,
     /// Total batches processed
-    pub batches_processed: u64,
+    pub(crate) batches_processed: u64,
     /// Total scans processed
-    pub scans_processed: u64,
+    #[allow(dead_code)] // Monitoring counter; reserved for future diagnostics
+    pub(crate) scans_processed: u64,
 }
 
 /// Alignment function type for the scan queue.
-pub type AlignFn = Arc<
+pub(crate) type AlignFn = Arc<
     dyn Fn(&[(&[[f32; 3]], Isometry3<f64>)]) -> anyhow::Result<Vec<ndt_cuda::AlignResult>>
         + Send
         + Sync,
 >;
 
 /// Result callback type for processing batch results.
-pub type ResultCallback = Arc<dyn Fn(Vec<ScanResult>) + Send + Sync>;
+pub(crate) type ResultCallback = Arc<dyn Fn(Vec<ScanResult>) + Send + Sync>;
 
 /// Real-time scan queue with batch processing.
-pub struct ScanQueue {
+pub(crate) struct ScanQueue {
     /// Configuration
     config: ScanQueueConfig,
     /// Channel to send scans to processor thread
@@ -148,6 +150,7 @@ pub struct ScanQueue {
     /// Statistics
     stats: Arc<Mutex<QueueStats>>,
     /// Scans processed counter (for monitoring)
+    #[allow(dead_code)] // Monitoring counter; updated by processor thread
     scans_processed: Arc<AtomicU64>,
 }
 
@@ -158,7 +161,7 @@ impl ScanQueue {
     /// * `config` - Queue configuration
     /// * `align_fn` - Function to perform batch alignment
     /// * `result_callback` - Callback invoked with results (sorted by timestamp)
-    pub fn new(
+    pub(crate) fn new(
         config: ScanQueueConfig,
         align_fn: AlignFn,
         result_callback: ResultCallback,
@@ -202,7 +205,7 @@ impl ScanQueue {
     /// Enqueue a scan for batch processing.
     ///
     /// Returns `true` if the scan was enqueued, `false` if batch processing is disabled.
-    pub fn enqueue(&self, scan: QueuedScan) -> bool {
+    pub(crate) fn enqueue(&self, scan: QueuedScan) -> bool {
         if !self.config.enabled {
             return false;
         }
@@ -224,17 +227,20 @@ impl ScanQueue {
     }
 
     /// Get current queue statistics.
-    pub fn stats(&self) -> QueueStats {
+    #[allow(dead_code)] // Monitoring API; reserved for future diagnostics
+    pub(crate) fn stats(&self) -> QueueStats {
         self.stats.lock().clone()
     }
 
     /// Get number of scans processed.
-    pub fn scans_processed(&self) -> u64 {
+    #[allow(dead_code)] // Monitoring API; reserved for future diagnostics
+    pub(crate) fn scans_processed(&self) -> u64 {
         self.scans_processed.load(Ordering::Relaxed)
     }
 
     /// Check if batch processing is enabled.
-    pub fn is_enabled(&self) -> bool {
+    #[allow(dead_code)] // Monitoring API; reserved for future diagnostics
+    pub(crate) fn is_enabled(&self) -> bool {
         self.config.enabled
     }
 

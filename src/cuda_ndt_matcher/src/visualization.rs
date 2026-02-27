@@ -8,29 +8,37 @@
 use crate::particle::Particle;
 use builtin_interfaces::msg::Duration as RosDuration;
 use geometry_msgs::msg::Vector3;
+#[cfg(test)]
 use ndt_cuda::scoring::colors::{
     color_to_rgb_packed, ndt_score_to_color, DEFAULT_SCORE_LOWER, DEFAULT_SCORE_UPPER,
 };
+#[cfg(test)]
 use ndt_cuda::scoring::nvtl::{compute_nvtl, NvtlConfig};
+#[cfg(test)]
 use ndt_cuda::GaussianParams;
+#[cfg(test)]
 use ndt_cuda::VoxelGrid;
+#[cfg(test)]
 use sensor_msgs::msg::PointCloud2;
+#[cfg(test)]
 use sensor_msgs::msg::PointField;
 use std_msgs::msg::ColorRGBA;
 use std_msgs::msg::Header;
 use visualization_msgs::msg::{Marker, MarkerArray};
 
 /// Configuration for point score visualization.
+#[cfg(test)]
 #[derive(Debug, Clone)]
-pub struct PointScoreConfig {
+pub(crate) struct PointScoreConfig {
     /// Lower bound for score color mapping.
-    pub score_lower: f32,
+    pub(crate) score_lower: f32,
     /// Upper bound for score color mapping.
-    pub score_upper: f32,
+    pub(crate) score_upper: f32,
     /// Search radius for NVTL computation (in voxel units).
-    pub search_radius: i32,
+    pub(crate) search_radius: i32,
 }
 
+#[cfg(test)]
 impl Default for PointScoreConfig {
     fn default() -> Self {
         Self {
@@ -61,7 +69,8 @@ impl Default for PointScoreConfig {
 ///
 /// # Returns
 /// PointCloud2 message with RGB-colored points
-pub fn visualize_point_scores(
+#[cfg(test)]
+pub(crate) fn visualize_point_scores(
     source_points: &[[f32; 3]],
     target_grid: &VoxelGrid,
     pose: &nalgebra::Isometry3<f64>,
@@ -167,7 +176,7 @@ pub fn visualize_point_scores(
 /// - `initial_pose_iteration_color_marker` - by iteration count
 /// - `initial_pose_index_color_marker` - by particle index
 #[derive(Clone, Copy, Debug)]
-pub enum ParticleColorScheme {
+pub(crate) enum ParticleColorScheme {
     /// Green (high score) → Yellow → Red (low score)
     ByScore,
     /// Green (fast convergence) → Red (slow convergence)
@@ -178,19 +187,19 @@ pub enum ParticleColorScheme {
 
 /// Configuration for particle marker visualization.
 #[derive(Clone, Debug)]
-pub struct ParticleMarkerConfig {
+pub(crate) struct ParticleMarkerConfig {
     /// Marker lifetime in seconds (Autoware uses 10.0s)
-    pub lifetime_sec: i32,
+    pub(crate) lifetime_sec: i32,
     /// Scale for initial pose markers
-    pub initial_scale: f64,
+    pub(crate) initial_scale: f64,
     /// Scale for result pose markers
-    pub result_scale: f64,
+    pub(crate) result_scale: f64,
     /// Scale for best result marker
-    pub best_scale: f64,
+    pub(crate) best_scale: f64,
     /// Alpha for non-best markers
-    pub alpha: f32,
+    pub(crate) alpha: f32,
     /// Alpha for best marker
-    pub best_alpha: f32,
+    pub(crate) best_alpha: f32,
 }
 
 impl Default for ParticleMarkerConfig {
@@ -361,7 +370,7 @@ fn create_particle_sphere_marker(
 ///
 /// # Returns
 /// MarkerArray containing all particle markers
-pub fn create_monte_carlo_markers_enhanced(
+pub(crate) fn create_monte_carlo_markers_enhanced(
     header: &Header,
     particles: &[Particle],
     best_score: f64,

@@ -10,6 +10,8 @@
 //! on GPU when `use_gpu_batch_startup` is enabled. This provides significant
 //! speedup since TPE doesn't use trial data during the startup phase anyway.
 
+#[cfg(feature = "debug-output")]
+use super::debug_writer;
 use crate::ndt_manager::NdtManager;
 use crate::params::InitialPoseParams;
 use crate::particle::{select_best_particle, Particle};
@@ -23,8 +25,6 @@ use rclrs::log_debug;
 #[cfg(feature = "debug-output")]
 use serde::Serialize;
 #[cfg(feature = "debug-output")]
-use super::debug_writer;
-#[cfg(feature = "debug-output")]
 use std::time::Instant;
 
 const LOGGER_NAME: &str = "ndt_scan_matcher.initial_pose";
@@ -32,38 +32,38 @@ const LOGGER_NAME: &str = "ndt_scan_matcher.initial_pose";
 /// Debug output for pose initialization (only with debug-output feature)
 #[cfg(feature = "debug-output")]
 #[derive(Debug, Clone, Serialize)]
-pub struct InitPoseDebug {
+pub(crate) struct InitPoseDebug {
     /// Entry type discriminator for JSONL parsing
     #[serde(rename = "type")]
-    pub entry_type: &'static str,
+    pub(crate) entry_type: &'static str,
     /// Total pose initialization time in milliseconds
-    pub total_time_ms: f64,
+    pub(crate) total_time_ms: f64,
     /// Time for random startup phase (first n_startup_trials)
-    pub startup_time_ms: f64,
+    pub(crate) startup_time_ms: f64,
     /// Time for TPE-guided phase
-    pub guided_time_ms: f64,
+    pub(crate) guided_time_ms: f64,
     /// Total particles evaluated
-    pub num_particles: usize,
+    pub(crate) num_particles: usize,
     /// Particles in startup phase
-    pub num_startup: usize,
+    pub(crate) num_startup: usize,
     /// Best score progression (running max as particles are evaluated)
-    pub best_score_trajectory: Vec<f64>,
+    pub(crate) best_score_trajectory: Vec<f64>,
     /// Per-particle alignment time in milliseconds
-    pub per_particle_time_ms: Vec<f64>,
+    pub(crate) per_particle_time_ms: Vec<f64>,
     /// Final best particle score (NVTL)
-    pub final_score: f64,
+    pub(crate) final_score: f64,
     /// Final best particle iteration count
-    pub final_iterations: i32,
+    pub(crate) final_iterations: i32,
     /// Whether result is reliable (score >= threshold)
-    pub reliable: bool,
+    pub(crate) reliable: bool,
     /// Final pose [x, y, z, roll, pitch, yaw]
-    pub final_pose: [f64; 6],
+    pub(crate) final_pose: [f64; 6],
 }
 
 #[cfg(feature = "debug-output")]
 impl InitPoseDebug {
     /// Convert to JSON string
-    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+    pub(crate) fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }
 }
@@ -78,15 +78,15 @@ fn write_init_debug(debug: &InitPoseDebug) {
 
 /// Result of initial pose estimation
 #[derive(Debug, Clone)]
-pub struct InitialPoseResult {
+pub(crate) struct InitialPoseResult {
     /// The estimated pose with covariance
-    pub pose_with_covariance: PoseWithCovarianceStamped,
+    pub(crate) pose_with_covariance: PoseWithCovarianceStamped,
     /// The alignment score
-    pub score: f64,
+    pub(crate) score: f64,
     /// Whether the result is reliable (score above threshold)
-    pub reliable: bool,
+    pub(crate) reliable: bool,
     /// All evaluated particles (for debugging/visualization)
-    pub particles: Vec<Particle>,
+    pub(crate) particles: Vec<Particle>,
 }
 
 /// Estimate initial pose using Monte Carlo sampling with TPE
@@ -102,7 +102,7 @@ pub struct InitialPoseResult {
 ///
 /// # Returns
 /// Initial pose estimation result with best pose and all particles
-pub fn estimate_initial_pose(
+pub(crate) fn estimate_initial_pose(
     initial_pose_with_cov: &PoseWithCovarianceStamped,
     ndt_manager: &mut NdtManager,
     source_points: &[[f32; 3]],

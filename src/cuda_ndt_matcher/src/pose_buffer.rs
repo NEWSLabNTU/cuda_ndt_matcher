@@ -13,22 +13,22 @@ use std_msgs::msg::Header;
 
 /// Result of pose interpolation
 #[derive(Clone)]
-pub struct InterpolateResult {
+pub(crate) struct InterpolateResult {
     /// Pose before target time (for debugging/analysis)
     #[allow(dead_code)]
-    pub old_pose: PoseWithCovarianceStamped,
+    pub(crate) old_pose: PoseWithCovarianceStamped,
     /// Pose after target time (for debugging/analysis)
     #[allow(dead_code)]
-    pub new_pose: PoseWithCovarianceStamped,
+    pub(crate) new_pose: PoseWithCovarianceStamped,
     /// Interpolated pose at target time
-    pub interpolated_pose: PoseWithCovarianceStamped,
+    pub(crate) interpolated_pose: PoseWithCovarianceStamped,
 }
 
 /// Thread-safe buffer for pose interpolation
 ///
 /// Stores recent poses with timestamps and provides interpolation
 /// to match sensor data timestamps exactly.
-pub struct SmartPoseBuffer {
+pub(crate) struct SmartPoseBuffer {
     buffer: Mutex<VecDeque<PoseWithCovarianceStamped>>,
     /// Maximum age for poses in seconds (validation)
     pose_timeout_sec: f64,
@@ -42,7 +42,7 @@ impl SmartPoseBuffer {
     /// # Arguments
     /// * `pose_timeout_sec` - Maximum allowed time difference between pose and target (seconds)
     /// * `pose_distance_tolerance_m` - Maximum allowed position jump between poses (meters)
-    pub fn new(pose_timeout_sec: f64, pose_distance_tolerance_m: f64) -> Self {
+    pub(crate) fn new(pose_timeout_sec: f64, pose_distance_tolerance_m: f64) -> Self {
         Self {
             buffer: Mutex::new(VecDeque::with_capacity(100)),
             pose_timeout_sec,
@@ -54,7 +54,7 @@ impl SmartPoseBuffer {
     ///
     /// If the new pose has a timestamp earlier than the latest pose in the buffer,
     /// the buffer is cleared (handles rosbag replay scenarios).
-    pub fn push_back(&self, pose: PoseWithCovarianceStamped) {
+    pub(crate) fn push_back(&self, pose: PoseWithCovarianceStamped) {
         let mut buffer = self.buffer.lock();
 
         if !buffer.is_empty() {
@@ -83,7 +83,7 @@ impl SmartPoseBuffer {
     /// * `Some(InterpolateResult)` - If interpolation succeeds
     /// * `None` - If buffer has < 2 poses, target is before first pose,
     ///   or validation fails (timeout, position jump)
-    pub fn interpolate(&self, target_time_ns: i64) -> Option<InterpolateResult> {
+    pub(crate) fn interpolate(&self, target_time_ns: i64) -> Option<InterpolateResult> {
         let buffer = self.buffer.lock();
 
         // Need at least 2 poses for interpolation
@@ -148,7 +148,7 @@ impl SmartPoseBuffer {
     /// Remove poses older than the target time
     ///
     /// Keeps at least one pose before the target time for future interpolation.
-    pub fn pop_old(&self, target_time_ns: i64) {
+    pub(crate) fn pop_old(&self, target_time_ns: i64) {
         let mut buffer = self.buffer.lock();
 
         while buffer.len() > 1 {
@@ -161,25 +161,25 @@ impl SmartPoseBuffer {
     }
 
     /// Clear all poses from the buffer
-    pub fn clear(&self) {
+    pub(crate) fn clear(&self) {
         self.buffer.lock().clear();
     }
 
     /// Get the number of poses in the buffer
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.buffer.lock().len()
     }
 
     /// Check if the buffer is empty
     #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.buffer.lock().is_empty()
     }
 
     /// Get the latest (most recent) pose in the buffer
     ///
     /// Returns `None` if the buffer is empty.
-    pub fn latest(&self) -> Option<PoseWithCovarianceStamped> {
+    pub(crate) fn latest(&self) -> Option<PoseWithCovarianceStamped> {
         self.buffer.lock().back().cloned()
     }
 

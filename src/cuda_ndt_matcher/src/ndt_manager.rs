@@ -1,15 +1,11 @@
 //! NDT alignment manager using our CubeCL implementation.
 
-// Allow dead_code: NdtManager methods are called from main.rs callbacks.
-// Rust doesn't track usage through Arc<Mutex<T>> and closure captures.
-#![allow(dead_code)]
-
 use crate::params::NdtParams;
 use anyhow::{bail, Result};
 use geometry_msgs::msg::{Point, Pose, Quaternion};
 use nalgebra::{Isometry3, Matrix6, Quaternion as NaQuaternion, Translation3, UnitQuaternion};
 #[cfg(feature = "debug-output")]
-pub use ndt_cuda::AlignmentDebug;
+pub(crate) use ndt_cuda::AlignmentDebug;
 use ndt_cuda::NdtScanMatcher;
 #[cfg(feature = "debug-voxels")]
 use ndt_cuda::VoxelGrid;
@@ -98,31 +94,34 @@ fn dump_voxel_data(grid: &VoxelGrid) -> Result<()> {
 }
 
 /// Result of NDT alignment with Hessian for covariance estimation
-pub struct AlignResult {
-    pub pose: Pose,
-    pub converged: bool,
-    pub score: f64,
-    pub iterations: i32,
+pub(crate) struct AlignResult {
+    pub(crate) pose: Pose,
+    pub(crate) converged: bool,
+    pub(crate) score: f64,
+    pub(crate) iterations: i32,
     /// Hessian matrix from NDT optimization (for Laplace covariance estimation)
-    pub hessian: [[f64; 6]; 6],
+    pub(crate) hessian: [[f64; 6]; 6],
     /// NVTL score
-    pub nvtl: f64,
+    #[allow(dead_code)] // Read via Arc<Mutex<AlignResult>> in closure captures
+    pub(crate) nvtl: f64,
     /// Transform probability
-    pub transform_probability: f64,
+    #[allow(dead_code)] // Read via Arc<Mutex<AlignResult>> in closure captures
+    pub(crate) transform_probability: f64,
     /// Number of correspondences
-    pub num_correspondences: usize,
+    #[allow(dead_code)] // Read via Arc<Mutex<AlignResult>> in closure captures
+    pub(crate) num_correspondences: usize,
     /// Oscillation count (direction reversals during optimization)
-    pub oscillation_count: usize,
+    pub(crate) oscillation_count: usize,
 }
 
 /// NDT alignment manager using our CubeCL implementation
-pub struct NdtManager {
+pub(crate) struct NdtManager {
     matcher: NdtScanMatcher,
 }
 
 impl NdtManager {
     /// Create new NDT manager with parameters
-    pub fn new(params: &NdtParams) -> Result<Self> {
+    pub(crate) fn new(params: &NdtParams) -> Result<Self> {
         // Check NDT_USE_GPU environment variable (default: true for GPU acceleration)
         let use_gpu = std::env::var("NDT_USE_GPU")
             .map(|v| v != "0" && v.to_lowercase() != "false")
@@ -154,7 +153,7 @@ impl NdtManager {
     }
 
     /// Set target (map) point cloud
-    pub fn set_target(&mut self, points: &[[f32; 3]]) -> Result<()> {
+    pub(crate) fn set_target(&mut self, points: &[[f32; 3]]) -> Result<()> {
         log_info!(LOGGER_NAME, "Setting target with {} points", points.len());
         let result = self.matcher.set_target(points);
         if let Some(grid) = self.matcher.target_grid() {
@@ -209,12 +208,12 @@ impl NdtManager {
     }
 
     /// Check if a target has been set
-    pub fn has_target(&self) -> bool {
+    pub(crate) fn has_target(&self) -> bool {
         self.matcher.has_target()
     }
 
     /// Align source points to target with initial guess
-    pub fn align(
+    pub(crate) fn align(
         &mut self,
         source_points: &[[f32; 3]],
         _target_points: &[[f32; 3]], // Not needed, we use stored target
@@ -280,7 +279,7 @@ impl NdtManager {
     ///
     /// Only available with the `debug-output` feature.
     #[cfg(feature = "debug-output")]
-    pub fn align_with_debug(
+    pub(crate) fn align_with_debug(
         &mut self,
         source_points: &[[f32; 3]],
         _target_points: &[[f32; 3]], // Not needed, we use stored target
@@ -362,7 +361,7 @@ impl NdtManager {
     }
 
     /// Evaluate NVTL score at a given pose
-    pub fn evaluate_nvtl(
+    pub(crate) fn evaluate_nvtl(
         &self,
         source_points: &[[f32; 3]],
         _target_points: &[[f32; 3]], // Not needed, we use stored target
@@ -374,7 +373,7 @@ impl NdtManager {
     }
 
     /// Evaluate transform probability at a given pose
-    pub fn evaluate_transform_probability(
+    pub(crate) fn evaluate_transform_probability(
         &self,
         source_points: &[[f32; 3]],
         pose: &Pose,
@@ -388,7 +387,7 @@ impl NdtManager {
     ///
     /// This is optimized for multi-NDT covariance estimation where we need
     /// to evaluate NVTL at many offset poses quickly.
-    pub fn evaluate_nvtl_batch(
+    pub(crate) fn evaluate_nvtl_batch(
         &mut self,
         source_points: &[[f32; 3]],
         poses: &[Pose],
@@ -404,7 +403,7 @@ impl NdtManager {
     ///
     /// Prefers GPU batch alignment when available (shares voxel data across
     /// all alignments). Falls back to CPU parallel (Rayon) if GPU fails.
-    pub fn align_batch(
+    pub(crate) fn align_batch(
         &self,
         source_points: &[[f32; 3]],
         initial_poses: &[Pose],
@@ -449,7 +448,7 @@ impl NdtManager {
     ///
     /// When regularization is enabled, this pose is used to penalize deviation
     /// in the vehicle's longitudinal direction, helping prevent drift in open areas.
-    pub fn set_regularization_pose(&mut self, pose: &Pose) {
+    pub(crate) fn set_regularization_pose(&mut self, pose: &Pose) {
         let isometry = pose_to_isometry(pose);
         self.matcher.set_regularization_pose(isometry);
         log_debug!(
@@ -462,13 +461,13 @@ impl NdtManager {
     }
 
     /// Clear the regularization reference pose.
-    pub fn clear_regularization_pose(&mut self) {
+    pub(crate) fn clear_regularization_pose(&mut self) {
         self.matcher.clear_regularization_pose();
         log_debug!(LOGGER_NAME, "Regularization pose cleared");
     }
 
     /// Check if regularization is enabled.
-    pub fn is_regularization_enabled(&self) -> bool {
+    pub(crate) fn is_regularization_enabled(&self) -> bool {
         self.matcher.is_regularization_enabled()
     }
 
@@ -477,7 +476,8 @@ impl NdtManager {
     /// Returns transformed points in map frame and their max NDT scores.
     /// This is used to create colored point cloud visualizations showing
     /// alignment quality at each point.
-    pub fn compute_per_point_scores_for_visualization(
+    #[cfg(feature = "debug-markers")]
+    pub(crate) fn compute_per_point_scores_for_visualization(
         &mut self,
         source_points: &[[f32; 3]],
         pose: &Pose,
@@ -498,7 +498,7 @@ impl NdtManager {
     ///
     /// # Returns
     /// * Vector of alignment results, one per scan
-    pub fn align_batch_scans(
+    pub(crate) fn align_batch_scans(
         &self,
         scans: &[(&[[f32; 3]], Isometry3<f64>)],
     ) -> Result<Vec<ndt_cuda::AlignResult>> {

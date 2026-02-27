@@ -48,7 +48,7 @@ struct TimestampedTransform {
 /// Subscribes to `/tf` and `/tf_static` and maintains a buffer of transforms
 /// for lookup operations.
 #[allow(dead_code)]
-pub struct TfHandler {
+pub(crate) struct TfHandler {
     /// Transform buffer: (parent_frame, child_frame) -> transform
     /// Multiple transforms can exist for the same frame pair (at different times)
     buffer: Arc<RwLock<TransformBuffer>>,
@@ -62,7 +62,7 @@ pub struct TfHandler {
 
 impl TfHandler {
     /// Create a new TF handler with subscriptions to /tf and /tf_static.
-    pub fn new(node: &Node) -> anyhow::Result<Arc<Self>> {
+    pub(crate) fn new(node: &Node) -> anyhow::Result<Arc<Self>> {
         let buffer = Arc::new(RwLock::new(HashMap::new()));
 
         // Create subscriptions
@@ -131,7 +131,7 @@ impl TfHandler {
     ///
     /// # Returns
     /// The transform if found, None otherwise.
-    pub fn lookup_transform(
+    pub(crate) fn lookup_transform(
         &self,
         source_frame: &str,
         target_frame: &str,
@@ -262,7 +262,7 @@ impl TfHandler {
     ///
     /// # Returns
     /// Transformed points if transform is available, None otherwise.
-    pub fn transform_points(
+    pub(crate) fn transform_points(
         &self,
         points: &[[f32; 3]],
         source_frame: &str,
@@ -289,20 +289,20 @@ impl TfHandler {
 
     /// Check if a transform is available between two frames.
     #[allow(dead_code)]
-    pub fn can_transform(&self, source_frame: &str, target_frame: &str) -> bool {
+    pub(crate) fn can_transform(&self, source_frame: &str, target_frame: &str) -> bool {
         self.lookup_transform(source_frame, target_frame, None)
             .is_some()
     }
 
     /// Get the number of frame pairs in the buffer.
     #[allow(dead_code)]
-    pub fn buffer_size(&self) -> usize {
+    pub(crate) fn buffer_size(&self) -> usize {
         self.buffer.read().len()
     }
 
     /// Get all available frames.
     #[allow(dead_code)]
-    pub fn get_frames(&self) -> Vec<String> {
+    pub(crate) fn get_frames(&self) -> Vec<String> {
         let buf = self.buffer.read();
         let mut frames: std::collections::HashSet<String> = std::collections::HashSet::new();
 

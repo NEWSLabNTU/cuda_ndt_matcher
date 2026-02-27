@@ -9,36 +9,36 @@ use rand_distr::{Distribution, Normal, Uniform};
 use std::f64::consts::PI;
 
 /// Input dimension indices
-pub const TRANS_X: usize = 0;
-pub const TRANS_Y: usize = 1;
-pub const TRANS_Z: usize = 2;
-pub const ANGLE_X: usize = 3; // roll
-pub const ANGLE_Y: usize = 4; // pitch
-pub const ANGLE_Z: usize = 5; // yaw
+pub(crate) const TRANS_X: usize = 0;
+pub(crate) const TRANS_Y: usize = 1;
+pub(crate) const TRANS_Z: usize = 2;
+pub(crate) const ANGLE_X: usize = 3; // roll
+pub(crate) const ANGLE_Y: usize = 4; // pitch
+pub(crate) const ANGLE_Z: usize = 5; // yaw
 
 /// Number of input dimensions (6D pose)
-pub const INPUT_DIM: usize = 6;
+pub(crate) const INPUT_DIM: usize = 6;
 
 /// A 6D input vector for pose optimization
-pub type Input = [f64; INPUT_DIM];
+pub(crate) type Input = [f64; INPUT_DIM];
 
 /// A trial stores an input and its associated score
 #[derive(Debug, Clone)]
-pub struct Trial {
-    pub input: Input,
-    pub score: f64,
+pub(crate) struct Trial {
+    pub(crate) input: Input,
+    pub(crate) score: f64,
 }
 
 /// Optimization direction
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Direction {
+pub(crate) enum Direction {
     Maximize,
     #[allow(dead_code)]
     Minimize,
 }
 
 /// Tree-Structured Parzen Estimator for pose optimization
-pub struct TreeStructuredParzenEstimator {
+pub(crate) struct TreeStructuredParzenEstimator {
     direction: Direction,
     n_startup_trials: i64,
     mean: Input,
@@ -56,7 +56,12 @@ impl TreeStructuredParzenEstimator {
     /// * `n_startup_trials` - Number of random trials before TPE-guided search
     /// * `mean` - Initial mean for sampling distributions
     /// * `stddev` - Initial standard deviation for sampling distributions
-    pub fn new(direction: Direction, n_startup_trials: i64, mean: Input, stddev: Input) -> Self {
+    pub(crate) fn new(
+        direction: Direction,
+        n_startup_trials: i64,
+        mean: Input,
+        stddev: Input,
+    ) -> Self {
         // Base standard deviations for stable NDT convergence
         let base_stddev = [
             0.25,                 // TRANS_X: 0.25m
@@ -79,7 +84,7 @@ impl TreeStructuredParzenEstimator {
     }
 
     /// Add a trial result
-    pub fn add_trial(&mut self, trial: Trial) {
+    pub(crate) fn add_trial(&mut self, trial: Trial) {
         self.trials.push(trial);
         // Sort trials by score (best first based on direction)
         match self.direction {
@@ -101,7 +106,7 @@ impl TreeStructuredParzenEstimator {
     }
 
     /// Get the next input to evaluate
-    pub fn get_next_input(&mut self) -> Input {
+    pub(crate) fn get_next_input(&mut self) -> Input {
         let above_num = self.compute_above_num();
 
         // Phase 1: Random sampling during startup
@@ -241,7 +246,14 @@ fn log_sum_exp(values: &[f64]) -> f64 {
 }
 
 /// Create input from pose components
-pub fn pose_components_to_input(x: f64, y: f64, z: f64, roll: f64, pitch: f64, yaw: f64) -> Input {
+pub(crate) fn pose_components_to_input(
+    x: f64,
+    y: f64,
+    z: f64,
+    roll: f64,
+    pitch: f64,
+    yaw: f64,
+) -> Input {
     [x, y, z, roll, pitch, yaw]
 }
 

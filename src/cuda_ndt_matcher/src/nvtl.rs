@@ -10,19 +10,20 @@
 //! 4. Compute Gaussian score using Mahalanobis distance to each voxel
 //! 5. Take max score per point, average across all points
 
-// Allow dead_code: This is an alternative CPU-only NVTL implementation kept for
-// reference and testing. The primary implementation is in ndt_cuda::scoring::nvtl.
+// CPU-only NVTL reference implementation. The primary implementation is in
+// ndt_cuda::scoring::nvtl (GPU-accelerated). This entire module is kept for
+// reference and testing; none of its items are called from the binary.
 #![allow(dead_code)]
 
 use nalgebra::{Matrix3, Vector3};
 use std::collections::HashMap;
 
 /// Configuration for NVTL computation
-pub struct NvtlConfig {
+pub(crate) struct NvtlConfig {
     /// Voxel resolution (same as NDT resolution)
-    pub resolution: f64,
+    pub(crate) resolution: f64,
     /// Outlier ratio for Gaussian parameters (Autoware default: 0.55)
-    pub outlier_ratio: f64,
+    pub(crate) outlier_ratio: f64,
 }
 
 impl Default for NvtlConfig {
@@ -190,14 +191,14 @@ impl NdtVoxelGrid {
 ///
 /// Build this once for the target (map) point cloud, then reuse for
 /// scoring multiple candidate poses.
-pub struct NvtlVoxelGrid {
+pub(crate) struct NvtlVoxelGrid {
     grid: NdtVoxelGrid,
     gauss: GaussParams,
 }
 
 impl NvtlVoxelGrid {
     /// Create a new NVTL voxel grid from target points
-    pub fn new(target_points: &[[f32; 3]], config: &NvtlConfig) -> Self {
+    pub(crate) fn new(target_points: &[[f32; 3]], config: &NvtlConfig) -> Self {
         Self {
             grid: NdtVoxelGrid::new(target_points, config.resolution),
             gauss: GaussParams::new(config.resolution, config.outlier_ratio),
@@ -205,7 +206,7 @@ impl NvtlVoxelGrid {
     }
 
     /// Compute NVTL score for transformed source points
-    pub fn compute_score(&self, transformed_source: &[[f32; 3]]) -> f64 {
+    pub(crate) fn compute_score(&self, transformed_source: &[[f32; 3]]) -> f64 {
         if transformed_source.is_empty() {
             return 0.0;
         }
@@ -228,7 +229,7 @@ impl NvtlVoxelGrid {
     }
 
     /// Compute NVTL score for source points transformed by a pose
-    pub fn compute_score_with_pose(
+    pub(crate) fn compute_score_with_pose(
         &self,
         source_points: &[[f32; 3]],
         pose: &geometry_msgs::msg::Pose,
@@ -247,7 +248,7 @@ impl NvtlVoxelGrid {
 ///
 /// # Returns
 /// * NVTL score (higher = better alignment), typically in range [0, ~5]
-pub fn compute_nvtl(
+pub(crate) fn compute_nvtl(
     transformed_source: &[[f32; 3]],
     target_points: &[[f32; 3]],
     config: &NvtlConfig,
@@ -283,7 +284,7 @@ pub fn compute_nvtl(
 /// * `pose` - Transformation pose
 /// * `target_points` - Target (map) points
 /// * `config` - NVTL configuration
-pub fn compute_nvtl_with_pose(
+pub(crate) fn compute_nvtl_with_pose(
     source_points: &[[f32; 3]],
     pose: &geometry_msgs::msg::Pose,
     target_points: &[[f32; 3]],
