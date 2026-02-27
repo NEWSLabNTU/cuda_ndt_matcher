@@ -1,0 +1,34 @@
+# nextest configuration
+# See: https://nexte.st/book/configuration.html
+
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 2 }
+fail-fast = false
+
+[profile.default.junit]
+path = "junit.xml"
+store-success-output = false
+store-failure-output = true
+
+# GPU tests must run sequentially — CubeCL/CUDA GPU state is shared
+# and concurrent GPU kernel launches cause flaky failures.
+[test-groups.gpu]
+max-threads = 1
+
+# cuda_ffi tests call CUDA kernels and share GPU device context
+[[profile.default.overrides]]
+filter = "package(cuda_ffi)"
+test-group = "gpu"
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+# ndt_cuda GPU-heavy tests (voxel grid pipeline, scoring pipeline, etc.)
+# get longer timeouts — multi_grid_align_with_offset takes ~67s
+[[profile.default.overrides]]
+filter = "package(ndt_cuda)"
+test-group = "gpu"
+slow-timeout = { period = "120s", terminate-after = 2 }
+
+# CI profile: fail on first failure
+[profile.ci]
+slow-timeout = { period = "30s", terminate-after = 2 }
+fail-fast = true

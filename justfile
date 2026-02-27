@@ -73,6 +73,14 @@ setup:
         echo "  GNU Parallel: $(parallel --version | head -1)"
     fi
 
+    # Check cargo-nextest (required for test recipes)
+    if ! command -v cargo-nextest &> /dev/null; then
+        echo "  WARN: cargo-nextest not found (needed for 'just test')"
+        echo "        Install via: cargo install cargo-nextest --locked"
+    else
+        echo "  cargo-nextest: $(cargo nextest --version 2>/dev/null | head -1)"
+    fi
+
     # Check direnv (optional but recommended)
     if ! command -v direnv &> /dev/null; then
         echo "  WARN: direnv not found (optional, recommended for environment setup)"
@@ -156,16 +164,16 @@ lint-cuda-ndt-matcher:
 test-rust:
     #!/usr/bin/env bash
     source {{local_setup}}
-    cargo test \
+    cargo nextest run \
         --manifest-path {{manifest}} \
         --config {{cargo_config}} \
-        --all-targets
+        --workspace
 
 # Test ndt_cuda crate only
 test-ndt-cuda:
     #!/usr/bin/env bash
     source {{local_setup}}
-    cargo test \
+    cargo nextest run \
         --manifest-path {{manifest}} \
         --config {{cargo_config}} \
         -p ndt_cuda
@@ -174,13 +182,13 @@ test-ndt-cuda:
 test-cuda-ffi:
     #!/usr/bin/env bash
     source {{local_setup}}
-    cargo test --manifest-path {{manifest}} --config {{cargo_config}} -p cuda_ffi
+    cargo nextest run --manifest-path {{manifest}} --config {{cargo_config}} -p cuda_ffi
 
 # Test cuda_ndt_matcher crate only
 test-cuda-ndt-matcher:
     #!/usr/bin/env bash
     source {{local_setup}}
-    cargo test --manifest-path {{manifest}} --config {{cargo_config}} -p cuda_ndt_matcher
+    cargo nextest run --manifest-path {{manifest}} --config {{cargo_config}} -p cuda_ndt_matcher
 
 # Run Rust unit tests only (fast)
 test: test-rust
