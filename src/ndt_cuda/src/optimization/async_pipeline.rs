@@ -855,7 +855,8 @@ mod tests {
         // Submit
         pipeline.submit(&requests).unwrap();
 
-        // Poll until complete
+        // Poll until complete (with real time-based timeout)
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         let mut poll_count = 0;
         loop {
             match pipeline.poll().unwrap() {
@@ -866,10 +867,10 @@ mod tests {
                 }
                 None => {
                     poll_count += 1;
-                    if poll_count > 10000 {
-                        panic!("Poll timeout");
+                    if std::time::Instant::now() > deadline {
+                        panic!("Poll timeout after {poll_count} polls");
                     }
-                    std::hint::spin_loop();
+                    std::thread::yield_now();
                 }
             }
         }
