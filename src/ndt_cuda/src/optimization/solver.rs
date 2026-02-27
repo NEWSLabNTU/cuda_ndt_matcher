@@ -1193,7 +1193,6 @@ mod tests {
     // to verify functionality in isolation.
 
     #[test]
-    #[ignore = "Flaky in full test suite due to CubeCL GPU state - passes individually"]
     fn test_align_full_gpu_identity() {
         use rand::SeedableRng;
         let mut rng = rand::rngs::StdRng::seed_from_u64(123);
@@ -1245,7 +1244,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Flaky in full test suite due to CubeCL GPU state - passes individually"]
     fn test_align_full_gpu_vs_cpu() {
         // Test that GPU and CPU paths produce similar results
         use rand::SeedableRng;

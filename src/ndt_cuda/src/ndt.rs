@@ -1719,7 +1719,8 @@ mod tests {
     macro_rules! require_cuda {
         () => {
             if !crate::runtime::is_cuda_available() {
-                panic!("CUDA is not available — this test requires a CUDA GPU");
+                eprintln!("SKIP: CUDA not available");
+                return;
             }
         };
     }
@@ -1868,7 +1869,6 @@ mod tests {
 
     /// Test that GPU-enabled alignment produces similar results to CPU-only alignment.
     #[test]
-    #[ignore = "Flaky in full test suite due to CubeCL GPU state - passes individually"]
     fn test_gpu_cpu_alignment_consistency() {
         require_cuda!();
 

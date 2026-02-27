@@ -861,9 +861,19 @@ fn solve_newton_step(hessian_flat: &[f64; 36], gradient: &[f64; 6]) -> Result<[f
 mod tests {
 
     use super::*;
+
+    macro_rules! require_cuda {
+        () => {
+            if !crate::runtime::is_cuda_available() {
+                eprintln!("SKIP: CUDA not available");
+                return;
+            }
+        };
+    }
+
     #[test]
-    #[ignore = "requires CUDA GPU"]
     fn test_pipeline_creation() {
+        require_cuda!();
         let config = GpuInitialPoseConfig {
             max_points: 1000,
             max_voxels: 10000,
@@ -914,8 +924,8 @@ mod tests {
         crate::test_println!("Total memory: {:.2} MB", mem.total_mb());
     }
     #[test]
-    #[ignore = "requires CUDA GPU"]
     fn test_evaluate_batch_empty() {
+        require_cuda!();
         let config = GpuInitialPoseConfig {
             max_points: 100,
             max_voxels: 1000,

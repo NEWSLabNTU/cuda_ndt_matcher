@@ -980,7 +980,8 @@ mod tests {
     macro_rules! require_cuda {
         () => {
             if !is_cuda_available() {
-                panic!("CUDA is not available — this test requires a CUDA GPU");
+                eprintln!("SKIP: CUDA not available");
+                return;
             }
         };
     }
