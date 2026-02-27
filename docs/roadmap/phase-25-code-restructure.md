@@ -1,7 +1,7 @@
 # Phase 25: Code Restructure & Quality
 
-**Status**: Planned
-**Date**: 2026-01-28 (updated 2026-02-25)
+**Status**: In Progress (25.1–25.6 complete, 25.7–25.8 remaining)
+**Date**: 2026-01-28 (updated 2026-02-27)
 
 ## Motivation
 
@@ -25,28 +25,64 @@ The codebase has grown organically and needs both structural reorganization and 
 - Make CPU/GPU implementations explicit where both exist
 - Improve error handling and test visibility across all crates
 
-## Current Structure
+## Current Structure (post-25.6)
 
 ```
 src/cuda_ndt_matcher/src/
-├── main.rs              (1,934 lines) ← TOO BIG
-├── covariance.rs        (703 lines)
-├── diagnostics.rs       (446 lines)
-├── dual_ndt_manager.rs  (468 lines)
-├── initial_pose.rs      (527 lines)
-├── map_module.rs        (836 lines)   ← Contains two distinct components
-├── ndt_manager.rs       (554 lines)
-├── nvtl.rs              (413 lines)
-├── params.rs            (440 lines)
-├── particle.rs          (79 lines)    ← Only used by initial_pose
-├── pointcloud.rs        (419 lines)   ← Has both CPU and GPU paths
-├── pose_buffer.rs       (464 lines)
-├── scan_queue.rs        (457 lines)
-├── tf_handler.rs        (396 lines)
-├── tpe.rs               (303 lines)   ← Only used by initial_pose
-└── visualization.rs     (709 lines)
+├── main.rs                    (33 lines)  - Entry point only
+│
+├── node/                      - ROS node components
+│   ├── mod.rs
+│   ├── state.rs               - NdtScanMatcherNode struct
+│   ├── init.rs                - new() initialization
+│   ├── callbacks.rs           - on_points() callback
+│   ├── services.rs            - Service handlers
+│   ├── publishers.rs          - Debug publishers, TF
+│   └── processing.rs          - Alignment processing logic
+│
+├── alignment/                 - NDT alignment (GPU path)
+│   ├── mod.rs
+│   ├── manager.rs             ← ndt_manager.rs
+│   ├── dual_manager.rs        ← dual_ndt_manager.rs
+│   ├── covariance.rs          ← covariance.rs
+│   └── batch.rs               ← scan_queue.rs
+│
+├── initial_pose/              - Initial pose estimation
+│   ├── mod.rs
+│   ├── estimator.rs           ← initial_pose.rs
+│   ├── tpe.rs                 ← tpe.rs
+│   └── particle.rs            ← particle.rs
+│
+├── map/                       - Map management (CPU)
+│   ├── mod.rs
+│   ├── tiles.rs               ← map_module.rs (MapUpdateModule)
+│   └── loader.rs              ← map_module.rs (DynamicMapLoader)
+│
+├── transform/                 - Spatial transforms (CPU)
+│   ├── mod.rs
+│   ├── tf_handler.rs          ← tf_handler.rs
+│   ├── pose_buffer.rs         ← pose_buffer.rs
+│   └── pose_utils.rs          ← pose_utils.rs
+│
+├── scoring/                   - Scoring reference (CPU)
+│   ├── mod.rs
+│   └── nvtl.rs                ← nvtl.rs
+│
+├── io/                        - I/O utilities
+│   ├── mod.rs
+│   ├── pointcloud/            - Explicit CPU/GPU split
+│   │   ├── mod.rs             re-exports from cpu + gpu
+│   │   ├── cpu.rs             PointCloud2 parsing/construction
+│   │   └── gpu.rs             GPU-accelerated filtering + CPU fallback
+│   ├── params.rs              ← params.rs
+│   ├── diagnostics.rs         ← diagnostics.rs
+│   └── debug_writer.rs        ← debug_writer.rs
+│
+└── visualization/             - Debug visualization (CPU)
+    ├── mod.rs
+    └── markers.rs             ← visualization.rs
 
-Total: 9,148 lines across 16 files
+33 files, 8 module declarations in main.rs
 ```
 
 ## Target Structure
@@ -169,9 +205,11 @@ Split the 1,934-line `main.rs` into the `node/` module hierarchy.
 
 ---
 
-### 25.5 Reorganize Module Structure
+### 25.5 Reorganize Module Structure ✓
 
 Move flat files into hierarchical directories using `git mv`.
+
+**Completed**: 2026-02-27
 
 | Current               | New Location                     |
 |-----------------------|----------------------------------|
@@ -186,29 +224,33 @@ Move flat files into hierarchical directories using `git mv`.
 | `tf_handler.rs`       | `transform/tf_handler.rs`        |
 | `pose_buffer.rs`      | `transform/pose_buffer.rs`       |
 | `nvtl.rs`             | `scoring/nvtl.rs`                |
-| `pointcloud.rs`       | `io/pointcloud/`                 |
+| `pointcloud.rs`       | `io/pointcloud.rs`               |
 | `params.rs`           | `io/params.rs`                   |
 | `diagnostics.rs`      | `io/diagnostics.rs`              |
 | `visualization.rs`    | `visualization/markers.rs`       |
 
 **Criteria**:
-- [ ] All files moved to new locations with `git mv`
-- [ ] `mod` declarations and `use` imports updated throughout
-- [ ] Module visibility set: `node/` internal, others `pub(crate)` or `pub` as appropriate
-- [ ] `map_module.rs` split into `map/tiles.rs` (`MapUpdateModule`) and `map/loader.rs` (`DynamicMapLoader`)
-- [ ] All tests pass
-- [ ] No functionality changes
+- [x] All 16 files moved to new locations with `git mv` (preserving history)
+- [x] `mod` declarations and `use` imports updated throughout (~15 files)
+- [x] Module visibility set: `node/` internal, others `pub(crate)`; 7 `mod.rs` files with re-exports
+- [x] `map_module.rs` split into `map/tiles.rs` (`MapUpdateModule`, tests) and `map/loader.rs` (`DynamicMapLoader`)
+- [x] `main.rs` reduced from 18 mod declarations to 8
+- [x] All 64 tests pass, zero warnings
+- [x] No functionality changes
 
 ---
 
-### 25.6 Split Dual CPU/GPU Implementations
+### 25.6 Split Dual CPU/GPU Implementations ✓
 
 Make CPU and GPU code paths explicit in modules that have both.
 
+**Completed**: 2026-02-27
+
 **Criteria**:
-- [ ] **pointcloud split**: `io/pointcloud/cpu.rs` (conversion, filtering) and `io/pointcloud/gpu.rs` (GPU-accelerated filtering) created; `io/pointcloud/mod.rs` re-exports and auto-selects
-- [ ] CPU/GPU paths clearly identifiable by file location
-- [ ] All tests pass
+- [x] **pointcloud split**: `io/pointcloud/cpu.rs` (PointCloud2 parsing/construction, 2 tests) and `io/pointcloud/gpu.rs` (GPU-accelerated filtering with CPU fallback, 4 tests) created; `io/pointcloud/mod.rs` re-exports all public items
+- [x] CPU/GPU paths clearly identifiable by file location
+- [x] All 64 tests pass, zero warnings
+- [x] No functionality changes — callers still use `pointcloud::from_pointcloud2()` etc. via re-exports
 
 ---
 
@@ -316,14 +358,14 @@ just lint
 
 ## Success Criteria
 
-- [ ] `main.rs` reduced to ~50 lines
-- [ ] All modules in logical hierarchical structure
-- [ ] CPU/GPU paths clearly identifiable
-- [ ] `just build` succeeds
-- [ ] `just test` passes (all 417+ tests)
-- [ ] `just lint` passes with no new warnings
-- [ ] No `#![allow(dead_code)]` at module level
-- [ ] No `#[allow(clippy::too_many_arguments)]` on `on_points()`
-- [ ] Zero bare `TODO` in production code paths
-- [ ] `package.xml` files have real maintainer info
-- [ ] No functionality changes
+- [x] `main.rs` reduced to ~50 lines (33 lines)
+- [x] All modules in logical hierarchical structure (8 directories, 33 files)
+- [x] CPU/GPU paths clearly identifiable (`io/pointcloud/cpu.rs` vs `gpu.rs`)
+- [x] `just build` succeeds
+- [x] `just test` passes (all 417+ tests)
+- [x] `just lint` passes with no new warnings
+- [x] No `#![allow(dead_code)]` at module level
+- [x] No `#[allow(clippy::too_many_arguments)]` on `on_points()`
+- [ ] Zero bare `TODO` in production code paths (25.8)
+- [x] `package.xml` files have real maintainer info
+- [x] No functionality changes
