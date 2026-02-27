@@ -15,19 +15,25 @@
 //! ```
 
 use anyhow::Result;
-use cubecl::client::ComputeClient;
-use cubecl::cuda::{CudaDevice, CudaRuntime};
-use cubecl::prelude::*;
-
-use crate::derivatives::DistanceMetric;
-use crate::derivatives::gpu::{
-    GpuVoxelData, MAX_NEIGHBORS, compute_ndt_gradient_kernel,
-    compute_ndt_gradient_point_to_plane_kernel, compute_ndt_hessian_kernel,
-    compute_ndt_nvtl_kernel, compute_ndt_score_kernel, compute_ndt_score_point_to_plane_kernel,
-    compute_point_hessians_cpu, compute_point_jacobians_cpu, pose_to_transform_matrix,
-    radius_search_kernel,
+use cubecl::{
+    client::ComputeClient,
+    cuda::{CudaDevice, CudaRuntime},
+    prelude::*,
 };
-use crate::voxel_grid::kernels::transform_points_kernel;
+
+use crate::{
+    derivatives::{
+        DistanceMetric,
+        gpu::{
+            GpuVoxelData, MAX_NEIGHBORS, compute_ndt_gradient_kernel,
+            compute_ndt_gradient_point_to_plane_kernel, compute_ndt_hessian_kernel,
+            compute_ndt_nvtl_kernel, compute_ndt_score_kernel,
+            compute_ndt_score_point_to_plane_kernel, compute_point_hessians_cpu,
+            compute_point_jacobians_cpu, pose_to_transform_matrix, radius_search_kernel,
+        },
+    },
+    voxel_grid::kernels::transform_points_kernel,
+};
 
 /// Type alias for CUDA compute client
 type CudaClient = ComputeClient<<CudaRuntime as Runtime>::Server>;
@@ -1148,9 +1154,11 @@ mod tests {
     fn test_cpu_vs_gpu_derivatives() {
         require_cuda!();
 
-        use crate::derivatives::{GpuVoxelData, compute_derivatives_cpu};
-        use crate::test_utils::make_half_cubic_pcd;
-        use crate::voxel_grid::VoxelGrid;
+        use crate::{
+            derivatives::{GpuVoxelData, compute_derivatives_cpu},
+            test_utils::make_half_cubic_pcd,
+            voxel_grid::VoxelGrid,
+        };
 
         // Create a simple point cloud for both target and source
         let target_points = make_half_cubic_pcd(10.0, 0.5); // 10m sides, 0.5m spacing
@@ -1305,8 +1313,10 @@ mod tests {
     fn test_cpu_vs_gpu_single_point_single_voxel() {
         require_cuda!();
 
-        use crate::derivatives::{GpuVoxelData, compute_derivatives_cpu};
-        use crate::voxel_grid::VoxelGrid;
+        use crate::{
+            derivatives::{GpuVoxelData, compute_derivatives_cpu},
+            voxel_grid::VoxelGrid,
+        };
 
         // Create a minimal test case: points clustered at origin
         let target_points: Vec<[f32; 3]> = (0..20)

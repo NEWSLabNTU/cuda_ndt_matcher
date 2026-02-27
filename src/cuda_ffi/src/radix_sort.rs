@@ -3,8 +3,7 @@
 //! Provides GPU-accelerated radix sort for (u64, u32) key-value pairs,
 //! used for sorting points by Morton code in voxel grid construction.
 
-use std::ffi::c_int;
-use std::ptr;
+use std::{ffi::c_int, ptr};
 use thiserror::Error;
 
 // ============================================================================

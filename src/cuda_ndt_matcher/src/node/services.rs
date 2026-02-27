@@ -10,13 +10,14 @@ use super::state::{
     DebugPublishers, NODE_NAME, NdtScanMatcherNode, PoseWithCovSrvRequest, PoseWithCovSrvResponse,
     TriggerResponse,
 };
-use crate::alignment::DualNdtManager;
-use crate::initial_pose;
-use crate::io::params::NdtParams;
-use crate::io::pointcloud;
-use crate::map::MapUpdateModule;
-use crate::transform::SmartPoseBuffer;
-use crate::visualization::{self, ParticleMarkerConfig};
+use crate::{
+    alignment::DualNdtManager,
+    initial_pose,
+    io::{params::NdtParams, pointcloud},
+    map::MapUpdateModule,
+    transform::SmartPoseBuffer,
+    visualization::{self, ParticleMarkerConfig},
+};
 
 /// Handle NDT align service request
 /// This service is called by pose_initializer with an initial pose guess.

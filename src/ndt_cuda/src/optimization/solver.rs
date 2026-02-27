@@ -10,18 +10,22 @@
 use nalgebra::{Isometry3, Matrix6, Vector6};
 use tracing::{debug, warn};
 
-use super::full_gpu_pipeline_v2::{FullGpuPipelineV2, PipelineV2Config};
-use super::line_search::{LineSearchConfig, directional_derivative};
-use super::more_thuente::{MoreThuenteConfig, more_thuente_search};
-use super::newton::{condition_number, newton_step_negative_definite};
-use super::regularization::{RegularizationConfig, RegularizationTerm};
-use super::types::{
-    ConvergenceStatus, NdtConfig, NdtResult, apply_pose_delta, isometry_to_pose_vector,
-    pose_vector_to_isometry,
+use super::{
+    full_gpu_pipeline_v2::{FullGpuPipelineV2, PipelineV2Config},
+    line_search::{LineSearchConfig, directional_derivative},
+    more_thuente::{MoreThuenteConfig, more_thuente_search},
+    newton::{condition_number, newton_step_negative_definite},
+    regularization::{RegularizationConfig, RegularizationTerm},
+    types::{
+        ConvergenceStatus, NdtConfig, NdtResult, apply_pose_delta, isometry_to_pose_vector,
+        pose_vector_to_isometry,
+    },
 };
-use crate::derivatives::{GaussianParams, GpuVoxelData, compute_derivatives_cpu_with_metric};
-use crate::scoring::nvtl::compute_nvtl_simple;
-use crate::voxel_grid::VoxelGrid;
+use crate::{
+    derivatives::{GaussianParams, GpuVoxelData, compute_derivatives_cpu_with_metric},
+    scoring::nvtl::compute_nvtl_simple,
+    voxel_grid::VoxelGrid,
+};
 
 /// Configuration for the optimization process.
 #[derive(Debug, Clone)]

@@ -86,8 +86,10 @@ pub struct GpuPointFilter {
 impl GpuPointFilter {
     /// Create a new GPU point filter.
     pub fn new() -> Result<Self> {
-        use cubecl::cuda::{CudaDevice, CudaRuntime};
-        use cubecl::prelude::Runtime;
+        use cubecl::{
+            cuda::{CudaDevice, CudaRuntime},
+            prelude::Runtime,
+        };
 
         let device = CudaDevice::new(0);
         let client = CudaRuntime::client(&device);

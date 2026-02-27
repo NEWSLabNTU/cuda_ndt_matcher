@@ -10,15 +10,16 @@
 //! on GPU when `use_gpu_batch_startup` is enabled. This provides significant
 //! speedup since TPE doesn't use trial data during the startup phase anyway.
 
-use super::particle::{Particle, select_best_particle};
-use super::tpe::{
-    ANGLE_X, ANGLE_Y, ANGLE_Z, Direction, Input, TRANS_X, TRANS_Y, TRANS_Z,
-    TreeStructuredParzenEstimator, Trial, pose_components_to_input,
+use super::{
+    particle::{Particle, select_best_particle},
+    tpe::{
+        ANGLE_X, ANGLE_Y, ANGLE_Z, Direction, Input, TRANS_X, TRANS_Y, TRANS_Z,
+        TreeStructuredParzenEstimator, Trial, pose_components_to_input,
+    },
 };
-use crate::alignment::NdtManager;
 #[cfg(feature = "debug-output")]
 use crate::io::debug_writer;
-use crate::io::params::InitialPoseParams;
+use crate::{alignment::NdtManager, io::params::InitialPoseParams};
 use geometry_msgs::msg::{Point, Pose, PoseWithCovariance, PoseWithCovarianceStamped, Quaternion};
 use nalgebra::UnitQuaternion;
 use rclrs::log_debug;

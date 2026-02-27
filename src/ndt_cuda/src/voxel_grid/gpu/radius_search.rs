@@ -288,8 +288,7 @@ pub fn radius_search_brute_force_cpu(
 
 #[cfg(test)]
 mod tests {
-    use super::super::morton::morton_decode_3d;
-    use super::*;
+    use super::{super::morton::morton_decode_3d, *};
     use std::collections::HashSet;
 
     #[test]

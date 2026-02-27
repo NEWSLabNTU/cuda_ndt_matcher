@@ -9,9 +9,10 @@
 
 use std::sync::Arc;
 
-use cudarc::cusolver::safe::DnHandle;
-use cudarc::cusolver::sys as cusolver_sys;
-use cudarc::driver::{CudaContext, CudaSlice, CudaStream, DevicePtr, DevicePtrMut};
+use cudarc::{
+    cusolver::{safe::DnHandle, sys as cusolver_sys},
+    driver::{CudaContext, CudaSlice, CudaStream, DevicePtr, DevicePtrMut},
+};
 use thiserror::Error;
 
 /// Errors from GPU Newton solver operations.

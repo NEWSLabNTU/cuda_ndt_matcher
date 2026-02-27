@@ -27,10 +27,12 @@
 //! ```
 
 use anyhow::{Context, Result};
-use cubecl::client::ComputeClient;
-use cubecl::cuda::{CudaDevice, CudaRuntime};
-use cubecl::prelude::*;
-use cubecl::server::Handle;
+use cubecl::{
+    client::ComputeClient,
+    cuda::{CudaDevice, CudaRuntime},
+    prelude::*,
+    server::Handle,
+};
 
 use super::gpu::{compute_scores_batch_kernel, pose_to_transform_matrix_f32};
 use crate::derivatives::gpu::GpuVoxelData;
@@ -643,9 +645,11 @@ impl GpuScoringPipeline {
 mod tests {
 
     use super::*;
-    use crate::derivatives::GaussianParams;
-    use crate::scoring::{NvtlConfig, compute_nvtl, compute_transform_probability};
-    use crate::voxel_grid::VoxelGrid;
+    use crate::{
+        derivatives::GaussianParams,
+        scoring::{NvtlConfig, compute_nvtl, compute_transform_probability},
+        voxel_grid::VoxelGrid,
+    };
     use approx::assert_relative_eq;
     use nalgebra::Isometry3;
 

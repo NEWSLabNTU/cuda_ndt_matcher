@@ -22,8 +22,7 @@ use crate::io::params::DynamicMapParams;
 use geometry_msgs::msg::Point;
 use parking_lot::RwLock;
 use rclrs::log_debug;
-use std::collections::HashMap;
-use std::time::Instant;
+use std::{collections::HashMap, time::Instant};
 
 pub(super) const LOGGER_NAME: &str = "ndt_scan_matcher.map_module";
 

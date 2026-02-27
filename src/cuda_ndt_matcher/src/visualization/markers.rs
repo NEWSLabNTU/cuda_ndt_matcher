@@ -22,8 +22,7 @@ use ndt_cuda::scoring::nvtl::{NvtlConfig, compute_nvtl};
 use sensor_msgs::msg::PointCloud2;
 #[cfg(test)]
 use sensor_msgs::msg::PointField;
-use std_msgs::msg::ColorRGBA;
-use std_msgs::msg::Header;
+use std_msgs::msg::{ColorRGBA, Header};
 use visualization_msgs::msg::{Marker, MarkerArray};
 
 /// Configuration for point score visualization.

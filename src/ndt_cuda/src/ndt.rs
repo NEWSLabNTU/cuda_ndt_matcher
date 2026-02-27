@@ -26,15 +26,16 @@ use nalgebra::{Isometry3, Matrix6};
 use rayon::prelude::*;
 use tracing::{debug, warn};
 
-use crate::derivatives::gpu::GpuVoxelData;
-use crate::derivatives::{DistanceMetric, GaussianParams};
-use crate::optimization::{NdtOptimizer, OptimizationConfig};
-use crate::runtime::{GpuRuntime, is_cuda_available};
-use crate::scoring::{
-    GpuScoringPipeline, NvtlConfig, compute_nvtl, compute_transform_probability,
-    nvtl::compute_nvtl_simple,
+use crate::{
+    derivatives::{DistanceMetric, GaussianParams, gpu::GpuVoxelData},
+    optimization::{NdtOptimizer, OptimizationConfig},
+    runtime::{GpuRuntime, is_cuda_available},
+    scoring::{
+        GpuScoringPipeline, NvtlConfig, compute_nvtl, compute_transform_probability,
+        nvtl::compute_nvtl_simple,
+    },
+    voxel_grid::{VoxelGrid, VoxelGridConfig},
 };
-use crate::voxel_grid::{VoxelGrid, VoxelGridConfig};
 
 /// Configuration for NDT scan matcher.
 #[derive(Debug, Clone)]
@@ -1090,8 +1091,10 @@ impl NdtScanMatcher {
         let voxel_data = self.gpu_voxel_data.as_ref()?;
 
         // Convert pose to transform matrix
-        use crate::derivatives::gpu::pose_to_transform_matrix;
-        use crate::optimization::types::isometry_to_pose_vector;
+        use crate::{
+            derivatives::gpu::pose_to_transform_matrix,
+            optimization::types::isometry_to_pose_vector,
+        };
 
         let pose_vec = isometry_to_pose_vector(pose);
         let transform = pose_to_transform_matrix(&pose_vec);
@@ -1122,8 +1125,10 @@ impl NdtScanMatcher {
         let voxel_data = self.gpu_voxel_data.as_ref()?;
 
         // Convert pose to transform matrix
-        use crate::derivatives::gpu::pose_to_transform_matrix;
-        use crate::optimization::types::isometry_to_pose_vector;
+        use crate::{
+            derivatives::gpu::pose_to_transform_matrix,
+            optimization::types::isometry_to_pose_vector,
+        };
 
         let pose_vec = isometry_to_pose_vector(pose);
         let transform = pose_to_transform_matrix(&pose_vec);
@@ -1328,8 +1333,7 @@ mod tests {
         make_default_half_cubic_pcd, make_half_cubic_pcd_offset, voxelize_pcd,
     };
     use approx::assert_relative_eq;
-    use rand::SeedableRng;
-    use rand::prelude::*;
+    use rand::{SeedableRng, prelude::*};
     use rand_distr::Normal;
 
     fn generate_test_cloud(center: [f32; 3], spread: f32, num_points: usize) -> Vec<[f32; 3]> {

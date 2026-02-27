@@ -11,12 +11,16 @@
 
 use nalgebra::Isometry3;
 use parking_lot::Mutex;
-use std::collections::VecDeque;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc::{self, Receiver, Sender},
+    },
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
+};
 
 use builtin_interfaces::msg::Time;
 use rclrs::{log_debug, log_warn};

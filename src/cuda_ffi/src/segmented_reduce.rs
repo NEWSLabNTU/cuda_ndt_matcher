@@ -3,8 +3,7 @@
 //! Provides GPU-accelerated segmented reduction for summing data in segments,
 //! used for reducing per-point gradients and Hessians to totals in NDT.
 
-use std::ffi::c_int;
-use std::ptr;
+use std::{ffi::c_int, ptr};
 
 use crate::radix_sort::{CudaError, DeviceBuffer, check_cuda};
 

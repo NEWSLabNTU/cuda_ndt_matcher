@@ -3,8 +3,7 @@
 //! Detects segment boundaries in sorted Morton codes using CUB primitives.
 //! A segment is a contiguous run of identical Morton codes (same voxel).
 
-use std::ffi::c_int;
-use std::ptr;
+use std::{ffi::c_int, ptr};
 
 use crate::radix_sort::{CudaError, DeviceBuffer, check_cuda};
 

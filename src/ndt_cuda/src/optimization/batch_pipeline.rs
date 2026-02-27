@@ -50,10 +50,12 @@
 //! ```
 
 use anyhow::Result;
-use cubecl::client::ComputeClient;
-use cubecl::cuda::{CudaDevice, CudaRuntime};
-use cubecl::prelude::*;
-use cubecl::server::Handle;
+use cubecl::{
+    client::ComputeClient,
+    cuda::{CudaDevice, CudaRuntime},
+    prelude::*,
+    server::Handle,
+};
 
 use crate::derivatives::gpu::GpuVoxelData;
 

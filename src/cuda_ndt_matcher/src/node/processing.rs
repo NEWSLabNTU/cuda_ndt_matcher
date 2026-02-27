@@ -4,12 +4,16 @@ use ndt_cuda::AlignmentDebug;
 #[cfg(feature = "debug-output")]
 use rclrs::log_info;
 use rclrs::{log_error, log_warn};
-use std::sync::atomic::{AtomicI32, Ordering};
-use std::time::Instant;
+use std::{
+    sync::atomic::{AtomicI32, Ordering},
+    time::Instant,
+};
 
 use super::state::NODE_NAME;
-use crate::alignment::{AlignResult, NdtManager};
-use crate::io::params::NdtParams;
+use crate::{
+    alignment::{AlignResult, NdtManager},
+    io::params::NdtParams,
+};
 #[cfg(feature = "debug-output")]
 use crate::{io::debug_writer, transform::pose_utils};
 

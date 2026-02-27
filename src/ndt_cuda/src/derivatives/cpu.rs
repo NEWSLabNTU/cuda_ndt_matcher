@@ -7,10 +7,12 @@ use nalgebra::{Matrix3, Matrix4, Matrix6, Vector3, Vector4, Vector6};
 #[cfg(feature = "debug-vpp")]
 use tracing::debug;
 
-use super::angular::AngularDerivatives;
-use super::types::{
-    AggregatedDerivatives, DerivativeResult, DistanceMetric, GaussianParams, Matrix4x6, Matrix24x6,
-    PointDerivatives,
+use super::{
+    angular::AngularDerivatives,
+    types::{
+        AggregatedDerivatives, DerivativeResult, DistanceMetric, GaussianParams, Matrix4x6,
+        Matrix24x6, PointDerivatives,
+    },
 };
 use crate::voxel_grid::VoxelGrid;
 

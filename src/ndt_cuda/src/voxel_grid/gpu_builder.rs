@@ -22,23 +22,29 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
-use cubecl::client::ComputeClient;
-use cubecl::cuda::{CudaDevice, CudaRuntime};
-use cubecl::prelude::*;
+use cubecl::{
+    client::ComputeClient,
+    cuda::{CudaDevice, CudaRuntime},
+    prelude::*,
+};
 use nalgebra::{Matrix3, Vector3};
 use rayon::prelude::*;
 
-use super::VoxelGrid;
-use super::gpu::morton::{MortonCodeResult, compute_morton_codes_kernel};
-use super::gpu::pipeline::GpuPipelineBuffers;
-use super::gpu::radix_sort::radix_sort_by_key;
-use super::gpu::segments::detect_segments;
-use super::gpu::statistics::{
-    accumulate_segment_covariances_kernel, accumulate_segment_sums_kernel, compute_means_kernel,
-    finalize_voxels_cpu,
+use super::{
+    VoxelGrid,
+    gpu::{
+        morton::{MortonCodeResult, compute_morton_codes_kernel},
+        pipeline::GpuPipelineBuffers,
+        radix_sort::radix_sort_by_key,
+        segments::detect_segments,
+        statistics::{
+            accumulate_segment_covariances_kernel, accumulate_segment_sums_kernel,
+            compute_means_kernel, finalize_voxels_cpu,
+        },
+    },
+    kernels::compute_voxel_ids_kernel,
+    types::{Voxel, VoxelCoord, VoxelGridConfig},
 };
-use super::kernels::compute_voxel_ids_kernel;
-use super::types::{Voxel, VoxelCoord, VoxelGridConfig};
 
 /// Type alias for CUDA compute client.
 type CudaClient = ComputeClient<<CudaRuntime as Runtime>::Server>;

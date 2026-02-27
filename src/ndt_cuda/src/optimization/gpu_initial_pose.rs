@@ -39,20 +39,29 @@
 //! - Speedup: ~5-6x for startup phase
 
 use anyhow::Result;
-use cubecl::client::ComputeClient;
-use cubecl::cuda::{CudaDevice, CudaRuntime};
-use cubecl::prelude::*;
-use cubecl::server::Handle;
-
-use crate::derivatives::gpu::{GpuVoxelData, MAX_NEIGHBORS};
-use crate::derivatives::gpu_batch::{
-    check_convergence_batch_kernel, compute_jacobians_batch_kernel,
-    compute_ndt_gradient_batch_kernel, compute_ndt_hessian_batch_kernel,
-    compute_ndt_score_batch_kernel, radius_search_batch_kernel, update_poses_batch_kernel,
+use cubecl::{
+    client::ComputeClient,
+    cuda::{CudaDevice, CudaRuntime},
+    prelude::*,
+    server::Handle,
 };
-use crate::voxel_grid::VoxelGrid;
-use crate::voxel_grid::kernels::{
-    compute_sin_cos_batch_kernel, compute_transforms_batch_kernel, transform_points_batch_kernel,
+
+use crate::{
+    derivatives::{
+        gpu::{GpuVoxelData, MAX_NEIGHBORS},
+        gpu_batch::{
+            check_convergence_batch_kernel, compute_jacobians_batch_kernel,
+            compute_ndt_gradient_batch_kernel, compute_ndt_hessian_batch_kernel,
+            compute_ndt_score_batch_kernel, radius_search_batch_kernel, update_poses_batch_kernel,
+        },
+    },
+    voxel_grid::{
+        VoxelGrid,
+        kernels::{
+            compute_sin_cos_batch_kernel, compute_transforms_batch_kernel,
+            transform_points_batch_kernel,
+        },
+    },
 };
 
 /// Type alias for CUDA compute client.

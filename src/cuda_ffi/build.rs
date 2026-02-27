@@ -4,9 +4,11 @@
 //! Compilation is parallelized using rayon's work-stealing thread pool.
 
 use rayon::prelude::*;
-use std::env;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::{
+    env,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 fn main() {
     // Find CUDA installation

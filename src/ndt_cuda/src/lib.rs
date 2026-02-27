@@ -17,8 +17,8 @@
 //! # fn load_pcd_file(_: &str) -> Vec<[f32; 3]> { vec![] }
 //! # fn get_lidar_scan() -> Vec<[f32; 3]> { vec![] }
 //! # fn main() -> anyhow::Result<()> {
-//! use ndt_cuda::NdtScanMatcher;
 //! use nalgebra::Isometry3;
+//! use ndt_cuda::NdtScanMatcher;
 //!
 //! // Create NDT scan matcher
 //! let mut matcher = NdtScanMatcher::new(2.0)?;

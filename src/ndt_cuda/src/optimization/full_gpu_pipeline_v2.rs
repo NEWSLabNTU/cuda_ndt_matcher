@@ -34,15 +34,18 @@
 //! - Slightly higher launch overhead (~10-20μs/iter) but eliminates grid size restrictions
 
 use anyhow::Result;
-use cubecl::client::ComputeClient;
-use cubecl::cuda::{CudaDevice, CudaRuntime};
-use cubecl::prelude::*;
-use cubecl::server::Handle;
+use cubecl::{
+    client::ComputeClient,
+    cuda::{CudaDevice, CudaRuntime},
+    prelude::*,
+    server::Handle,
+};
 #[cfg(feature = "profiling")]
 use tracing::debug;
 
-use crate::derivatives::gpu::GpuVoxelData;
-use crate::optimization::gpu_pipeline_kernels::DEFAULT_NUM_CANDIDATES;
+use crate::{
+    derivatives::gpu::GpuVoxelData, optimization::gpu_pipeline_kernels::DEFAULT_NUM_CANDIDATES,
+};
 
 /// Type alias for CUDA compute client.
 type CudaClient = ComputeClient<<CudaRuntime as Runtime>::Server>;

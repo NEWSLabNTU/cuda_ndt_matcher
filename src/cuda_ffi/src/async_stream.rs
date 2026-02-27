@@ -35,9 +35,7 @@
 //! ```
 
 use crate::radix_sort::{CudaError, check_cuda};
-use std::ffi::c_int;
-use std::marker::PhantomData;
-use std::ptr;
+use std::{ffi::c_int, marker::PhantomData, ptr};
 
 // ============================================================================
 // FFI Declarations

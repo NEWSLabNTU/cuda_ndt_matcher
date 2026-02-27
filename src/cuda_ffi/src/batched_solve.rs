@@ -5,8 +5,7 @@
 
 #![allow(non_snake_case)] // Follow CUDA naming conventions
 
-use std::ffi::c_int;
-use std::ptr;
+use std::{ffi::c_int, ptr};
 
 /// cuSOLVER dense handle (opaque pointer).
 pub type CusolverDnHandle = *mut std::ffi::c_void;

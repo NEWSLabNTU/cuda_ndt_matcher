@@ -34,19 +34,23 @@
 //! which can be passed to cuda_ffi functions for CUB operations.
 
 use anyhow::{Context, Result};
-use cubecl::client::ComputeClient;
-use cubecl::cuda::{CudaDevice, CudaRuntime};
-use cubecl::prelude::*;
-use cubecl::server::Handle;
+use cubecl::{
+    client::ComputeClient,
+    cuda::{CudaDevice, CudaRuntime},
+    prelude::*,
+    server::Handle,
+};
 #[cfg(feature = "debug-cov")]
 use tracing::debug;
 
-use super::morton::{compute_morton_codes_kernel, pack_morton_codes_kernel};
 #[cfg(feature = "debug-cov")]
 use super::statistics::compute_covariance_sums_cpu;
-use super::statistics::{
-    accumulate_segment_covariances_kernel, accumulate_segment_sums_kernel, compute_means_kernel,
-    finalize_voxels_cpu,
+use super::{
+    morton::{compute_morton_codes_kernel, pack_morton_codes_kernel},
+    statistics::{
+        accumulate_segment_covariances_kernel, accumulate_segment_sums_kernel,
+        compute_means_kernel, finalize_voxels_cpu,
+    },
 };
 
 /// Type alias for CUDA compute client.

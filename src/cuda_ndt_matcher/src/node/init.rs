@@ -5,22 +5,27 @@ use rclrs::{
     Node, QoSHistoryPolicy, QoSProfile, SubscriptionOptions, log_debug, log_error, log_info,
 };
 use sensor_msgs::msg::PointCloud2;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-
-use super::state::{
-    DebugPublishers, NODE_NAME, NdtScanMatcherNode, OnPointsContext, SetBoolRequest,
-    SetBoolResponse,
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicI32, Ordering},
 };
-use super::{publishers, services};
-use crate::alignment::DualNdtManager;
-use crate::alignment::batch::{ScanQueue, ScanQueueConfig, ScanResult};
-use crate::io::diagnostics::DiagnosticsInterface;
-use crate::io::params::NdtParams;
-use crate::map::{DynamicMapLoader, MapUpdateModule};
-use crate::transform::SmartPoseBuffer;
-use crate::transform::pose_utils;
-use crate::transform::tf_handler;
+
+use super::{
+    publishers, services,
+    state::{
+        DebugPublishers, NODE_NAME, NdtScanMatcherNode, OnPointsContext, SetBoolRequest,
+        SetBoolResponse,
+    },
+};
+use crate::{
+    alignment::{
+        DualNdtManager,
+        batch::{ScanQueue, ScanQueueConfig, ScanResult},
+    },
+    io::{diagnostics::DiagnosticsInterface, params::NdtParams},
+    map::{DynamicMapLoader, MapUpdateModule},
+    transform::{SmartPoseBuffer, pose_utils, tf_handler},
+};
 use geometry_msgs::msg::PoseStamped;
 use parking_lot::Mutex;
 use std_srvs::srv::SetBool;

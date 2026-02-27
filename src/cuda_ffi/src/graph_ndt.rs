@@ -35,8 +35,10 @@
 //! )?;
 //! ```
 
-use crate::async_stream::CudaStream;
-use crate::radix_sort::{CudaError, check_cuda};
+use crate::{
+    async_stream::CudaStream,
+    radix_sort::{CudaError, check_cuda},
+};
 use std::ffi::c_int;
 
 // ============================================================================

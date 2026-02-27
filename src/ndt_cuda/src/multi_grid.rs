@@ -25,8 +25,10 @@
 use anyhow::{Result, bail};
 use nalgebra::{Isometry3, Matrix6};
 
-use crate::derivatives::DistanceMetric;
-use crate::ndt::{AlignResult, NdtScanMatcher, NdtScanMatcherConfig};
+use crate::{
+    derivatives::DistanceMetric,
+    ndt::{AlignResult, NdtScanMatcher, NdtScanMatcherConfig},
+};
 
 /// Configuration for a single resolution level in multi-grid NDT.
 #[derive(Debug, Clone)]

@@ -2,14 +2,20 @@
 
 use super::tiles::{LOGGER_NAME, MapTile, MapUpdateModule};
 use crate::io::pointcloud;
-use autoware_map_msgs::msg::{AreaInfo, PointCloudMapCellWithID};
-use autoware_map_msgs::srv::{GetDifferentialPointCloudMap, GetDifferentialPointCloudMap_Request};
+use autoware_map_msgs::{
+    msg::{AreaInfo, PointCloudMapCellWithID},
+    srv::{GetDifferentialPointCloudMap, GetDifferentialPointCloudMap_Request},
+};
 use geometry_msgs::msg::Point;
 use parking_lot::RwLock;
 use rclrs::{Client, Node, log_debug, log_error, log_info, log_warn};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
+};
 
 /// Status of the last map loader request.
 #[derive(Debug, Clone, Default)]

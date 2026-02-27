@@ -11,8 +11,7 @@
 
 use nalgebra::{Isometry3, Matrix3, Vector3};
 
-use crate::derivatives::GaussianParams;
-use crate::voxel_grid::VoxelGrid;
+use crate::{derivatives::GaussianParams, voxel_grid::VoxelGrid};
 
 /// Configuration for NVTL computation.
 #[derive(Debug, Clone)]
@@ -276,8 +275,7 @@ mod tests {
     fn create_test_grid() -> VoxelGrid {
         // Create a grid with points clustered around [1, 1, 1]
         // Using center at 1.0 ensures all points stay in voxel [0,0,0] with resolution 2.0
-        use rand::SeedableRng;
-        use rand::prelude::*;
+        use rand::{SeedableRng, prelude::*};
         use rand_distr::Normal;
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(42);
