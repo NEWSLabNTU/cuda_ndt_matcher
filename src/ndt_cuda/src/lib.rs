@@ -72,8 +72,8 @@ pub use optimization::{
     OptimizationConfig,
 };
 pub use scoring::{
-    compute_nvtl, compute_per_point_scores, compute_transform_probability, NvtlConfig, NvtlResult,
-    ScoringResult,
+    NvtlConfig, NvtlResult, ScoringResult, compute_nvtl, compute_per_point_scores,
+    compute_transform_probability,
 };
 pub use timing::{AlignmentTiming, IterationTiming, Timer, TimingCollector};
 pub use voxel_grid::{Voxel, VoxelGrid, VoxelGridConfig};
@@ -91,7 +91,7 @@ pub use multi_grid::{
 };
 
 // GPU runtime (optional, for direct GPU access)
-pub use runtime::{is_cuda_available, GpuDerivativeResult, GpuRuntime, GpuScoreResult};
+pub use runtime::{GpuDerivativeResult, GpuRuntime, GpuScoreResult, is_cuda_available};
 
 // GPU-accelerated point cloud filtering
 #[cfg(feature = "cuda")]

@@ -13,7 +13,7 @@ use thiserror::Error;
 
 type CudaStream = *mut std::ffi::c_void;
 
-extern "C" {
+unsafe extern "C" {
     fn cub_radix_sort_pairs_u64_u32_temp_size(
         temp_storage_bytes: *mut usize,
         num_items: c_int,
@@ -350,24 +350,26 @@ pub unsafe fn sort_pairs_inplace(
     d_values_out: u64,
     num_items: usize,
 ) -> Result<(), CudaError> {
-    if num_items == 0 {
-        return Ok(());
+    unsafe {
+        if num_items == 0 {
+            return Ok(());
+        }
+
+        check_cuda(cub_radix_sort_pairs_u64_u32(
+            d_temp as *mut std::ffi::c_void,
+            temp_bytes,
+            d_keys_in as *const u64,
+            d_keys_out as *mut u64,
+            d_values_in as *const u32,
+            d_values_out as *mut u32,
+            num_items as c_int,
+            0,               // begin_bit
+            64,              // end_bit
+            ptr::null_mut(), // default stream
+        ))?;
+
+        check_cuda(cudaDeviceSynchronize())
     }
-
-    check_cuda(cub_radix_sort_pairs_u64_u32(
-        d_temp as *mut std::ffi::c_void,
-        temp_bytes,
-        d_keys_in as *const u64,
-        d_keys_out as *mut u64,
-        d_values_in as *const u32,
-        d_values_out as *mut u32,
-        num_items as c_int,
-        0,               // begin_bit
-        64,              // end_bit
-        ptr::null_mut(), // default stream
-    ))?;
-
-    check_cuda(cudaDeviceSynchronize())
 }
 
 // ============================================================================

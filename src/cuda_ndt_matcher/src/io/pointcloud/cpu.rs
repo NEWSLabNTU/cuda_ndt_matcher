@@ -3,7 +3,7 @@
 //! This module handles PointCloud2 message parsing and construction.
 //! All code here is pure CPU with no GPU dependencies.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use sensor_msgs::msg::{PointCloud2, PointField};
 use std_msgs::msg::Header;
 

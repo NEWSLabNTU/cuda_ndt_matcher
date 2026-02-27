@@ -32,7 +32,7 @@
 //! )?;
 //! ```
 
-use crate::radix_sort::{check_cuda, CudaError};
+use crate::radix_sort::{CudaError, check_cuda};
 use std::ffi::c_int;
 
 // ============================================================================
@@ -42,7 +42,7 @@ use std::ffi::c_int;
 // Custom error code for grid too large
 const CUDA_ERROR_COOPERATIVE_LAUNCH_TOO_LARGE: c_int = 720;
 
-extern "C" {
+unsafe extern "C" {
     fn persistent_ndt_get_max_blocks(
         block_size: c_int,
         shared_mem_bytes: c_int,
@@ -250,49 +250,51 @@ impl PersistentNdt {
         debug_enabled: bool,
         debug_buffer: *mut f32,
     ) -> Result<(), CudaError> {
-        let result = persistent_ndt_launch(
-            source_points,
-            voxel_means,
-            voxel_inv_covs,
-            hash_table,
-            gauss_d1,
-            gauss_d2,
-            resolution,
-            num_points,
-            num_voxels,
-            hash_capacity,
-            max_iterations,
-            epsilon,
-            reg_ref_x,
-            reg_ref_y,
-            reg_scale,
-            if reg_enabled { 1 } else { 0 },
-            if ls_enabled { 1 } else { 0 },
-            ls_num_candidates,
-            ls_mu,
-            ls_nu,
-            fixed_step_size,
-            initial_pose,
-            reduce_buffer,
-            out_pose,
-            out_iterations,
-            out_converged,
-            out_final_score,
-            out_hessian,
-            out_num_correspondences,
-            out_max_oscillation_count,
-            out_alpha_sum,
-            if debug_enabled { 1 } else { 0 },
-            debug_buffer,
-        );
+        unsafe {
+            let result = persistent_ndt_launch(
+                source_points,
+                voxel_means,
+                voxel_inv_covs,
+                hash_table,
+                gauss_d1,
+                gauss_d2,
+                resolution,
+                num_points,
+                num_voxels,
+                hash_capacity,
+                max_iterations,
+                epsilon,
+                reg_ref_x,
+                reg_ref_y,
+                reg_scale,
+                if reg_enabled { 1 } else { 0 },
+                if ls_enabled { 1 } else { 0 },
+                ls_num_candidates,
+                ls_mu,
+                ls_nu,
+                fixed_step_size,
+                initial_pose,
+                reduce_buffer,
+                out_pose,
+                out_iterations,
+                out_converged,
+                out_final_score,
+                out_hessian,
+                out_num_correspondences,
+                out_max_oscillation_count,
+                out_alpha_sum,
+                if debug_enabled { 1 } else { 0 },
+                debug_buffer,
+            );
 
-        if result == CUDA_ERROR_COOPERATIVE_LAUNCH_TOO_LARGE {
-            // This shouldn't happen if caller checked can_launch(), but handle it
-            return Err(CudaError::Other(result));
+            if result == CUDA_ERROR_COOPERATIVE_LAUNCH_TOO_LARGE {
+                // This shouldn't happen if caller checked can_launch(), but handle it
+                return Err(CudaError::Other(result));
+            }
+
+            check_cuda(result)?;
+            check_cuda(cudaDeviceSynchronize())
         }
-
-        check_cuda(result)?;
-        check_cuda(cudaDeviceSynchronize())
     }
 }
 
@@ -361,41 +363,43 @@ pub unsafe fn persistent_ndt_launch_raw(
     debug_enabled: bool,
     d_debug_buffer: u64,
 ) -> Result<(), CudaError> {
-    PersistentNdt::launch(
-        d_source_points as *const f32,
-        d_voxel_means as *const f32,
-        d_voxel_inv_covs as *const f32,
-        d_hash_table as *const std::ffi::c_void,
-        gauss_d1,
-        gauss_d2,
-        resolution,
-        num_points as u32,
-        num_voxels as u32,
-        hash_capacity,
-        max_iterations,
-        epsilon,
-        reg_ref_x,
-        reg_ref_y,
-        reg_scale,
-        reg_enabled,
-        ls_enabled,
-        ls_num_candidates,
-        ls_mu,
-        ls_nu,
-        fixed_step_size,
-        d_initial_pose as *const f32,
-        d_reduce_buffer as *mut f32,
-        d_out_pose as *mut f32,
-        d_out_iterations as *mut i32,
-        d_out_converged as *mut u32,
-        d_out_final_score as *mut f32,
-        d_out_hessian as *mut f32,
-        d_out_num_correspondences as *mut u32,
-        d_out_max_oscillation_count as *mut u32,
-        d_out_alpha_sum as *mut f32,
-        debug_enabled,
-        d_debug_buffer as *mut f32,
-    )
+    unsafe {
+        PersistentNdt::launch(
+            d_source_points as *const f32,
+            d_voxel_means as *const f32,
+            d_voxel_inv_covs as *const f32,
+            d_hash_table as *const std::ffi::c_void,
+            gauss_d1,
+            gauss_d2,
+            resolution,
+            num_points as u32,
+            num_voxels as u32,
+            hash_capacity,
+            max_iterations,
+            epsilon,
+            reg_ref_x,
+            reg_ref_y,
+            reg_scale,
+            reg_enabled,
+            ls_enabled,
+            ls_num_candidates,
+            ls_mu,
+            ls_nu,
+            fixed_step_size,
+            d_initial_pose as *const f32,
+            d_reduce_buffer as *mut f32,
+            d_out_pose as *mut f32,
+            d_out_iterations as *mut i32,
+            d_out_converged as *mut u32,
+            d_out_final_score as *mut f32,
+            d_out_hessian as *mut f32,
+            d_out_num_correspondences as *mut u32,
+            d_out_max_oscillation_count as *mut u32,
+            d_out_alpha_sum as *mut f32,
+            debug_enabled,
+            d_debug_buffer as *mut f32,
+        )
+    }
 }
 
 // ============================================================================

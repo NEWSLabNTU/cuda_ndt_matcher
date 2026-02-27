@@ -2,25 +2,25 @@ use anyhow::Result;
 use arc_swap::ArcSwap;
 use geometry_msgs::msg::{PoseWithCovariance, PoseWithCovarianceStamped};
 use rclrs::{
-    log_debug, log_error, log_info, Node, QoSHistoryPolicy, QoSProfile, SubscriptionOptions,
+    Node, QoSHistoryPolicy, QoSProfile, SubscriptionOptions, log_debug, log_error, log_info,
 };
 use sensor_msgs::msg::PointCloud2;
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use super::state::{
-    DebugPublishers, NdtScanMatcherNode, OnPointsContext, SetBoolRequest, SetBoolResponse,
-    NODE_NAME,
+    DebugPublishers, NODE_NAME, NdtScanMatcherNode, OnPointsContext, SetBoolRequest,
+    SetBoolResponse,
 };
 use super::{publishers, services};
-use crate::alignment::batch::{ScanQueue, ScanQueueConfig, ScanResult};
 use crate::alignment::DualNdtManager;
+use crate::alignment::batch::{ScanQueue, ScanQueueConfig, ScanResult};
 use crate::io::diagnostics::DiagnosticsInterface;
 use crate::io::params::NdtParams;
 use crate::map::{DynamicMapLoader, MapUpdateModule};
+use crate::transform::SmartPoseBuffer;
 use crate::transform::pose_utils;
 use crate::transform::tf_handler;
-use crate::transform::SmartPoseBuffer;
 use geometry_msgs::msg::PoseStamped;
 use parking_lot::Mutex;
 use std_srvs::srv::SetBool;
@@ -163,8 +163,8 @@ impl NdtScanMatcherNode {
             let result_pose_cov_pub = pose_cov_pub.clone();
             let result_debug_pubs = debug_pubs.clone();
             let result_params = Arc::clone(&params);
-            let result_callback: crate::alignment::batch::ResultCallback =
-                Arc::new(move |results: Vec<ScanResult>| {
+            let result_callback: crate::alignment::batch::ResultCallback = Arc::new(
+                move |results: Vec<ScanResult>| {
                     for result in results {
                         // Only publish if converged
                         if !result.converged {
@@ -214,15 +214,16 @@ impl NdtScanMatcherNode {
                         );
 
                         log_debug!(
-                        NODE_NAME,
-                        "Batch result published: ts_ns={}, iter={}, score={:.3}, latency={:.1}ms",
-                        result.timestamp_ns,
-                        result.iterations,
-                        result.score,
-                        result.latency_ms
-                    );
+                            NODE_NAME,
+                            "Batch result published: ts_ns={}, iter={}, score={:.3}, latency={:.1}ms",
+                            result.timestamp_ns,
+                            result.iterations,
+                            result.score,
+                            result.latency_ms
+                        );
                     }
-                });
+                },
+            );
 
             Some(Arc::new(ScanQueue::new(config, align_fn, result_callback)))
         } else {

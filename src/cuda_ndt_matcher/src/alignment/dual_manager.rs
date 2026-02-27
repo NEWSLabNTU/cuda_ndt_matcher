@@ -21,8 +21,8 @@ use geometry_msgs::msg::Pose;
 use ndt_cuda::AlignmentDebug;
 use parking_lot::{Mutex, RwLock};
 use rclrs::{log_debug, log_info};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
 const LOGGER_NAME: &str = "ndt_scan_matcher.dual_ndt_manager";

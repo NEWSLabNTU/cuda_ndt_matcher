@@ -1,7 +1,7 @@
 //! NDT alignment manager using our CubeCL implementation.
 
 use crate::io::params::NdtParams;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use geometry_msgs::msg::{Point, Pose, Quaternion};
 use nalgebra::{Isometry3, Matrix6, Quaternion as NaQuaternion, Translation3, UnitQuaternion};
 #[cfg(feature = "debug-output")]

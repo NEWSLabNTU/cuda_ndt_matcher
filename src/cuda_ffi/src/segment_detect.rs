@@ -6,7 +6,7 @@
 use std::ffi::c_int;
 use std::ptr;
 
-use crate::radix_sort::{check_cuda, CudaError, DeviceBuffer};
+use crate::radix_sort::{CudaError, DeviceBuffer, check_cuda};
 
 // ============================================================================
 // FFI Declarations
@@ -14,7 +14,7 @@ use crate::radix_sort::{check_cuda, CudaError, DeviceBuffer};
 
 type CudaStream = *mut std::ffi::c_void;
 
-extern "C" {
+unsafe extern "C" {
     // Boundary detection
     fn cub_detect_boundaries(
         d_sorted_codes: *const u64,
@@ -345,59 +345,61 @@ pub unsafe fn detect_segments_inplace(
     select_temp_bytes: usize,
     num_items: usize,
 ) -> Result<SegmentCounts, CudaError> {
-    if num_items == 0 {
-        return Ok(SegmentCounts { num_segments: 0 });
+    unsafe {
+        if num_items == 0 {
+            return Ok(SegmentCounts { num_segments: 0 });
+        }
+
+        let n = num_items as c_int;
+
+        // Step 1: Detect boundaries
+        check_cuda(cub_detect_boundaries(
+            d_sorted_codes as *const u64,
+            d_boundaries as *mut u32,
+            n,
+            ptr::null_mut(),
+        ))?;
+
+        // Step 2: Inclusive prefix sum on boundaries -> segment_ids
+        check_cuda(cub_inclusive_sum_u32(
+            d_sum_temp as *mut std::ffi::c_void,
+            sum_temp_bytes,
+            d_boundaries as *const u32,
+            d_segment_ids as *mut u32,
+            n,
+            ptr::null_mut(),
+        ))?;
+
+        // Step 3: Generate index sequence
+        check_cuda(cub_iota_u32(d_indices as *mut u32, n, ptr::null_mut()))?;
+
+        // Step 4: Stream compaction to get segment starts
+        check_cuda(cub_select_flagged_u32(
+            d_select_temp as *mut std::ffi::c_void,
+            select_temp_bytes,
+            d_indices as *const u32,
+            d_boundaries as *const u32,
+            d_segment_starts as *mut u32,
+            d_num_selected as *mut c_int,
+            n,
+            ptr::null_mut(),
+        ))?;
+
+        check_cuda(cudaDeviceSynchronize())?;
+
+        // Read num_selected from device
+        let mut num_boundaries: c_int = 0;
+        check_cuda(cudaMemcpy(
+            &mut num_boundaries as *mut c_int as *mut std::ffi::c_void,
+            d_num_selected as *const std::ffi::c_void,
+            std::mem::size_of::<c_int>(),
+            CUDA_MEMCPY_DEVICE_TO_HOST,
+        ))?;
+
+        let num_segments = (num_boundaries + 1) as u32;
+
+        Ok(SegmentCounts { num_segments })
     }
-
-    let n = num_items as c_int;
-
-    // Step 1: Detect boundaries
-    check_cuda(cub_detect_boundaries(
-        d_sorted_codes as *const u64,
-        d_boundaries as *mut u32,
-        n,
-        ptr::null_mut(),
-    ))?;
-
-    // Step 2: Inclusive prefix sum on boundaries -> segment_ids
-    check_cuda(cub_inclusive_sum_u32(
-        d_sum_temp as *mut std::ffi::c_void,
-        sum_temp_bytes,
-        d_boundaries as *const u32,
-        d_segment_ids as *mut u32,
-        n,
-        ptr::null_mut(),
-    ))?;
-
-    // Step 3: Generate index sequence
-    check_cuda(cub_iota_u32(d_indices as *mut u32, n, ptr::null_mut()))?;
-
-    // Step 4: Stream compaction to get segment starts
-    check_cuda(cub_select_flagged_u32(
-        d_select_temp as *mut std::ffi::c_void,
-        select_temp_bytes,
-        d_indices as *const u32,
-        d_boundaries as *const u32,
-        d_segment_starts as *mut u32,
-        d_num_selected as *mut c_int,
-        n,
-        ptr::null_mut(),
-    ))?;
-
-    check_cuda(cudaDeviceSynchronize())?;
-
-    // Read num_selected from device
-    let mut num_boundaries: c_int = 0;
-    check_cuda(cudaMemcpy(
-        &mut num_boundaries as *mut c_int as *mut std::ffi::c_void,
-        d_num_selected as *const std::ffi::c_void,
-        std::mem::size_of::<c_int>(),
-        CUDA_MEMCPY_DEVICE_TO_HOST,
-    ))?;
-
-    let num_segments = (num_boundaries + 1) as u32;
-
-    Ok(SegmentCounts { num_segments })
 }
 
 // ============================================================================

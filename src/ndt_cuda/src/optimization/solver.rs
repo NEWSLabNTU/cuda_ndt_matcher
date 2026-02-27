@@ -11,15 +11,15 @@ use nalgebra::{Isometry3, Matrix6, Vector6};
 use tracing::{debug, warn};
 
 use super::full_gpu_pipeline_v2::{FullGpuPipelineV2, PipelineV2Config};
-use super::line_search::{directional_derivative, LineSearchConfig};
-use super::more_thuente::{more_thuente_search, MoreThuenteConfig};
+use super::line_search::{LineSearchConfig, directional_derivative};
+use super::more_thuente::{MoreThuenteConfig, more_thuente_search};
 use super::newton::{condition_number, newton_step_negative_definite};
 use super::regularization::{RegularizationConfig, RegularizationTerm};
 use super::types::{
-    apply_pose_delta, isometry_to_pose_vector, pose_vector_to_isometry, ConvergenceStatus,
-    NdtConfig, NdtResult,
+    ConvergenceStatus, NdtConfig, NdtResult, apply_pose_delta, isometry_to_pose_vector,
+    pose_vector_to_isometry,
 };
-use crate::derivatives::{compute_derivatives_cpu_with_metric, GaussianParams, GpuVoxelData};
+use crate::derivatives::{GaussianParams, GpuVoxelData, compute_derivatives_cpu_with_metric};
 use crate::scoring::nvtl::compute_nvtl_simple;
 use crate::voxel_grid::VoxelGrid;
 

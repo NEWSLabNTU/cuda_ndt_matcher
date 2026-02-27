@@ -19,14 +19,14 @@ use cubecl::client::ComputeClient;
 use cubecl::cuda::{CudaDevice, CudaRuntime};
 use cubecl::prelude::*;
 
-use crate::derivatives::gpu::{
-    compute_ndt_gradient_kernel, compute_ndt_gradient_point_to_plane_kernel,
-    compute_ndt_hessian_kernel, compute_ndt_nvtl_kernel, compute_ndt_score_kernel,
-    compute_ndt_score_point_to_plane_kernel, compute_point_hessians_cpu,
-    compute_point_jacobians_cpu, pose_to_transform_matrix, radius_search_kernel, GpuVoxelData,
-    MAX_NEIGHBORS,
-};
 use crate::derivatives::DistanceMetric;
+use crate::derivatives::gpu::{
+    GpuVoxelData, MAX_NEIGHBORS, compute_ndt_gradient_kernel,
+    compute_ndt_gradient_point_to_plane_kernel, compute_ndt_hessian_kernel,
+    compute_ndt_nvtl_kernel, compute_ndt_score_kernel, compute_ndt_score_point_to_plane_kernel,
+    compute_point_hessians_cpu, compute_point_jacobians_cpu, pose_to_transform_matrix,
+    radius_search_kernel,
+};
 use crate::voxel_grid::kernels::transform_points_kernel;
 
 /// Type alias for CUDA compute client
@@ -321,7 +321,7 @@ impl GpuRuntime {
         let total_max_score: f64 = max_scores
             .iter()
             .zip(has_neighbor.iter())
-            .filter(|(_, &h)| h > 0)
+            .filter(|&(_, &h)| h > 0)
             .map(|(&s, _)| s as f64)
             .sum();
 
@@ -1148,7 +1148,7 @@ mod tests {
     fn test_cpu_vs_gpu_derivatives() {
         require_cuda!();
 
-        use crate::derivatives::{compute_derivatives_cpu, GpuVoxelData};
+        use crate::derivatives::{GpuVoxelData, compute_derivatives_cpu};
         use crate::test_utils::make_half_cubic_pcd;
         use crate::voxel_grid::VoxelGrid;
 
@@ -1305,7 +1305,7 @@ mod tests {
     fn test_cpu_vs_gpu_single_point_single_voxel() {
         require_cuda!();
 
-        use crate::derivatives::{compute_derivatives_cpu, GpuVoxelData};
+        use crate::derivatives::{GpuVoxelData, compute_derivatives_cpu};
         use crate::voxel_grid::VoxelGrid;
 
         // Create a minimal test case: points clustered at origin

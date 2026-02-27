@@ -21,7 +21,7 @@
 
 #[cfg(test)]
 use crate::radix_sort::DeviceBuffer;
-use crate::radix_sort::{check_cuda, CudaError};
+use crate::radix_sort::{CudaError, check_cuda};
 use std::ffi::c_int;
 
 // ============================================================================
@@ -30,7 +30,7 @@ use std::ffi::c_int;
 
 type CudaStream = *mut std::ffi::c_void;
 
-extern "C" {
+unsafe extern "C" {
     fn voxel_hash_get_capacity(num_voxels: u32, capacity: *mut u32) -> c_int;
 
     fn voxel_hash_get_table_size(capacity: u32, bytes: *mut usize) -> c_int;
@@ -121,12 +121,14 @@ impl VoxelHash {
         d_hash_table: *mut std::ffi::c_void,
         capacity: u32,
     ) -> Result<(), CudaError> {
-        check_cuda(voxel_hash_init(
-            d_hash_table,
-            capacity,
-            std::ptr::null_mut(),
-        ))?;
-        check_cuda(cudaDeviceSynchronize())
+        unsafe {
+            check_cuda(voxel_hash_init(
+                d_hash_table,
+                capacity,
+                std::ptr::null_mut(),
+            ))?;
+            check_cuda(cudaDeviceSynchronize())
+        }
     }
 
     /// Build hash table from voxel means.
@@ -149,16 +151,18 @@ impl VoxelHash {
         d_hash_table: *mut std::ffi::c_void,
         capacity: u32,
     ) -> Result<(), CudaError> {
-        check_cuda(voxel_hash_build(
-            d_voxel_means,
-            d_voxel_valid,
-            num_voxels,
-            resolution,
-            d_hash_table,
-            capacity,
-            std::ptr::null_mut(),
-        ))?;
-        check_cuda(cudaDeviceSynchronize())
+        unsafe {
+            check_cuda(voxel_hash_build(
+                d_voxel_means,
+                d_voxel_valid,
+                num_voxels,
+                resolution,
+                d_hash_table,
+                capacity,
+                std::ptr::null_mut(),
+            ))?;
+            check_cuda(cudaDeviceSynchronize())
+        }
     }
 
     /// Query neighbors for multiple points using hash table.
@@ -188,19 +192,21 @@ impl VoxelHash {
         d_neighbor_indices: *mut i32,
         d_neighbor_counts: *mut u32,
     ) -> Result<(), CudaError> {
-        check_cuda(voxel_hash_query(
-            d_query_points,
-            d_voxel_means,
-            num_queries,
-            resolution,
-            search_radius,
-            d_hash_table,
-            capacity,
-            d_neighbor_indices,
-            d_neighbor_counts,
-            std::ptr::null_mut(),
-        ))?;
-        check_cuda(cudaDeviceSynchronize())
+        unsafe {
+            check_cuda(voxel_hash_query(
+                d_query_points,
+                d_voxel_means,
+                num_queries,
+                resolution,
+                search_radius,
+                d_hash_table,
+                capacity,
+                d_neighbor_indices,
+                d_neighbor_counts,
+                std::ptr::null_mut(),
+            ))?;
+            check_cuda(cudaDeviceSynchronize())
+        }
     }
 
     /// Count non-empty entries in hash table (for debugging).
@@ -212,15 +218,17 @@ impl VoxelHash {
         d_hash_table: *const std::ffi::c_void,
         capacity: u32,
     ) -> Result<u32, CudaError> {
-        let mut count: u32 = 0;
-        check_cuda(voxel_hash_count_entries(
-            d_hash_table,
-            capacity,
-            &mut count,
-            std::ptr::null_mut(),
-        ))?;
-        check_cuda(cudaDeviceSynchronize())?;
-        Ok(count)
+        unsafe {
+            let mut count: u32 = 0;
+            check_cuda(voxel_hash_count_entries(
+                d_hash_table,
+                capacity,
+                &mut count,
+                std::ptr::null_mut(),
+            ))?;
+            check_cuda(cudaDeviceSynchronize())?;
+            Ok(count)
+        }
     }
 }
 
@@ -243,7 +251,7 @@ pub fn hash_table_size(capacity: u32) -> Result<usize, CudaError> {
 /// # Safety
 /// `d_hash_table` must be a valid CUDA device pointer with at least `hash_table_size(capacity)` bytes.
 pub unsafe fn hash_table_init(d_hash_table: u64, capacity: u32) -> Result<(), CudaError> {
-    VoxelHash::init(d_hash_table as *mut std::ffi::c_void, capacity)
+    unsafe { VoxelHash::init(d_hash_table as *mut std::ffi::c_void, capacity) }
 }
 
 /// Build hash table using raw device pointers.
@@ -258,14 +266,16 @@ pub unsafe fn hash_table_build(
     d_hash_table: u64,
     capacity: u32,
 ) -> Result<(), CudaError> {
-    VoxelHash::build(
-        d_voxel_means as *const f32,
-        d_voxel_valid as *const u32,
-        num_voxels as u32,
-        resolution,
-        d_hash_table as *mut std::ffi::c_void,
-        capacity,
-    )
+    unsafe {
+        VoxelHash::build(
+            d_voxel_means as *const f32,
+            d_voxel_valid as *const u32,
+            num_voxels as u32,
+            resolution,
+            d_hash_table as *mut std::ffi::c_void,
+            capacity,
+        )
+    }
 }
 
 /// Query neighbors using raw device pointers.
@@ -284,17 +294,19 @@ pub unsafe fn hash_table_query(
     d_neighbor_indices: u64,
     d_neighbor_counts: u64,
 ) -> Result<(), CudaError> {
-    VoxelHash::query(
-        d_query_points as *const f32,
-        d_voxel_means as *const f32,
-        num_queries as u32,
-        resolution,
-        search_radius,
-        d_hash_table as *const std::ffi::c_void,
-        capacity,
-        d_neighbor_indices as *mut i32,
-        d_neighbor_counts as *mut u32,
-    )
+    unsafe {
+        VoxelHash::query(
+            d_query_points as *const f32,
+            d_voxel_means as *const f32,
+            num_queries as u32,
+            resolution,
+            search_radius,
+            d_hash_table as *const std::ffi::c_void,
+            capacity,
+            d_neighbor_indices as *mut i32,
+            d_neighbor_counts as *mut u32,
+        )
+    }
 }
 
 /// Count non-empty entries in hash table (for debugging).
@@ -302,7 +314,7 @@ pub unsafe fn hash_table_query(
 /// # Safety
 /// d_hash_table must be a valid CUDA device pointer.
 pub unsafe fn hash_table_count_entries(d_hash_table: u64, capacity: u32) -> Result<u32, CudaError> {
-    VoxelHash::count_entries(d_hash_table as *const std::ffi::c_void, capacity)
+    unsafe { VoxelHash::count_entries(d_hash_table as *const std::ffi::c_void, capacity) }
 }
 
 // ============================================================================

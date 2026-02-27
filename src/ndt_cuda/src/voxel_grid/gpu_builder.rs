@@ -28,7 +28,8 @@ use cubecl::prelude::*;
 use nalgebra::{Matrix3, Vector3};
 use rayon::prelude::*;
 
-use super::gpu::morton::{compute_morton_codes_kernel, MortonCodeResult};
+use super::VoxelGrid;
+use super::gpu::morton::{MortonCodeResult, compute_morton_codes_kernel};
 use super::gpu::pipeline::GpuPipelineBuffers;
 use super::gpu::radix_sort::radix_sort_by_key;
 use super::gpu::segments::detect_segments;
@@ -38,7 +39,6 @@ use super::gpu::statistics::{
 };
 use super::kernels::compute_voxel_ids_kernel;
 use super::types::{Voxel, VoxelCoord, VoxelGridConfig};
-use super::VoxelGrid;
 
 /// Type alias for CUDA compute client.
 type CudaClient = ComputeClient<<CudaRuntime as Runtime>::Server>;

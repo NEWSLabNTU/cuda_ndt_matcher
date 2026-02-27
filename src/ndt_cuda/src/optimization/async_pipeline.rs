@@ -37,8 +37,8 @@
 
 use anyhow::{Context, Result};
 use cuda_ffi::{
-    batch_ndt_blocks_per_slot, batch_persistent_ndt_init_barriers_async_raw,
-    batch_persistent_ndt_launch_async_raw, AsyncDeviceBuffer, CudaEvent, CudaStream, PinnedBuffer,
+    AsyncDeviceBuffer, CudaEvent, CudaStream, PinnedBuffer, batch_ndt_blocks_per_slot,
+    batch_persistent_ndt_init_barriers_async_raw, batch_persistent_ndt_launch_async_raw,
 };
 
 use crate::derivatives::gpu::GpuVoxelData;

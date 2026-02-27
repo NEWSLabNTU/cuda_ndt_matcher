@@ -6,7 +6,7 @@
 use std::ffi::c_int;
 use std::ptr;
 
-use crate::radix_sort::{check_cuda, CudaError, DeviceBuffer};
+use crate::radix_sort::{CudaError, DeviceBuffer, check_cuda};
 
 // ============================================================================
 // FFI Declarations
@@ -14,7 +14,7 @@ use crate::radix_sort::{check_cuda, CudaError, DeviceBuffer};
 
 type CudaStream = *mut std::ffi::c_void;
 
-extern "C" {
+unsafe extern "C" {
     fn cub_segmented_reduce_sum_f32_temp_size(
         temp_storage_bytes: *mut usize,
         num_items: c_int,
@@ -253,21 +253,23 @@ pub unsafe fn segmented_reduce_sum_f32_inplace(
     num_segments: usize,
     d_offsets: u64,
 ) -> Result<(), CudaError> {
-    if num_segments == 0 {
-        return Ok(());
+    unsafe {
+        if num_segments == 0 {
+            return Ok(());
+        }
+
+        check_cuda(cub_segmented_reduce_sum_f32(
+            d_temp as *mut std::ffi::c_void,
+            temp_bytes,
+            d_in as *const f32,
+            d_out as *mut f32,
+            num_segments as c_int,
+            d_offsets as *const c_int,
+            ptr::null_mut(), // default stream
+        ))?;
+
+        check_cuda(cudaDeviceSynchronize())
     }
-
-    check_cuda(cub_segmented_reduce_sum_f32(
-        d_temp as *mut std::ffi::c_void,
-        temp_bytes,
-        d_in as *const f32,
-        d_out as *mut f32,
-        num_segments as c_int,
-        d_offsets as *const c_int,
-        ptr::null_mut(), // default stream
-    ))?;
-
-    check_cuda(cudaDeviceSynchronize())
 }
 
 /// Query temporary storage size for segmented reduce sum (f64).
@@ -298,21 +300,23 @@ pub unsafe fn segmented_reduce_sum_f64_inplace(
     num_segments: usize,
     d_offsets: u64,
 ) -> Result<(), CudaError> {
-    if num_segments == 0 {
-        return Ok(());
+    unsafe {
+        if num_segments == 0 {
+            return Ok(());
+        }
+
+        check_cuda(cub_segmented_reduce_sum_f64(
+            d_temp as *mut std::ffi::c_void,
+            temp_bytes,
+            d_in as *const f64,
+            d_out as *mut f64,
+            num_segments as c_int,
+            d_offsets as *const c_int,
+            ptr::null_mut(), // default stream
+        ))?;
+
+        check_cuda(cudaDeviceSynchronize())
     }
-
-    check_cuda(cub_segmented_reduce_sum_f64(
-        d_temp as *mut std::ffi::c_void,
-        temp_bytes,
-        d_in as *const f64,
-        d_out as *mut f64,
-        num_segments as c_int,
-        d_offsets as *const c_int,
-        ptr::null_mut(), // default stream
-    ))?;
-
-    check_cuda(cudaDeviceSynchronize())
 }
 
 // ============================================================================

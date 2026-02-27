@@ -30,14 +30,14 @@
 //! ```
 
 use crate::async_stream::RawCudaStream;
-use crate::radix_sort::{check_cuda, CudaError};
+use crate::radix_sort::{CudaError, check_cuda};
 use std::ffi::c_int;
 
 // ============================================================================
 // FFI Declarations
 // ============================================================================
 
-extern "C" {
+unsafe extern "C" {
     fn batch_persistent_ndt_blocks_per_slot(num_points: c_int) -> c_int;
 
     fn batch_persistent_ndt_total_blocks(num_slots: c_int, blocks_per_slot: c_int) -> c_int;
@@ -353,45 +353,47 @@ impl BatchPersistentNdt {
         reg_scale: f32,
         reg_enabled: bool,
     ) -> Result<(), CudaError> {
-        let result = batch_persistent_ndt_launch(
-            voxel_means,
-            voxel_inv_covs,
-            hash_table,
-            hash_capacity,
-            gauss_d1,
-            gauss_d2,
-            resolution,
-            all_source_points,
-            all_initial_poses,
-            points_per_slot,
-            all_reduce_buffers,
-            barrier_counters,
-            barrier_senses,
-            all_out_poses,
-            all_out_iterations,
-            all_out_converged,
-            all_out_scores,
-            all_out_hessians,
-            all_out_correspondences,
-            all_out_oscillations,
-            all_out_alpha_sums,
-            num_slots as c_int,
-            blocks_per_slot as c_int,
-            max_points_per_slot as c_int,
-            max_iterations,
-            epsilon,
-            if ls_enabled { 1 } else { 0 },
-            ls_num_candidates,
-            ls_mu,
-            ls_nu,
-            fixed_step_size,
-            reg_ref_x,
-            reg_ref_y,
-            reg_scale,
-            if reg_enabled { 1 } else { 0 },
-        );
+        unsafe {
+            let result = batch_persistent_ndt_launch(
+                voxel_means,
+                voxel_inv_covs,
+                hash_table,
+                hash_capacity,
+                gauss_d1,
+                gauss_d2,
+                resolution,
+                all_source_points,
+                all_initial_poses,
+                points_per_slot,
+                all_reduce_buffers,
+                barrier_counters,
+                barrier_senses,
+                all_out_poses,
+                all_out_iterations,
+                all_out_converged,
+                all_out_scores,
+                all_out_hessians,
+                all_out_correspondences,
+                all_out_oscillations,
+                all_out_alpha_sums,
+                num_slots as c_int,
+                blocks_per_slot as c_int,
+                max_points_per_slot as c_int,
+                max_iterations,
+                epsilon,
+                if ls_enabled { 1 } else { 0 },
+                ls_num_candidates,
+                ls_mu,
+                ls_nu,
+                fixed_step_size,
+                reg_ref_x,
+                reg_ref_y,
+                reg_scale,
+                if reg_enabled { 1 } else { 0 },
+            );
 
-        check_cuda(result)
+            check_cuda(result)
+        }
     }
 
     /// Synchronize device - wait for kernel completion.
@@ -405,7 +407,7 @@ impl BatchPersistentNdt {
     ///
     /// The stream handle must be valid.
     pub unsafe fn stream_sync(stream: RawCudaStream) -> Result<(), CudaError> {
-        check_cuda(batch_persistent_ndt_stream_sync(stream))
+        unsafe { check_cuda(batch_persistent_ndt_stream_sync(stream)) }
     }
 
     /// Launch batch persistent NDT optimization kernel asynchronously.
@@ -461,46 +463,48 @@ impl BatchPersistentNdt {
         reg_enabled: bool,
         stream: RawCudaStream,
     ) -> Result<(), CudaError> {
-        let result = batch_persistent_ndt_launch_async(
-            voxel_means,
-            voxel_inv_covs,
-            hash_table,
-            hash_capacity,
-            gauss_d1,
-            gauss_d2,
-            resolution,
-            all_source_points,
-            all_initial_poses,
-            points_per_slot,
-            all_reduce_buffers,
-            barrier_counters,
-            barrier_senses,
-            all_out_poses,
-            all_out_iterations,
-            all_out_converged,
-            all_out_scores,
-            all_out_hessians,
-            all_out_correspondences,
-            all_out_oscillations,
-            all_out_alpha_sums,
-            num_slots as c_int,
-            blocks_per_slot as c_int,
-            max_points_per_slot as c_int,
-            max_iterations,
-            epsilon,
-            if ls_enabled { 1 } else { 0 },
-            ls_num_candidates,
-            ls_mu,
-            ls_nu,
-            fixed_step_size,
-            reg_ref_x,
-            reg_ref_y,
-            reg_scale,
-            if reg_enabled { 1 } else { 0 },
-            stream,
-        );
+        unsafe {
+            let result = batch_persistent_ndt_launch_async(
+                voxel_means,
+                voxel_inv_covs,
+                hash_table,
+                hash_capacity,
+                gauss_d1,
+                gauss_d2,
+                resolution,
+                all_source_points,
+                all_initial_poses,
+                points_per_slot,
+                all_reduce_buffers,
+                barrier_counters,
+                barrier_senses,
+                all_out_poses,
+                all_out_iterations,
+                all_out_converged,
+                all_out_scores,
+                all_out_hessians,
+                all_out_correspondences,
+                all_out_oscillations,
+                all_out_alpha_sums,
+                num_slots as c_int,
+                blocks_per_slot as c_int,
+                max_points_per_slot as c_int,
+                max_iterations,
+                epsilon,
+                if ls_enabled { 1 } else { 0 },
+                ls_num_candidates,
+                ls_mu,
+                ls_nu,
+                fixed_step_size,
+                reg_ref_x,
+                reg_ref_y,
+                reg_scale,
+                if reg_enabled { 1 } else { 0 },
+                stream,
+            );
 
-        check_cuda(result)
+            check_cuda(result)
+        }
     }
 
     /// Initialize barrier counters and senses to zero asynchronously.
@@ -514,18 +518,20 @@ impl BatchPersistentNdt {
         num_slots: usize,
         stream: RawCudaStream,
     ) -> Result<(), CudaError> {
-        check_cuda(cudaMemsetAsync(
-            barrier_counters as *mut std::ffi::c_void,
-            0,
-            num_slots * std::mem::size_of::<i32>(),
-            stream,
-        ))?;
-        check_cuda(cudaMemsetAsync(
-            barrier_senses as *mut std::ffi::c_void,
-            0,
-            num_slots * std::mem::size_of::<i32>(),
-            stream,
-        ))
+        unsafe {
+            check_cuda(cudaMemsetAsync(
+                barrier_counters as *mut std::ffi::c_void,
+                0,
+                num_slots * std::mem::size_of::<i32>(),
+                stream,
+            ))?;
+            check_cuda(cudaMemsetAsync(
+                barrier_senses as *mut std::ffi::c_void,
+                0,
+                num_slots * std::mem::size_of::<i32>(),
+                stream,
+            ))
+        }
     }
 
     /// Initialize barrier counters and senses to zero.
@@ -540,16 +546,18 @@ impl BatchPersistentNdt {
         barrier_senses: *mut i32,
         num_slots: usize,
     ) -> Result<(), CudaError> {
-        check_cuda(cudaMemset(
-            barrier_counters as *mut std::ffi::c_void,
-            0,
-            num_slots * std::mem::size_of::<i32>(),
-        ))?;
-        check_cuda(cudaMemset(
-            barrier_senses as *mut std::ffi::c_void,
-            0,
-            num_slots * std::mem::size_of::<i32>(),
-        ))
+        unsafe {
+            check_cuda(cudaMemset(
+                barrier_counters as *mut std::ffi::c_void,
+                0,
+                num_slots * std::mem::size_of::<i32>(),
+            ))?;
+            check_cuda(cudaMemset(
+                barrier_senses as *mut std::ffi::c_void,
+                0,
+                num_slots * std::mem::size_of::<i32>(),
+            ))
+        }
     }
 }
 
@@ -615,51 +623,53 @@ pub unsafe fn batch_persistent_ndt_launch_raw(
     reg_scale: f32,
     reg_enabled: bool,
 ) -> Result<(), CudaError> {
-    BatchPersistentNdt::launch(
-        d_voxel_means as *const f32,
-        d_voxel_inv_covs as *const f32,
-        d_hash_table as *const std::ffi::c_void,
-        hash_capacity,
-        gauss_d1,
-        gauss_d2,
-        resolution,
-        d_all_source_points as *const f32,
-        d_all_initial_poses as *const f32,
-        d_points_per_slot as *const i32,
-        d_all_reduce_buffers as *mut f32,
-        d_barrier_counters as *mut i32,
-        d_barrier_senses as *mut i32,
-        d_all_out_poses as *mut f32,
-        d_all_out_iterations as *mut i32,
-        d_all_out_converged as *mut u32,
-        d_all_out_scores as *mut f32,
-        d_all_out_hessians as *mut f32,
-        d_all_out_correspondences as *mut u32,
-        d_all_out_oscillations as *mut u32,
-        d_all_out_alpha_sums as *mut f32,
-        num_slots,
-        blocks_per_slot,
-        max_points_per_slot,
-        max_iterations,
-        epsilon,
-        ls_enabled,
-        ls_num_candidates,
-        ls_mu,
-        ls_nu,
-        fixed_step_size,
-        if d_reg_ref_x == 0 {
-            std::ptr::null()
-        } else {
-            d_reg_ref_x as *const f32
-        },
-        if d_reg_ref_y == 0 {
-            std::ptr::null()
-        } else {
-            d_reg_ref_y as *const f32
-        },
-        reg_scale,
-        reg_enabled,
-    )
+    unsafe {
+        BatchPersistentNdt::launch(
+            d_voxel_means as *const f32,
+            d_voxel_inv_covs as *const f32,
+            d_hash_table as *const std::ffi::c_void,
+            hash_capacity,
+            gauss_d1,
+            gauss_d2,
+            resolution,
+            d_all_source_points as *const f32,
+            d_all_initial_poses as *const f32,
+            d_points_per_slot as *const i32,
+            d_all_reduce_buffers as *mut f32,
+            d_barrier_counters as *mut i32,
+            d_barrier_senses as *mut i32,
+            d_all_out_poses as *mut f32,
+            d_all_out_iterations as *mut i32,
+            d_all_out_converged as *mut u32,
+            d_all_out_scores as *mut f32,
+            d_all_out_hessians as *mut f32,
+            d_all_out_correspondences as *mut u32,
+            d_all_out_oscillations as *mut u32,
+            d_all_out_alpha_sums as *mut f32,
+            num_slots,
+            blocks_per_slot,
+            max_points_per_slot,
+            max_iterations,
+            epsilon,
+            ls_enabled,
+            ls_num_candidates,
+            ls_mu,
+            ls_nu,
+            fixed_step_size,
+            if d_reg_ref_x == 0 {
+                std::ptr::null()
+            } else {
+                d_reg_ref_x as *const f32
+            },
+            if d_reg_ref_y == 0 {
+                std::ptr::null()
+            } else {
+                d_reg_ref_y as *const f32
+            },
+            reg_scale,
+            reg_enabled,
+        )
+    }
 }
 
 /// Initialize barriers using raw device pointers.
@@ -672,11 +682,13 @@ pub unsafe fn batch_persistent_ndt_init_barriers_raw(
     d_barrier_senses: u64,
     num_slots: usize,
 ) -> Result<(), CudaError> {
-    BatchPersistentNdt::init_barriers(
-        d_barrier_counters as *mut i32,
-        d_barrier_senses as *mut i32,
-        num_slots,
-    )
+    unsafe {
+        BatchPersistentNdt::init_barriers(
+            d_barrier_counters as *mut i32,
+            d_barrier_senses as *mut i32,
+            num_slots,
+        )
+    }
 }
 
 /// Synchronize device.
@@ -690,7 +702,7 @@ pub fn batch_persistent_ndt_sync_raw() -> Result<(), CudaError> {
 ///
 /// The stream handle must be valid.
 pub unsafe fn batch_persistent_ndt_stream_sync_raw(stream: RawCudaStream) -> Result<(), CudaError> {
-    BatchPersistentNdt::stream_sync(stream)
+    unsafe { BatchPersistentNdt::stream_sync(stream) }
 }
 
 /// Launch batch NDT kernel asynchronously using raw device pointers.
@@ -738,52 +750,54 @@ pub unsafe fn batch_persistent_ndt_launch_async_raw(
     reg_enabled: bool,
     stream: RawCudaStream,
 ) -> Result<(), CudaError> {
-    BatchPersistentNdt::launch_async(
-        d_voxel_means as *const f32,
-        d_voxel_inv_covs as *const f32,
-        d_hash_table as *const std::ffi::c_void,
-        hash_capacity,
-        gauss_d1,
-        gauss_d2,
-        resolution,
-        d_all_source_points as *const f32,
-        d_all_initial_poses as *const f32,
-        d_points_per_slot as *const i32,
-        d_all_reduce_buffers as *mut f32,
-        d_barrier_counters as *mut i32,
-        d_barrier_senses as *mut i32,
-        d_all_out_poses as *mut f32,
-        d_all_out_iterations as *mut i32,
-        d_all_out_converged as *mut u32,
-        d_all_out_scores as *mut f32,
-        d_all_out_hessians as *mut f32,
-        d_all_out_correspondences as *mut u32,
-        d_all_out_oscillations as *mut u32,
-        d_all_out_alpha_sums as *mut f32,
-        num_slots,
-        blocks_per_slot,
-        max_points_per_slot,
-        max_iterations,
-        epsilon,
-        ls_enabled,
-        ls_num_candidates,
-        ls_mu,
-        ls_nu,
-        fixed_step_size,
-        if d_reg_ref_x == 0 {
-            std::ptr::null()
-        } else {
-            d_reg_ref_x as *const f32
-        },
-        if d_reg_ref_y == 0 {
-            std::ptr::null()
-        } else {
-            d_reg_ref_y as *const f32
-        },
-        reg_scale,
-        reg_enabled,
-        stream,
-    )
+    unsafe {
+        BatchPersistentNdt::launch_async(
+            d_voxel_means as *const f32,
+            d_voxel_inv_covs as *const f32,
+            d_hash_table as *const std::ffi::c_void,
+            hash_capacity,
+            gauss_d1,
+            gauss_d2,
+            resolution,
+            d_all_source_points as *const f32,
+            d_all_initial_poses as *const f32,
+            d_points_per_slot as *const i32,
+            d_all_reduce_buffers as *mut f32,
+            d_barrier_counters as *mut i32,
+            d_barrier_senses as *mut i32,
+            d_all_out_poses as *mut f32,
+            d_all_out_iterations as *mut i32,
+            d_all_out_converged as *mut u32,
+            d_all_out_scores as *mut f32,
+            d_all_out_hessians as *mut f32,
+            d_all_out_correspondences as *mut u32,
+            d_all_out_oscillations as *mut u32,
+            d_all_out_alpha_sums as *mut f32,
+            num_slots,
+            blocks_per_slot,
+            max_points_per_slot,
+            max_iterations,
+            epsilon,
+            ls_enabled,
+            ls_num_candidates,
+            ls_mu,
+            ls_nu,
+            fixed_step_size,
+            if d_reg_ref_x == 0 {
+                std::ptr::null()
+            } else {
+                d_reg_ref_x as *const f32
+            },
+            if d_reg_ref_y == 0 {
+                std::ptr::null()
+            } else {
+                d_reg_ref_y as *const f32
+            },
+            reg_scale,
+            reg_enabled,
+            stream,
+        )
+    }
 }
 
 /// Initialize barriers asynchronously using raw device pointers.
@@ -797,12 +811,14 @@ pub unsafe fn batch_persistent_ndt_init_barriers_async_raw(
     num_slots: usize,
     stream: RawCudaStream,
 ) -> Result<(), CudaError> {
-    BatchPersistentNdt::init_barriers_async(
-        d_barrier_counters as *mut i32,
-        d_barrier_senses as *mut i32,
-        num_slots,
-        stream,
-    )
+    unsafe {
+        BatchPersistentNdt::init_barriers_async(
+            d_barrier_counters as *mut i32,
+            d_barrier_senses as *mut i32,
+            num_slots,
+            stream,
+        )
+    }
 }
 
 // ============================================================================
@@ -864,53 +880,55 @@ pub unsafe fn batch_persistent_ndt_launch_warp_optimized_raw(
     reg_enabled: bool,
     stream: RawCudaStream,
 ) -> Result<(), CudaError> {
-    let result = batch_persistent_ndt_launch_warp_optimized(
-        d_voxel_means as *const f32,
-        d_voxel_inv_covs as *const f32,
-        d_hash_table as *const std::ffi::c_void,
-        hash_capacity,
-        gauss_d1,
-        gauss_d2,
-        resolution,
-        d_all_source_points as *const f32,
-        d_all_initial_poses as *const f32,
-        d_points_per_slot as *const c_int,
-        d_all_reduce_buffers as *mut f32,
-        d_barrier_counters as *mut c_int,
-        d_barrier_senses as *mut c_int,
-        d_all_out_poses as *mut f32,
-        d_all_out_iterations as *mut c_int,
-        d_all_out_converged as *mut u32,
-        d_all_out_scores as *mut f32,
-        d_all_out_hessians as *mut f32,
-        d_all_out_correspondences as *mut u32,
-        d_all_out_oscillations as *mut u32,
-        d_all_out_alpha_sums as *mut f32,
-        num_slots as c_int,
-        blocks_per_slot as c_int,
-        max_points_per_slot as c_int,
-        max_iterations,
-        epsilon,
-        if ls_enabled { 1 } else { 0 },
-        ls_num_candidates,
-        ls_mu,
-        ls_nu,
-        fixed_step_size,
-        if d_reg_ref_x == 0 {
-            std::ptr::null()
-        } else {
-            d_reg_ref_x as *const f32
-        },
-        if d_reg_ref_y == 0 {
-            std::ptr::null()
-        } else {
-            d_reg_ref_y as *const f32
-        },
-        reg_scale,
-        if reg_enabled { 1 } else { 0 },
-        stream,
-    );
-    check_cuda(result)
+    unsafe {
+        let result = batch_persistent_ndt_launch_warp_optimized(
+            d_voxel_means as *const f32,
+            d_voxel_inv_covs as *const f32,
+            d_hash_table as *const std::ffi::c_void,
+            hash_capacity,
+            gauss_d1,
+            gauss_d2,
+            resolution,
+            d_all_source_points as *const f32,
+            d_all_initial_poses as *const f32,
+            d_points_per_slot as *const c_int,
+            d_all_reduce_buffers as *mut f32,
+            d_barrier_counters as *mut c_int,
+            d_barrier_senses as *mut c_int,
+            d_all_out_poses as *mut f32,
+            d_all_out_iterations as *mut c_int,
+            d_all_out_converged as *mut u32,
+            d_all_out_scores as *mut f32,
+            d_all_out_hessians as *mut f32,
+            d_all_out_correspondences as *mut u32,
+            d_all_out_oscillations as *mut u32,
+            d_all_out_alpha_sums as *mut f32,
+            num_slots as c_int,
+            blocks_per_slot as c_int,
+            max_points_per_slot as c_int,
+            max_iterations,
+            epsilon,
+            if ls_enabled { 1 } else { 0 },
+            ls_num_candidates,
+            ls_mu,
+            ls_nu,
+            fixed_step_size,
+            if d_reg_ref_x == 0 {
+                std::ptr::null()
+            } else {
+                d_reg_ref_x as *const f32
+            },
+            if d_reg_ref_y == 0 {
+                std::ptr::null()
+            } else {
+                d_reg_ref_y as *const f32
+            },
+            reg_scale,
+            if reg_enabled { 1 } else { 0 },
+            stream,
+        );
+        check_cuda(result)
+    }
 }
 
 // ============================================================================

@@ -1,7 +1,7 @@
 use geometry_msgs::msg::Pose;
 #[cfg(feature = "debug-markers")]
 use ndt_cuda::AlignmentDebug;
-use rclrs::{log_error, Publisher};
+use rclrs::{Publisher, log_error};
 use std_msgs::msg::Header;
 use tf2_msgs::msg::TFMessage;
 use visualization_msgs::msg::Marker;

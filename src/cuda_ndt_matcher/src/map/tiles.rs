@@ -504,8 +504,10 @@ mod tests {
         module.load_full_map(points.clone());
 
         assert_eq!(module.tile_count(), 1);
-        assert!(module
-            .get_loaded_tile_ids()
-            .contains(&"full_map".to_string()));
+        assert!(
+            module
+                .get_loaded_tile_ids()
+                .contains(&"full_map".to_string())
+        );
     }
 }

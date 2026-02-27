@@ -644,7 +644,7 @@ mod tests {
 
     use super::*;
     use crate::derivatives::GaussianParams;
-    use crate::scoring::{compute_nvtl, compute_transform_probability, NvtlConfig};
+    use crate::scoring::{NvtlConfig, compute_nvtl, compute_transform_probability};
     use crate::voxel_grid::VoxelGrid;
     use approx::assert_relative_eq;
     use nalgebra::Isometry3;

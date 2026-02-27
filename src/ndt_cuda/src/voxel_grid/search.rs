@@ -21,8 +21,8 @@
 //! }
 //! ```
 
-use kiddo::immutable::float::kdtree::ImmutableKdTree;
 use kiddo::SquaredEuclidean;
+use kiddo::immutable::float::kdtree::ImmutableKdTree;
 
 use super::Voxel;
 

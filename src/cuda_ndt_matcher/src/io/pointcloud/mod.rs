@@ -11,4 +11,4 @@ pub(crate) use cpu::from_pointcloud2;
 pub(crate) use cpu::to_pointcloud2;
 #[cfg(feature = "debug-markers")]
 pub(crate) use cpu::to_pointcloud2_with_rgb;
-pub(crate) use gpu::{filter_sensor_points, PointFilterParams};
+pub(crate) use gpu::{PointFilterParams, filter_sensor_points};

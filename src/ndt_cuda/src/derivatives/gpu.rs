@@ -2693,7 +2693,7 @@ pub fn compute_point_jacobians_cpu(source_points: &[[f32; 3]], pose: &[f64; 6]) 
         jacobians.push(0.0_f32); // ∂x'/∂ty
         jacobians.push(0.0_f32); // ∂x'/∂tz
         jacobians.push(0.0_f32); // ∂x'/∂roll = 0
-                                 // ∂x'/∂pitch: j_ang[(2,:)] = [-sp*cy, sp*sy, cp]
+        // ∂x'/∂pitch: j_ang[(2,:)] = [-sp*cy, sp*sy, cp]
         jacobians.push(((-sp * cy) * x + (sp * sy) * y + cp * z) as f32);
         // ∂x'/∂yaw: j_ang[(5,:)] = [-cp*sy, -cp*cy, 0]
         jacobians.push(((-cp * sy) * x + (-cp * cy) * y) as f32);
@@ -2702,7 +2702,7 @@ pub fn compute_point_jacobians_cpu(source_points: &[[f32; 3]], pose: &[f64; 6]) 
         jacobians.push(0.0_f32); // ∂y'/∂tx
         jacobians.push(1.0_f32); // ∂y'/∂ty
         jacobians.push(0.0_f32); // ∂y'/∂tz
-                                 // ∂y'/∂roll: j_ang[(0,:)] = [-sr*sy + cr*sp*cy, -sr*cy - cr*sp*sy, -cr*cp]
+        // ∂y'/∂roll: j_ang[(0,:)] = [-sr*sy + cr*sp*cy, -sr*cy - cr*sp*sy, -cr*cp]
         jacobians.push(
             ((-sr * sy + cr * sp * cy) * x + (-sr * cy - cr * sp * sy) * y + (-cr * cp) * z) as f32,
         );
@@ -2715,7 +2715,7 @@ pub fn compute_point_jacobians_cpu(source_points: &[[f32; 3]], pose: &[f64; 6]) 
         jacobians.push(0.0_f32); // ∂z'/∂tx
         jacobians.push(0.0_f32); // ∂z'/∂ty
         jacobians.push(1.0_f32); // ∂z'/∂tz
-                                 // ∂z'/∂roll: j_ang[(1,:)] = [cr*sy + sr*sp*cy, cr*cy - sr*sp*sy, -sr*cp]
+        // ∂z'/∂roll: j_ang[(1,:)] = [cr*sy + sr*sp*cy, cr*cy - sr*sp*sy, -sr*cp]
         jacobians.push(
             ((cr * sy + sr * sp * cy) * x + (cr * cy - sr * sp * sy) * y + (-sr * cp) * z) as f32,
         );

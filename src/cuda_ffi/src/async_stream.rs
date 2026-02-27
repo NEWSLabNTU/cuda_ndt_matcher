@@ -34,7 +34,7 @@
 //! event.synchronize()?;
 //! ```
 
-use crate::radix_sort::{check_cuda, CudaError};
+use crate::radix_sort::{CudaError, check_cuda};
 use std::ffi::c_int;
 use std::marker::PhantomData;
 use std::ptr;
@@ -47,7 +47,7 @@ use std::ptr;
 pub type RawCudaStream = *mut std::ffi::c_void;
 pub type RawCudaEvent = *mut std::ffi::c_void;
 
-extern "C" {
+unsafe extern "C" {
     // Pinned memory
     fn cuda_malloc_host(ptr: *mut *mut std::ffi::c_void, size: usize) -> c_int;
     fn cuda_free_host(ptr: *mut std::ffi::c_void) -> c_int;
@@ -168,7 +168,7 @@ impl CudaStream {
         src: *const std::ffi::c_void,
         count: usize,
     ) -> Result<(), CudaError> {
-        check_cuda(cuda_memcpy_async_h2d(dst, src, count, self.handle))
+        unsafe { check_cuda(cuda_memcpy_async_h2d(dst, src, count, self.handle)) }
     }
 
     /// Async device-to-host memory copy.
@@ -182,7 +182,7 @@ impl CudaStream {
         src: *const std::ffi::c_void,
         count: usize,
     ) -> Result<(), CudaError> {
-        check_cuda(cuda_memcpy_async_d2h(dst, src, count, self.handle))
+        unsafe { check_cuda(cuda_memcpy_async_d2h(dst, src, count, self.handle)) }
     }
 
     /// Async device-to-device memory copy.
@@ -195,7 +195,7 @@ impl CudaStream {
         src: *const std::ffi::c_void,
         count: usize,
     ) -> Result<(), CudaError> {
-        check_cuda(cuda_memcpy_async_d2d(dst, src, count, self.handle))
+        unsafe { check_cuda(cuda_memcpy_async_d2d(dst, src, count, self.handle)) }
     }
 
     /// Async memset.
@@ -208,7 +208,7 @@ impl CudaStream {
         value: i32,
         count: usize,
     ) -> Result<(), CudaError> {
-        check_cuda(cuda_memset_async(dst, value, count, self.handle))
+        unsafe { check_cuda(cuda_memset_async(dst, value, count, self.handle)) }
     }
 
     /// Make this stream wait on an event.

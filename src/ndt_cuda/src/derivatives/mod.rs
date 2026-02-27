@@ -28,9 +28,9 @@ pub mod types;
 pub use angular::AngularDerivatives;
 pub use cpu::{compute_derivatives_cpu, compute_derivatives_cpu_with_metric};
 pub use gpu::{
-    compute_ndt_hessian_kernel, compute_ndt_hessian_kernel_v2, compute_point_hessians_cpu,
-    compute_point_jacobians_cpu, pose_to_transform_matrix, GpuDerivativeResult, GpuDerivatives,
-    GpuVoxelData, MAX_NEIGHBORS,
+    GpuDerivativeResult, GpuDerivatives, GpuVoxelData, MAX_NEIGHBORS, compute_ndt_hessian_kernel,
+    compute_ndt_hessian_kernel_v2, compute_point_hessians_cpu, compute_point_jacobians_cpu,
+    pose_to_transform_matrix,
 };
 pub use gpu_batch::{
     check_convergence_batch_kernel, compute_jacobians_batch_kernel,

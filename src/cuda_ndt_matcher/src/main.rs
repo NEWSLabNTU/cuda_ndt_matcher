@@ -9,7 +9,7 @@ mod visualization;
 
 use anyhow::Result;
 use node::NdtScanMatcherNode;
-use rclrs::{log_info, Context, CreateBasicExecutor, RclrsErrorFilter, SpinOptions};
+use rclrs::{Context, CreateBasicExecutor, RclrsErrorFilter, SpinOptions, log_info};
 
 const NODE_NAME: &str = "ndt_scan_matcher";
 

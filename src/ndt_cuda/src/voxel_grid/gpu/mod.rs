@@ -37,18 +37,18 @@ pub mod statistics;
 pub use grid::{GpuVoxelGrid, GpuVoxelGridConfig, ValidVoxel};
 
 // Re-export CPU reference implementations (GPU launchers to be added)
-pub use morton::{compute_morton_codes_cpu, morton_decode_3d, MortonCodeResult};
+pub use morton::{MortonCodeResult, compute_morton_codes_cpu, morton_decode_3d};
 pub use radius_search::{
-    radius_search_brute_force_cpu, radius_search_cpu, RadiusSearchConfig, RadiusSearchResult,
+    RadiusSearchConfig, RadiusSearchResult, radius_search_brute_force_cpu, radius_search_cpu,
 };
 pub use radix_sort::{
-    radix_sort_by_key, radix_sort_by_key_cpu, radix_sort_by_key_gpu, RadixSortResult,
+    RadixSortResult, radix_sort_by_key, radix_sort_by_key_cpu, radix_sort_by_key_gpu,
 };
 pub use scan::{exclusive_scan_cpu, inclusive_scan_cpu};
 pub use segments::{
-    detect_segments_cpu, detect_segments_with_lengths_cpu, SegmentResult, SegmentResultWithLengths,
+    SegmentResult, SegmentResultWithLengths, detect_segments_cpu, detect_segments_with_lengths_cpu,
 };
-pub use statistics::{compute_voxel_statistics_cpu, VoxelStatistics, VoxelSums};
+pub use statistics::{VoxelStatistics, VoxelSums, compute_voxel_statistics_cpu};
 
 // Pipeline for zero-copy GPU execution
 pub use pipeline::{GpuPipelineBuffers, PipelineResult};

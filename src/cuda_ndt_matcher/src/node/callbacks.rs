@@ -3,13 +3,13 @@ use geometry_msgs::msg::{PoseArray, PoseStamped, PoseWithCovariance, PoseWithCov
 use nalgebra::Vector3;
 use rclrs::{log_debug, log_error, log_info, log_warn};
 use sensor_msgs::msg::PointCloud2;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 use std_msgs::msg::Header;
 use visualization_msgs::msg::MarkerArray;
 
-use super::state::{NdtScanMatcherNode, OnPointsContext, NODE_NAME};
+use super::state::{NODE_NAME, NdtScanMatcherNode, OnPointsContext};
 use super::{processing, publishers};
 use crate::alignment::batch::QueuedScan;
 use crate::alignment::covariance;
@@ -126,9 +126,14 @@ impl NdtScanMatcherNode {
                     log_info!(
                         NODE_NAME,
                         "[INTERP] ts={}.{:09} pos=({:.3}, {:.3}, {:.3}) rpy=({:.3}, {:.3}, {:.3}) sensor_ts={}",
-                        ts.sec, ts.nanosec,
-                        p.x, p.y, p.z,
-                        roll.to_degrees(), pitch.to_degrees(), yaw.to_degrees(),
+                        ts.sec,
+                        ts.nanosec,
+                        p.x,
+                        p.y,
+                        p.z,
+                        roll.to_degrees(),
+                        pitch.to_degrees(),
+                        yaw.to_degrees(),
                         sensor_time_ns
                     );
                 }

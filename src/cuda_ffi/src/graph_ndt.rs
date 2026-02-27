@@ -36,7 +36,7 @@
 //! ```
 
 use crate::async_stream::CudaStream;
-use crate::radix_sort::{check_cuda, CudaError};
+use crate::radix_sort::{CudaError, check_cuda};
 use std::ffi::c_int;
 
 // ============================================================================
@@ -200,7 +200,7 @@ pub struct GraphNdtOutput {
 // FFI declarations
 // ============================================================================
 
-extern "C" {
+unsafe extern "C" {
     fn ndt_graph_get_buffer_sizes(
         state_size: *mut u32,
         reduce_size: *mut u32,
@@ -336,14 +336,16 @@ pub unsafe fn graph_ndt_launch_init_raw(
     d_ls_buffer: u64,
     stream: Option<&CudaStream>,
 ) -> Result<(), CudaError> {
-    let stream_ptr = stream.map_or(std::ptr::null_mut(), |s| s.as_raw());
-    check_cuda(ndt_graph_launch_init(
-        d_initial_pose as *const f32,
-        d_state_buffer as *mut f32,
-        d_reduce_buffer as *mut f32,
-        d_ls_buffer as *mut f32,
-        stream_ptr,
-    ))
+    unsafe {
+        let stream_ptr = stream.map_or(std::ptr::null_mut(), |s| s.as_raw());
+        check_cuda(ndt_graph_launch_init(
+            d_initial_pose as *const f32,
+            d_state_buffer as *mut f32,
+            d_reduce_buffer as *mut f32,
+            d_ls_buffer as *mut f32,
+            stream_ptr,
+        ))
+    }
 }
 
 /// Launch compute kernel using raw device pointers.
@@ -361,18 +363,20 @@ pub unsafe fn graph_ndt_launch_compute_raw(
     d_reduce_buffer: u64,
     stream: Option<&CudaStream>,
 ) -> Result<(), CudaError> {
-    let stream_ptr = stream.map_or(std::ptr::null_mut(), |s| s.as_raw());
-    check_cuda(ndt_graph_launch_compute(
-        d_source_points as *const f32,
-        d_voxel_means as *const f32,
-        d_voxel_inv_covs as *const f32,
-        d_hash_table as *const std::ffi::c_void,
-        config,
-        d_state_buffer as *const f32,
-        d_reduce_buffer as *mut f32,
-        config.num_points,
-        stream_ptr,
-    ))
+    unsafe {
+        let stream_ptr = stream.map_or(std::ptr::null_mut(), |s| s.as_raw());
+        check_cuda(ndt_graph_launch_compute(
+            d_source_points as *const f32,
+            d_voxel_means as *const f32,
+            d_voxel_inv_covs as *const f32,
+            d_hash_table as *const std::ffi::c_void,
+            config,
+            d_state_buffer as *const f32,
+            d_reduce_buffer as *mut f32,
+            config.num_points,
+            stream_ptr,
+        ))
+    }
 }
 
 /// Launch solve kernel using raw device pointers.
@@ -388,15 +392,17 @@ pub unsafe fn graph_ndt_launch_solve_raw(
     d_output_buffer: u64,
     stream: Option<&CudaStream>,
 ) -> Result<(), CudaError> {
-    let stream_ptr = stream.map_or(std::ptr::null_mut(), |s| s.as_raw());
-    check_cuda(ndt_graph_launch_solve(
-        config,
-        d_state_buffer as *mut f32,
-        d_reduce_buffer as *mut f32,
-        d_ls_buffer as *mut f32,
-        d_output_buffer as *mut f32,
-        stream_ptr,
-    ))
+    unsafe {
+        let stream_ptr = stream.map_or(std::ptr::null_mut(), |s| s.as_raw());
+        check_cuda(ndt_graph_launch_solve(
+            config,
+            d_state_buffer as *mut f32,
+            d_reduce_buffer as *mut f32,
+            d_ls_buffer as *mut f32,
+            d_output_buffer as *mut f32,
+            stream_ptr,
+        ))
+    }
 }
 
 /// Launch line search kernel using raw device pointers.
@@ -414,18 +420,20 @@ pub unsafe fn graph_ndt_launch_linesearch_raw(
     d_ls_buffer: u64,
     stream: Option<&CudaStream>,
 ) -> Result<(), CudaError> {
-    let stream_ptr = stream.map_or(std::ptr::null_mut(), |s| s.as_raw());
-    check_cuda(ndt_graph_launch_linesearch(
-        d_source_points as *const f32,
-        d_voxel_means as *const f32,
-        d_voxel_inv_covs as *const f32,
-        d_hash_table as *const std::ffi::c_void,
-        config,
-        d_state_buffer as *const f32,
-        d_ls_buffer as *mut f32,
-        config.num_points,
-        stream_ptr,
-    ))
+    unsafe {
+        let stream_ptr = stream.map_or(std::ptr::null_mut(), |s| s.as_raw());
+        check_cuda(ndt_graph_launch_linesearch(
+            d_source_points as *const f32,
+            d_voxel_means as *const f32,
+            d_voxel_inv_covs as *const f32,
+            d_hash_table as *const std::ffi::c_void,
+            config,
+            d_state_buffer as *const f32,
+            d_ls_buffer as *mut f32,
+            config.num_points,
+            stream_ptr,
+        ))
+    }
 }
 
 /// Launch update kernel using raw device pointers.
@@ -442,21 +450,23 @@ pub unsafe fn graph_ndt_launch_update_raw(
     d_debug_buffer: u64,
     stream: Option<&CudaStream>,
 ) -> Result<(), CudaError> {
-    let stream_ptr = stream.map_or(std::ptr::null_mut(), |s| s.as_raw());
-    let debug_ptr = if d_debug_buffer == 0 {
-        std::ptr::null_mut()
-    } else {
-        d_debug_buffer as *mut f32
-    };
-    check_cuda(ndt_graph_launch_update(
-        config,
-        d_state_buffer as *mut f32,
-        d_reduce_buffer as *mut f32,
-        d_ls_buffer as *mut f32,
-        d_output_buffer as *mut f32,
-        debug_ptr,
-        stream_ptr,
-    ))
+    unsafe {
+        let stream_ptr = stream.map_or(std::ptr::null_mut(), |s| s.as_raw());
+        let debug_ptr = if d_debug_buffer == 0 {
+            std::ptr::null_mut()
+        } else {
+            d_debug_buffer as *mut f32
+        };
+        check_cuda(ndt_graph_launch_update(
+            config,
+            d_state_buffer as *mut f32,
+            d_reduce_buffer as *mut f32,
+            d_ls_buffer as *mut f32,
+            d_output_buffer as *mut f32,
+            debug_ptr,
+            stream_ptr,
+        ))
+    }
 }
 
 /// Check if optimization has converged.
@@ -464,12 +474,14 @@ pub unsafe fn graph_ndt_launch_update_raw(
 /// # Safety
 /// `d_state_buffer` must be a valid device pointer.
 pub unsafe fn graph_ndt_check_converged(d_state_buffer: u64) -> Result<bool, CudaError> {
-    let mut converged = false;
-    check_cuda(ndt_graph_check_converged(
-        d_state_buffer as *const f32,
-        &mut converged,
-    ))?;
-    Ok(converged)
+    unsafe {
+        let mut converged = false;
+        check_cuda(ndt_graph_check_converged(
+            d_state_buffer as *const f32,
+            &mut converged,
+        ))?;
+        Ok(converged)
+    }
 }
 
 /// Get current iteration count.
@@ -477,12 +489,14 @@ pub unsafe fn graph_ndt_check_converged(d_state_buffer: u64) -> Result<bool, Cud
 /// # Safety
 /// `d_state_buffer` must be a valid device pointer.
 pub unsafe fn graph_ndt_get_iterations(d_state_buffer: u64) -> Result<i32, CudaError> {
-    let mut iterations: i32 = 0;
-    check_cuda(ndt_graph_get_iterations(
-        d_state_buffer as *const f32,
-        &mut iterations,
-    ))?;
-    Ok(iterations)
+    unsafe {
+        let mut iterations: i32 = 0;
+        check_cuda(ndt_graph_get_iterations(
+            d_state_buffer as *const f32,
+            &mut iterations,
+        ))?;
+        Ok(iterations)
+    }
 }
 
 /// Run a single iteration (compute + solve + [linesearch] + update).
@@ -503,54 +517,56 @@ pub unsafe fn graph_ndt_run_iteration_raw(
     d_debug_buffer: u64,
     stream: Option<&CudaStream>,
 ) -> Result<(), CudaError> {
-    // K2: Compute
-    graph_ndt_launch_compute_raw(
-        d_source_points,
-        d_voxel_means,
-        d_voxel_inv_covs,
-        d_hash_table,
-        config,
-        d_state_buffer,
-        d_reduce_buffer,
-        stream,
-    )?;
-
-    // K3: Solve
-    graph_ndt_launch_solve_raw(
-        config,
-        d_state_buffer,
-        d_reduce_buffer,
-        d_ls_buffer,
-        d_output_buffer,
-        stream,
-    )?;
-
-    // K4: Line search (if enabled)
-    if config.ls_enabled != 0 {
-        graph_ndt_launch_linesearch_raw(
+    unsafe {
+        // K2: Compute
+        graph_ndt_launch_compute_raw(
             d_source_points,
             d_voxel_means,
             d_voxel_inv_covs,
             d_hash_table,
             config,
             d_state_buffer,
-            d_ls_buffer,
+            d_reduce_buffer,
             stream,
         )?;
+
+        // K3: Solve
+        graph_ndt_launch_solve_raw(
+            config,
+            d_state_buffer,
+            d_reduce_buffer,
+            d_ls_buffer,
+            d_output_buffer,
+            stream,
+        )?;
+
+        // K4: Line search (if enabled)
+        if config.ls_enabled != 0 {
+            graph_ndt_launch_linesearch_raw(
+                d_source_points,
+                d_voxel_means,
+                d_voxel_inv_covs,
+                d_hash_table,
+                config,
+                d_state_buffer,
+                d_ls_buffer,
+                stream,
+            )?;
+        }
+
+        // K5: Update
+        graph_ndt_launch_update_raw(
+            config,
+            d_state_buffer,
+            d_reduce_buffer,
+            d_ls_buffer,
+            d_output_buffer,
+            d_debug_buffer,
+            stream,
+        )?;
+
+        Ok(())
     }
-
-    // K5: Update
-    graph_ndt_launch_update_raw(
-        config,
-        d_state_buffer,
-        d_reduce_buffer,
-        d_ls_buffer,
-        d_output_buffer,
-        d_debug_buffer,
-        stream,
-    )?;
-
-    Ok(())
 }
 
 // ============================================================================
@@ -717,22 +733,24 @@ pub unsafe fn graph_ndt_run_iterations_batched_raw(
     num_iterations: u32,
     stream: Option<&CudaStream>,
 ) -> Result<(), CudaError> {
-    for _ in 0..num_iterations {
-        graph_ndt_run_iteration_raw(
-            d_source_points,
-            d_voxel_means,
-            d_voxel_inv_covs,
-            d_hash_table,
-            config,
-            d_state_buffer,
-            d_reduce_buffer,
-            d_ls_buffer,
-            d_output_buffer,
-            d_debug_buffer,
-            stream,
-        )?;
+    unsafe {
+        for _ in 0..num_iterations {
+            graph_ndt_run_iteration_raw(
+                d_source_points,
+                d_voxel_means,
+                d_voxel_inv_covs,
+                d_hash_table,
+                config,
+                d_state_buffer,
+                d_reduce_buffer,
+                d_ls_buffer,
+                d_output_buffer,
+                d_debug_buffer,
+                stream,
+            )?;
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 /// Run full NDT alignment using graph-based kernels.
@@ -756,65 +774,67 @@ pub unsafe fn graph_ndt_align_raw(
     d_output_buffer: u64,
     d_debug_buffer: u64,
 ) -> Result<GraphNdtOutput, CudaError> {
-    // K1: Initialize
-    graph_ndt_launch_init_raw(
-        d_initial_pose,
-        d_state_buffer,
-        d_reduce_buffer,
-        d_ls_buffer,
-        None,
-    )?;
-    check_cuda(cudaDeviceSynchronize())?;
-
-    // Iteration loop
-    for _ in 0..config.max_iterations {
-        graph_ndt_run_iteration_raw(
-            d_source_points,
-            d_voxel_means,
-            d_voxel_inv_covs,
-            d_hash_table,
-            config,
+    unsafe {
+        // K1: Initialize
+        graph_ndt_launch_init_raw(
+            d_initial_pose,
             d_state_buffer,
             d_reduce_buffer,
             d_ls_buffer,
-            d_output_buffer,
-            d_debug_buffer,
             None,
         )?;
         check_cuda(cudaDeviceSynchronize())?;
 
-        // Check convergence
-        if graph_ndt_check_converged(d_state_buffer)? {
-            break;
+        // Iteration loop
+        for _ in 0..config.max_iterations {
+            graph_ndt_run_iteration_raw(
+                d_source_points,
+                d_voxel_means,
+                d_voxel_inv_covs,
+                d_hash_table,
+                config,
+                d_state_buffer,
+                d_reduce_buffer,
+                d_ls_buffer,
+                d_output_buffer,
+                d_debug_buffer,
+                None,
+            )?;
+            check_cuda(cudaDeviceSynchronize())?;
+
+            // Check convergence
+            if graph_ndt_check_converged(d_state_buffer)? {
+                break;
+            }
         }
+
+        // Read output
+        let mut output_data = [0.0f32; OUTPUT_BUFFER_SIZE];
+        check_cuda(cudaMemcpy(
+            output_data.as_mut_ptr() as *mut std::ffi::c_void,
+            d_output_buffer as *const std::ffi::c_void,
+            OUTPUT_BUFFER_SIZE * std::mem::size_of::<f32>(),
+            CUDA_MEMCPY_DEVICE_TO_HOST,
+        ))?;
+
+        // Parse output
+        let mut pose = [0.0f32; 6];
+        pose.copy_from_slice(&output_data[0..6]);
+
+        let mut hessian = [0.0f32; 36];
+        hessian.copy_from_slice(&output_data[9..45]);
+
+        Ok(GraphNdtOutput {
+            pose,
+            iterations: output_data[6] as i32,
+            converged: output_data[7] > 0.5,
+            score: output_data[8],
+            hessian,
+            num_correspondences: output_data[45] as u32,
+            max_oscillation_count: output_data[46] as u32,
+            avg_alpha: output_data[47],
+        })
     }
-
-    // Read output
-    let mut output_data = [0.0f32; OUTPUT_BUFFER_SIZE];
-    check_cuda(cudaMemcpy(
-        output_data.as_mut_ptr() as *mut std::ffi::c_void,
-        d_output_buffer as *const std::ffi::c_void,
-        OUTPUT_BUFFER_SIZE * std::mem::size_of::<f32>(),
-        CUDA_MEMCPY_DEVICE_TO_HOST,
-    ))?;
-
-    // Parse output
-    let mut pose = [0.0f32; 6];
-    pose.copy_from_slice(&output_data[0..6]);
-
-    let mut hessian = [0.0f32; 36];
-    hessian.copy_from_slice(&output_data[9..45]);
-
-    Ok(GraphNdtOutput {
-        pose,
-        iterations: output_data[6] as i32,
-        converged: output_data[7] > 0.5,
-        score: output_data[8],
-        hessian,
-        num_correspondences: output_data[45] as u32,
-        max_oscillation_count: output_data[46] as u32,
-        avg_alpha: output_data[47],
-    })
 }
 
 /// Run full NDT alignment with profiling.
@@ -837,139 +857,141 @@ pub unsafe fn graph_ndt_align_profiled_raw(
     d_output_buffer: u64,
     d_debug_buffer: u64,
 ) -> Result<(GraphNdtOutput, GraphNdtProfile), CudaError> {
-    use crate::async_stream::CudaEvent;
-    use std::time::Instant;
+    unsafe {
+        use crate::async_stream::CudaEvent;
+        use std::time::Instant;
 
-    let mut profile = GraphNdtProfile::new();
-    let start_time = Instant::now();
+        let mut profile = GraphNdtProfile::new();
+        let start_time = Instant::now();
 
-    // Create events for timing
-    let event_start = CudaEvent::new()?;
-    let event_end = CudaEvent::new()?;
+        // Create events for timing
+        let event_start = CudaEvent::new()?;
+        let event_end = CudaEvent::new()?;
 
-    // K1: Initialize
-    event_start.record_default()?;
-    graph_ndt_launch_init_raw(
-        d_initial_pose,
-        d_state_buffer,
-        d_reduce_buffer,
-        d_ls_buffer,
-        None,
-    )?;
-    event_end.record_default()?;
-    event_end.synchronize()?;
-    profile.init.total_ms += event_end.elapsed_time(&event_start)?;
-    profile.init.count += 1;
-
-    // Iteration loop
-    let mut iterations = 0u32;
-    for _ in 0..config.max_iterations {
-        iterations += 1;
-
-        // K2: Compute
+        // K1: Initialize
         event_start.record_default()?;
-        graph_ndt_launch_compute_raw(
-            d_source_points,
-            d_voxel_means,
-            d_voxel_inv_covs,
-            d_hash_table,
-            config,
-            d_state_buffer,
-            d_reduce_buffer,
-            None,
-        )?;
-        event_end.record_default()?;
-        event_end.synchronize()?;
-        profile.compute.total_ms += event_end.elapsed_time(&event_start)?;
-        profile.compute.count += 1;
-
-        // K3: Solve
-        event_start.record_default()?;
-        graph_ndt_launch_solve_raw(
-            config,
+        graph_ndt_launch_init_raw(
+            d_initial_pose,
             d_state_buffer,
             d_reduce_buffer,
             d_ls_buffer,
-            d_output_buffer,
             None,
         )?;
         event_end.record_default()?;
         event_end.synchronize()?;
-        profile.solve.total_ms += event_end.elapsed_time(&event_start)?;
-        profile.solve.count += 1;
+        profile.init.total_ms += event_end.elapsed_time(&event_start)?;
+        profile.init.count += 1;
 
-        // K4: Line search (if enabled)
-        if config.ls_enabled != 0 {
+        // Iteration loop
+        let mut iterations = 0u32;
+        for _ in 0..config.max_iterations {
+            iterations += 1;
+
+            // K2: Compute
             event_start.record_default()?;
-            graph_ndt_launch_linesearch_raw(
+            graph_ndt_launch_compute_raw(
                 d_source_points,
                 d_voxel_means,
                 d_voxel_inv_covs,
                 d_hash_table,
                 config,
                 d_state_buffer,
-                d_ls_buffer,
+                d_reduce_buffer,
                 None,
             )?;
             event_end.record_default()?;
             event_end.synchronize()?;
-            profile.linesearch.total_ms += event_end.elapsed_time(&event_start)?;
-            profile.linesearch.count += 1;
+            profile.compute.total_ms += event_end.elapsed_time(&event_start)?;
+            profile.compute.count += 1;
+
+            // K3: Solve
+            event_start.record_default()?;
+            graph_ndt_launch_solve_raw(
+                config,
+                d_state_buffer,
+                d_reduce_buffer,
+                d_ls_buffer,
+                d_output_buffer,
+                None,
+            )?;
+            event_end.record_default()?;
+            event_end.synchronize()?;
+            profile.solve.total_ms += event_end.elapsed_time(&event_start)?;
+            profile.solve.count += 1;
+
+            // K4: Line search (if enabled)
+            if config.ls_enabled != 0 {
+                event_start.record_default()?;
+                graph_ndt_launch_linesearch_raw(
+                    d_source_points,
+                    d_voxel_means,
+                    d_voxel_inv_covs,
+                    d_hash_table,
+                    config,
+                    d_state_buffer,
+                    d_ls_buffer,
+                    None,
+                )?;
+                event_end.record_default()?;
+                event_end.synchronize()?;
+                profile.linesearch.total_ms += event_end.elapsed_time(&event_start)?;
+                profile.linesearch.count += 1;
+            }
+
+            // K5: Update
+            event_start.record_default()?;
+            graph_ndt_launch_update_raw(
+                config,
+                d_state_buffer,
+                d_reduce_buffer,
+                d_ls_buffer,
+                d_output_buffer,
+                d_debug_buffer,
+                None,
+            )?;
+            event_end.record_default()?;
+            event_end.synchronize()?;
+            profile.update.total_ms += event_end.elapsed_time(&event_start)?;
+            profile.update.count += 1;
+
+            // Check convergence
+            if graph_ndt_check_converged(d_state_buffer)? {
+                break;
+            }
         }
 
-        // K5: Update
-        event_start.record_default()?;
-        graph_ndt_launch_update_raw(
-            config,
-            d_state_buffer,
-            d_reduce_buffer,
-            d_ls_buffer,
-            d_output_buffer,
-            d_debug_buffer,
-            None,
-        )?;
-        event_end.record_default()?;
-        event_end.synchronize()?;
-        profile.update.total_ms += event_end.elapsed_time(&event_start)?;
-        profile.update.count += 1;
+        profile.iterations = iterations;
+        profile.total_ms = start_time.elapsed().as_secs_f32() * 1000.0;
 
-        // Check convergence
-        if graph_ndt_check_converged(d_state_buffer)? {
-            break;
-        }
+        // Read output
+        let mut output_data = [0.0f32; OUTPUT_BUFFER_SIZE];
+        check_cuda(cudaMemcpy(
+            output_data.as_mut_ptr() as *mut std::ffi::c_void,
+            d_output_buffer as *const std::ffi::c_void,
+            OUTPUT_BUFFER_SIZE * std::mem::size_of::<f32>(),
+            CUDA_MEMCPY_DEVICE_TO_HOST,
+        ))?;
+
+        // Parse output
+        let mut pose = [0.0f32; 6];
+        pose.copy_from_slice(&output_data[0..6]);
+
+        let mut hessian = [0.0f32; 36];
+        hessian.copy_from_slice(&output_data[9..45]);
+
+        let output = GraphNdtOutput {
+            pose,
+            iterations: output_data[6] as i32,
+            converged: output_data[7] > 0.5,
+            score: output_data[8],
+            hessian,
+            num_correspondences: output_data[45] as u32,
+            max_oscillation_count: output_data[46] as u32,
+            avg_alpha: output_data[47],
+        };
+
+        Ok((output, profile))
     }
-
-    profile.iterations = iterations;
-    profile.total_ms = start_time.elapsed().as_secs_f32() * 1000.0;
-
-    // Read output
-    let mut output_data = [0.0f32; OUTPUT_BUFFER_SIZE];
-    check_cuda(cudaMemcpy(
-        output_data.as_mut_ptr() as *mut std::ffi::c_void,
-        d_output_buffer as *const std::ffi::c_void,
-        OUTPUT_BUFFER_SIZE * std::mem::size_of::<f32>(),
-        CUDA_MEMCPY_DEVICE_TO_HOST,
-    ))?;
-
-    // Parse output
-    let mut pose = [0.0f32; 6];
-    pose.copy_from_slice(&output_data[0..6]);
-
-    let mut hessian = [0.0f32; 36];
-    hessian.copy_from_slice(&output_data[9..45]);
-
-    let output = GraphNdtOutput {
-        pose,
-        iterations: output_data[6] as i32,
-        converged: output_data[7] > 0.5,
-        score: output_data[8],
-        hessian,
-        num_correspondences: output_data[45] as u32,
-        max_oscillation_count: output_data[46] as u32,
-        avg_alpha: output_data[47],
-    };
-
-    Ok((output, profile))
 }
 
 // ============================================================================

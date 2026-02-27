@@ -6,7 +6,7 @@
 //!
 //! Based on Equations 6.19 and 6.21 from Magnusson 2009.
 
-use super::types::{Matrix16x4, Matrix8x4};
+use super::types::{Matrix8x4, Matrix16x4};
 
 /// Threshold for treating angles as zero (avoids numerical issues).
 const ANGLE_EPSILON: f64 = 1e-5;

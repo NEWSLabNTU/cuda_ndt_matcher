@@ -9,15 +9,15 @@ use crate::initial_pose::particle::Particle;
 use builtin_interfaces::msg::Duration as RosDuration;
 use geometry_msgs::msg::Vector3;
 #[cfg(test)]
-use ndt_cuda::scoring::colors::{
-    color_to_rgb_packed, ndt_score_to_color, DEFAULT_SCORE_LOWER, DEFAULT_SCORE_UPPER,
-};
-#[cfg(test)]
-use ndt_cuda::scoring::nvtl::{compute_nvtl, NvtlConfig};
-#[cfg(test)]
 use ndt_cuda::GaussianParams;
 #[cfg(test)]
 use ndt_cuda::VoxelGrid;
+#[cfg(test)]
+use ndt_cuda::scoring::colors::{
+    DEFAULT_SCORE_LOWER, DEFAULT_SCORE_UPPER, color_to_rgb_packed, ndt_score_to_color,
+};
+#[cfg(test)]
+use ndt_cuda::scoring::nvtl::{NvtlConfig, compute_nvtl};
 #[cfg(test)]
 use sensor_msgs::msg::PointCloud2;
 #[cfg(test)]

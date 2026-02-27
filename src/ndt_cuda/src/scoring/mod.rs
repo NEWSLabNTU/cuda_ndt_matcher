@@ -19,9 +19,9 @@ pub mod nvtl;
 pub mod pipeline;
 
 pub use colors::{
-    color_to_rgb_packed, ndt_score_to_color, score_to_color, ColorRGBA, DEFAULT_SCORE_LOWER,
-    DEFAULT_SCORE_UPPER,
+    ColorRGBA, DEFAULT_SCORE_LOWER, DEFAULT_SCORE_UPPER, color_to_rgb_packed, ndt_score_to_color,
+    score_to_color,
 };
-pub use metrics::{compute_per_point_scores, compute_transform_probability, ScoringResult};
-pub use nvtl::{compute_nvtl, NvtlConfig, NvtlResult};
+pub use metrics::{ScoringResult, compute_per_point_scores, compute_transform_probability};
+pub use nvtl::{NvtlConfig, NvtlResult, compute_nvtl};
 pub use pipeline::{BatchScoringResult, GpuScoringPipeline};

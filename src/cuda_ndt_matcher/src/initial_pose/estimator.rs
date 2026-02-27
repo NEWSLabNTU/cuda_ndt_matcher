@@ -10,10 +10,10 @@
 //! on GPU when `use_gpu_batch_startup` is enabled. This provides significant
 //! speedup since TPE doesn't use trial data during the startup phase anyway.
 
-use super::particle::{select_best_particle, Particle};
+use super::particle::{Particle, select_best_particle};
 use super::tpe::{
-    pose_components_to_input, Direction, Input, TreeStructuredParzenEstimator, Trial, ANGLE_X,
-    ANGLE_Y, ANGLE_Z, TRANS_X, TRANS_Y, TRANS_Z,
+    ANGLE_X, ANGLE_Y, ANGLE_Z, Direction, Input, TRANS_X, TRANS_Y, TRANS_Z,
+    TreeStructuredParzenEstimator, Trial, pose_components_to_input,
 };
 use crate::alignment::NdtManager;
 #[cfg(feature = "debug-output")]

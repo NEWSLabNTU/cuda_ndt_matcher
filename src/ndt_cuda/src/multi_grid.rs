@@ -22,7 +22,7 @@
 //! let result = matcher.align(&source_points, Isometry3::identity())?;
 //! ```
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use nalgebra::{Isometry3, Matrix6};
 
 use crate::derivatives::DistanceMetric;

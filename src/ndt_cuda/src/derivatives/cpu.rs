@@ -9,7 +9,7 @@ use tracing::debug;
 
 use super::angular::AngularDerivatives;
 use super::types::{
-    AggregatedDerivatives, DerivativeResult, DistanceMetric, GaussianParams, Matrix24x6, Matrix4x6,
+    AggregatedDerivatives, DerivativeResult, DistanceMetric, GaussianParams, Matrix4x6, Matrix24x6,
     PointDerivatives,
 };
 use crate::voxel_grid::VoxelGrid;

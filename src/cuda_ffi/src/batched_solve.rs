@@ -11,7 +11,7 @@ use std::ptr;
 /// cuSOLVER dense handle (opaque pointer).
 pub type CusolverDnHandle = *mut std::ffi::c_void;
 
-extern "C" {
+unsafe extern "C" {
     fn cusolver_create_handle(handle: *mut CusolverDnHandle) -> c_int;
     fn cusolver_destroy_handle(handle: CusolverDnHandle) -> c_int;
 
@@ -136,16 +136,18 @@ impl BatchedCholeskySolver {
         batch_size: usize,
         d_info: u64,
     ) -> Result<(), CusolverError> {
-        let status = cusolver_batched_potrf_f64(
-            self.handle,
-            batch_size as c_int,
-            d_A_array as *mut *mut f64,
-            d_info as *mut c_int,
-        );
-        if status != 0 {
-            return Err(CusolverError(status));
+        unsafe {
+            let status = cusolver_batched_potrf_f64(
+                self.handle,
+                batch_size as c_int,
+                d_A_array as *mut *mut f64,
+                d_info as *mut c_int,
+            );
+            if status != 0 {
+                return Err(CusolverError(status));
+            }
+            Ok(())
         }
-        Ok(())
     }
 
     /// Perform batched triangular solve after factorization.
@@ -166,17 +168,19 @@ impl BatchedCholeskySolver {
         batch_size: usize,
         d_info: u64,
     ) -> Result<(), CusolverError> {
-        let status = cusolver_batched_potrs_f64(
-            self.handle,
-            batch_size as c_int,
-            d_A_array as *mut *mut f64,
-            d_B_array as *mut *mut f64,
-            d_info as *mut c_int,
-        );
-        if status != 0 {
-            return Err(CusolverError(status));
+        unsafe {
+            let status = cusolver_batched_potrs_f64(
+                self.handle,
+                batch_size as c_int,
+                d_A_array as *mut *mut f64,
+                d_B_array as *mut *mut f64,
+                d_info as *mut c_int,
+            );
+            if status != 0 {
+                return Err(CusolverError(status));
+            }
+            Ok(())
         }
-        Ok(())
     }
 
     /// Perform combined batched Cholesky factorization and solve.
@@ -201,17 +205,19 @@ impl BatchedCholeskySolver {
         batch_size: usize,
         d_info: u64,
     ) -> Result<(), CusolverError> {
-        let status = cusolver_batched_cholesky_solve_f64(
-            self.handle,
-            batch_size as c_int,
-            d_A_array as *mut *mut f64,
-            d_B_array as *mut *mut f64,
-            d_info as *mut c_int,
-        );
-        if status != 0 {
-            return Err(CusolverError(status));
+        unsafe {
+            let status = cusolver_batched_cholesky_solve_f64(
+                self.handle,
+                batch_size as c_int,
+                d_A_array as *mut *mut f64,
+                d_B_array as *mut *mut f64,
+                d_info as *mut c_int,
+            );
+            if status != 0 {
+                return Err(CusolverError(status));
+            }
+            Ok(())
         }
-        Ok(())
     }
 
     /// Single matrix Cholesky factorization.
@@ -230,17 +236,19 @@ impl BatchedCholeskySolver {
         workspace_size: usize,
         d_info: u64,
     ) -> Result<(), CusolverError> {
-        let status = cusolver_potrf_f64(
-            self.handle,
-            d_A as *mut f64,
-            d_workspace as *mut f64,
-            workspace_size as c_int,
-            d_info as *mut c_int,
-        );
-        if status != 0 {
-            return Err(CusolverError(status));
+        unsafe {
+            let status = cusolver_potrf_f64(
+                self.handle,
+                d_A as *mut f64,
+                d_workspace as *mut f64,
+                workspace_size as c_int,
+                d_info as *mut c_int,
+            );
+            if status != 0 {
+                return Err(CusolverError(status));
+            }
+            Ok(())
         }
-        Ok(())
     }
 
     /// Query workspace size for single matrix factorization.
@@ -266,16 +274,18 @@ impl BatchedCholeskySolver {
         d_B: u64,
         d_info: u64,
     ) -> Result<(), CusolverError> {
-        let status = cusolver_potrs_f64(
-            self.handle,
-            d_A as *mut f64,
-            d_B as *mut f64,
-            d_info as *mut c_int,
-        );
-        if status != 0 {
-            return Err(CusolverError(status));
+        unsafe {
+            let status = cusolver_potrs_f64(
+                self.handle,
+                d_A as *mut f64,
+                d_B as *mut f64,
+                d_info as *mut c_int,
+            );
+            if status != 0 {
+                return Err(CusolverError(status));
+            }
+            Ok(())
         }
-        Ok(())
     }
 }
 

@@ -5,19 +5,19 @@ use geometry_msgs::msg::{PoseArray, PoseStamped, PoseWithCovarianceStamped};
 use parking_lot::Mutex;
 use rclrs::{Publisher, Service, Subscription};
 use sensor_msgs::msg::PointCloud2;
-use std::sync::atomic::{AtomicBool, AtomicI32};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI32};
 use std_srvs::srv::{SetBool, Trigger};
 use tf2_msgs::msg::TFMessage;
 use visualization_msgs::msg::MarkerArray;
 
-use crate::alignment::batch::ScanQueue;
 use crate::alignment::DualNdtManager;
+use crate::alignment::batch::ScanQueue;
 use crate::io::diagnostics::DiagnosticsInterface;
 use crate::io::params::NdtParams;
 use crate::map::{DynamicMapLoader, MapUpdateModule};
-use crate::transform::tf_handler;
 use crate::transform::SmartPoseBuffer;
+use crate::transform::tf_handler;
 
 // Type aliases
 pub(crate) type SetBoolRequest = std_srvs::srv::SetBool_Request;

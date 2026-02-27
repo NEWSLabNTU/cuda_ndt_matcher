@@ -18,8 +18,8 @@
 //! kernel fixes and will be added in a future update.
 
 use super::{
-    compute_morton_codes_cpu, compute_voxel_statistics_cpu, detect_segments_cpu, radius_search_cpu,
-    radix_sort_by_key, RadiusSearchConfig,
+    RadiusSearchConfig, compute_morton_codes_cpu, compute_voxel_statistics_cpu,
+    detect_segments_cpu, radius_search_cpu, radix_sort_by_key,
 };
 
 /// GPU-accelerated voxel grid for NDT scan matching.
@@ -399,10 +399,12 @@ mod tests {
         assert!(mean.iter().all(|&v| v.is_finite()));
 
         // Inverse covariance should be finite
-        assert!(inv_cov
-            .iter()
-            .flat_map(|row| row.iter())
-            .all(|&v| v.is_finite()));
+        assert!(
+            inv_cov
+                .iter()
+                .flat_map(|row| row.iter())
+                .all(|&v| v.is_finite())
+        );
     }
 
     #[test]

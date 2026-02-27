@@ -1,14 +1,14 @@
 use arc_swap::ArcSwap;
 use geometry_msgs::msg::{PoseWithCovariance, PoseWithCovarianceStamped};
-use rclrs::{log_debug, log_error, log_info, log_warn, Publisher};
+use rclrs::{Publisher, log_debug, log_error, log_info, log_warn};
 use sensor_msgs::msg::PointCloud2;
 use std::sync::Arc;
 use std_msgs::msg::Header;
 use visualization_msgs::msg::MarkerArray;
 
 use super::state::{
-    DebugPublishers, NdtScanMatcherNode, PoseWithCovSrvRequest, PoseWithCovSrvResponse,
-    TriggerResponse, NODE_NAME,
+    DebugPublishers, NODE_NAME, NdtScanMatcherNode, PoseWithCovSrvRequest, PoseWithCovSrvResponse,
+    TriggerResponse,
 };
 use crate::alignment::DualNdtManager;
 use crate::initial_pose;
@@ -164,7 +164,8 @@ pub(crate) fn on_map_received(
         .publish(&debug_map_msg);
 
     // Update NDT target (blocking for initial map load)
-    if let Err(e) = ndt_manager.set_target(&points) {
+    let result = ndt_manager.set_target(&points);
+    if let Err(e) = result {
         log_error!(NODE_NAME, "Failed to set NDT target: {e}");
     } else {
         log_info!(NODE_NAME, "NDT target updated with map");

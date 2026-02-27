@@ -179,11 +179,7 @@ impl NdtVoxelGrid {
             }
         }
 
-        if found {
-            Some(max_score)
-        } else {
-            None
-        }
+        if found { Some(max_score) } else { None }
     }
 }
 

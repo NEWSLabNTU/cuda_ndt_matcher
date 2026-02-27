@@ -32,16 +32,16 @@ pub use gpu_initial_pose::{
 };
 pub use gpu_newton::{GpuNewtonError, GpuNewtonSolver};
 pub use gpu_pipeline_kernels::{
-    batch_score_gradient_kernel, batch_transform_kernel, check_convergence_kernel,
-    compute_transform_from_sincos_kernel, dot_product_6_kernel, generate_candidates_kernel,
-    more_thuente_kernel, update_pose_kernel, DEFAULT_NUM_CANDIDATES, MAX_NEIGHBORS,
+    DEFAULT_NUM_CANDIDATES, MAX_NEIGHBORS, batch_score_gradient_kernel, batch_transform_kernel,
+    check_convergence_kernel, compute_transform_from_sincos_kernel, dot_product_6_kernel,
+    generate_candidates_kernel, more_thuente_kernel, update_pose_kernel,
 };
 pub use line_search::{LineSearchConfig, LineSearchResult};
-pub use more_thuente::{more_thuente_search, MoreThuenteConfig, MoreThuenteResult};
+pub use more_thuente::{MoreThuenteConfig, MoreThuenteResult, more_thuente_search};
 pub use newton::{newton_step, newton_step_regularized};
 pub use oscillation::{
-    count_oscillation, count_oscillation_from_arrays, OscillationResult,
-    DEFAULT_OSCILLATION_THRESHOLD,
+    DEFAULT_OSCILLATION_THRESHOLD, OscillationResult, count_oscillation,
+    count_oscillation_from_arrays,
 };
 pub use regularization::{RegularizationConfig, RegularizationTerm};
 pub use solver::{NdtOptimizer, OptimizationConfig};

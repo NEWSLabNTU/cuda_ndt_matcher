@@ -33,7 +33,7 @@ pub type CudaTextureObject = u64;
 pub type RawCudaStream = *mut std::ffi::c_void;
 
 // FFI declarations for texture operations
-extern "C" {
+unsafe extern "C" {
     fn create_voxel_means_texture(
         tex_out: *mut CudaTextureObject,
         d_means: *const f32,
@@ -264,57 +264,59 @@ pub unsafe fn batch_persistent_ndt_launch_textured_raw(
     reg_ref_y: u64,
     stream: RawCudaStream,
 ) -> Result<(), TextureError> {
-    let result = batch_persistent_ndt_launch_textured(
-        tex_voxel_means,
-        tex_voxel_inv_covs,
-        params.hash_table as *const std::ffi::c_void,
-        params.hash_capacity,
-        params.gauss_d1,
-        params.gauss_d2,
-        params.resolution,
-        all_source_points as *const f32,
-        all_initial_poses as *const f32,
-        points_per_slot as *const c_int,
-        all_reduce_buffers as *mut f32,
-        barrier_counters as *mut c_int,
-        barrier_senses as *mut c_int,
-        all_out_poses as *mut f32,
-        all_out_iterations as *mut c_int,
-        all_out_converged as *mut u32,
-        all_out_scores as *mut f32,
-        all_out_hessians as *mut f32,
-        all_out_correspondences as *mut u32,
-        all_out_oscillations as *mut u32,
-        all_out_alpha_sums as *mut f32,
-        params.num_slots,
-        params.blocks_per_slot,
-        params.max_points_per_slot,
-        params.max_iterations,
-        params.epsilon,
-        if params.ls_enabled { 1 } else { 0 },
-        params.ls_num_candidates,
-        params.ls_mu,
-        params.ls_nu,
-        params.fixed_step_size,
-        if reg_ref_x == 0 {
-            std::ptr::null()
-        } else {
-            reg_ref_x as *const f32
-        },
-        if reg_ref_y == 0 {
-            std::ptr::null()
-        } else {
-            reg_ref_y as *const f32
-        },
-        params.reg_scale,
-        if params.reg_enabled { 1 } else { 0 },
-        stream,
-    );
+    unsafe {
+        let result = batch_persistent_ndt_launch_textured(
+            tex_voxel_means,
+            tex_voxel_inv_covs,
+            params.hash_table as *const std::ffi::c_void,
+            params.hash_capacity,
+            params.gauss_d1,
+            params.gauss_d2,
+            params.resolution,
+            all_source_points as *const f32,
+            all_initial_poses as *const f32,
+            points_per_slot as *const c_int,
+            all_reduce_buffers as *mut f32,
+            barrier_counters as *mut c_int,
+            barrier_senses as *mut c_int,
+            all_out_poses as *mut f32,
+            all_out_iterations as *mut c_int,
+            all_out_converged as *mut u32,
+            all_out_scores as *mut f32,
+            all_out_hessians as *mut f32,
+            all_out_correspondences as *mut u32,
+            all_out_oscillations as *mut u32,
+            all_out_alpha_sums as *mut f32,
+            params.num_slots,
+            params.blocks_per_slot,
+            params.max_points_per_slot,
+            params.max_iterations,
+            params.epsilon,
+            if params.ls_enabled { 1 } else { 0 },
+            params.ls_num_candidates,
+            params.ls_mu,
+            params.ls_nu,
+            params.fixed_step_size,
+            if reg_ref_x == 0 {
+                std::ptr::null()
+            } else {
+                reg_ref_x as *const f32
+            },
+            if reg_ref_y == 0 {
+                std::ptr::null()
+            } else {
+                reg_ref_y as *const f32
+            },
+            params.reg_scale,
+            if params.reg_enabled { 1 } else { 0 },
+            stream,
+        );
 
-    if result != 0 {
-        return Err(TextureError(result));
+        if result != 0 {
+            return Err(TextureError(result));
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 #[cfg(test)]

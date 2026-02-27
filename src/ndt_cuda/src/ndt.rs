@@ -21,7 +21,7 @@
 //! crate::test_println!("Converged: {}, Score: {}", result.converged, result.score);
 //! ```
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use nalgebra::{Isometry3, Matrix6};
 use rayon::prelude::*;
 use tracing::{debug, warn};
@@ -29,10 +29,10 @@ use tracing::{debug, warn};
 use crate::derivatives::gpu::GpuVoxelData;
 use crate::derivatives::{DistanceMetric, GaussianParams};
 use crate::optimization::{NdtOptimizer, OptimizationConfig};
-use crate::runtime::{is_cuda_available, GpuRuntime};
+use crate::runtime::{GpuRuntime, is_cuda_available};
 use crate::scoring::{
-    compute_nvtl, compute_transform_probability, nvtl::compute_nvtl_simple, GpuScoringPipeline,
-    NvtlConfig,
+    GpuScoringPipeline, NvtlConfig, compute_nvtl, compute_transform_probability,
+    nvtl::compute_nvtl_simple,
 };
 use crate::voxel_grid::{VoxelGrid, VoxelGridConfig};
 
@@ -1328,8 +1328,8 @@ mod tests {
         make_default_half_cubic_pcd, make_half_cubic_pcd_offset, voxelize_pcd,
     };
     use approx::assert_relative_eq;
-    use rand::prelude::*;
     use rand::SeedableRng;
+    use rand::prelude::*;
     use rand_distr::Normal;
 
     fn generate_test_cloud(center: [f32; 3], spread: f32, num_points: usize) -> Vec<[f32; 3]> {
@@ -1901,10 +1901,16 @@ mod tests {
 
         crate::test_println!(
             "Alignment comparison:\n  GPU: pos=({:.3}, {:.3}, {:.3}), score={:.4}, nvtl={:.4}\n  CPU: pos=({:.3}, {:.3}, {:.3}), score={:.4}, nvtl={:.4}",
-            result_gpu.pose.translation.x, result_gpu.pose.translation.y, result_gpu.pose.translation.z,
-            result_gpu.score, result_gpu.nvtl,
-            result_cpu.pose.translation.x, result_cpu.pose.translation.y, result_cpu.pose.translation.z,
-            result_cpu.score, result_cpu.nvtl,
+            result_gpu.pose.translation.x,
+            result_gpu.pose.translation.y,
+            result_gpu.pose.translation.z,
+            result_gpu.score,
+            result_gpu.nvtl,
+            result_cpu.pose.translation.x,
+            result_cpu.pose.translation.y,
+            result_cpu.pose.translation.z,
+            result_cpu.score,
+            result_cpu.nvtl,
         );
 
         // Both should converge to similar positions

@@ -50,10 +50,10 @@ use crate::derivatives::gpu_batch::{
     compute_ndt_gradient_batch_kernel, compute_ndt_hessian_batch_kernel,
     compute_ndt_score_batch_kernel, radius_search_batch_kernel, update_poses_batch_kernel,
 };
+use crate::voxel_grid::VoxelGrid;
 use crate::voxel_grid::kernels::{
     compute_sin_cos_batch_kernel, compute_transforms_batch_kernel, transform_points_batch_kernel,
 };
-use crate::voxel_grid::VoxelGrid;
 
 /// Type alias for CUDA compute client.
 type CudaClient = ComputeClient<<CudaRuntime as Runtime>::Server>;

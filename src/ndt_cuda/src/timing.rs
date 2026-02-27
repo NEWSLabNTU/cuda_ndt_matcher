@@ -228,7 +228,7 @@ impl TimingCollector {
 /// ```
 #[macro_export]
 macro_rules! time_phase {
-    ($collector:expr, $phase:expr, $block:expr) => {{
+    ($collector:expr_2021, $phase:expr_2021, $block:expr_2021) => {{
         #[cfg(feature = "profiling")]
         let _timer = $crate::timing::Timer::new($phase);
 

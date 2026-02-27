@@ -81,7 +81,7 @@ pub fn compute_jacobians_kernel<F: Float>(
     jacobians[jbase + 1] = F::new(0.0); // ∂x'/∂ty
     jacobians[jbase + 2] = F::new(0.0); // ∂x'/∂tz
     jacobians[jbase + 3] = F::new(0.0); // ∂x'/∂roll = 0
-                                        // ∂x'/∂pitch: j_ang[(2,:)] · [x, y, z] = [-sp*cy, sp*sy, cp] · [x, y, z]
+    // ∂x'/∂pitch: j_ang[(2,:)] · [x, y, z] = [-sp*cy, sp*sy, cp] · [x, y, z]
     jacobians[jbase + 4] = (F::new(0.0) - sp * cy) * x + (sp * sy) * y + cp * z;
     // ∂x'/∂yaw: j_ang[(5,:)] · [x, y, z] = [-cp*sy, -cp*cy, 0] · [x, y, z]
     jacobians[jbase + 5] = (F::new(0.0) - cp * sy) * x + (F::new(0.0) - cp * cy) * y;
@@ -90,7 +90,7 @@ pub fn compute_jacobians_kernel<F: Float>(
     jacobians[jbase + 6] = F::new(0.0); // ∂y'/∂tx
     jacobians[jbase + 7] = F::new(1.0); // ∂y'/∂ty
     jacobians[jbase + 8] = F::new(0.0); // ∂y'/∂tz
-                                        // ∂y'/∂roll: j_ang[(0,:)] · [x, y, z] = [-sr*sy + cr*sp*cy, -sr*cy - cr*sp*sy, -cr*cp] · [x, y, z]
+    // ∂y'/∂roll: j_ang[(0,:)] · [x, y, z] = [-sr*sy + cr*sp*cy, -sr*cy - cr*sp*sy, -cr*cp] · [x, y, z]
     jacobians[jbase + 9] = (F::new(0.0) - sr * sy + cr * sp * cy) * x
         + (F::new(0.0) - sr * cy - cr * sp * sy) * y
         + (F::new(0.0) - cr * cp) * z;
@@ -104,7 +104,7 @@ pub fn compute_jacobians_kernel<F: Float>(
     jacobians[jbase + 12] = F::new(0.0); // ∂z'/∂tx
     jacobians[jbase + 13] = F::new(0.0); // ∂z'/∂ty
     jacobians[jbase + 14] = F::new(1.0); // ∂z'/∂tz
-                                         // ∂z'/∂roll: j_ang[(1,:)] · [x, y, z] = [cr*sy + sr*sp*cy, cr*cy - sr*sp*sy, -sr*cp] · [x, y, z]
+    // ∂z'/∂roll: j_ang[(1,:)] · [x, y, z] = [cr*sy + sr*sp*cy, cr*cy - sr*sp*sy, -sr*cp] · [x, y, z]
     jacobians[jbase + 15] =
         (cr * sy + sr * sp * cy) * x + (cr * cy - sr * sp * sy) * y + (F::new(0.0) - sr * cp) * z;
     // ∂z'/∂pitch: j_ang[(4,:)] · [x, y, z] = [-cr*cp*cy, cr*cp*sy, -cr*sp] · [x, y, z]
