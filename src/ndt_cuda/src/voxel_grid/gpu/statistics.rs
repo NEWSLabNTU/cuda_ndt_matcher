@@ -533,7 +533,7 @@ fn regularize_and_invert(cov: &[f32]) -> RegularizationResult {
     let min_eigenvalue_idx = eigenvalues
         .iter()
         .enumerate()
-        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap()) // infallible: NaN eigenvalues filtered at line 527
         .map(|(i, _)| i)
         .unwrap_or(2);
 

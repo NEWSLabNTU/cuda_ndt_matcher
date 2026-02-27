@@ -421,7 +421,8 @@ impl MultiGridNdt {
             last_result = Some(result);
         }
 
-        let final_result = last_result.expect("At least one level should exist");
+        let final_result =
+            last_result.ok_or_else(|| anyhow::anyhow!("No grid levels configured"))?;
 
         Ok(MultiGridAlignResult {
             pose: final_result.pose,
@@ -497,7 +498,8 @@ impl MultiGridNdt {
             last_result = Some(result);
         }
 
-        let final_result = last_result.expect("At least one level should exist");
+        let final_result =
+            last_result.ok_or_else(|| anyhow::anyhow!("No grid levels configured"))?;
 
         Ok(MultiGridAlignResult {
             pose: final_result.pose,

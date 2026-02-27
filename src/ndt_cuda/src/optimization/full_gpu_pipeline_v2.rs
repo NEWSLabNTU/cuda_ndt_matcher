@@ -530,9 +530,11 @@ impl FullGpuPipelineV2 {
             let buffer_size = max_iterations as usize
                 * cuda_ffi::GRAPH_NDT_DEBUG_FLOATS_PER_ITER
                 * std::mem::size_of::<f32>();
-            self.graph_debug_buffer = Some(self.client.empty(buffer_size));
+            let buf = self.client.empty(buffer_size);
             self.max_iterations_for_debug = max_iterations;
-            self.raw_ptr(self.graph_debug_buffer.as_ref().unwrap())
+            let ptr = self.raw_ptr(&buf);
+            self.graph_debug_buffer = Some(buf);
+            ptr
         };
         #[cfg(not(feature = "debug-iteration"))]
         let debug_ptr = 0u64;

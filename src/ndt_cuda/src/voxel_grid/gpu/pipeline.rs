@@ -392,7 +392,7 @@ impl GpuPipelineBuffers {
         let boundary_starts: Vec<u32> = boundary_starts_bytes
             .chunks(4)
             .take(num_boundaries)
-            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap())) // infallible: chunks(4) guarantees 4-byte slices
             .collect();
 
         // Prepend 0 for the first segment
@@ -472,7 +472,7 @@ impl GpuPipelineBuffers {
             let sorted_indices: Vec<u32> = sorted_indices_bytes
                 .chunks(4)
                 .take(num_points)
-                .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+                .map(|b| u32::from_le_bytes(b.try_into().unwrap())) // infallible: chunks(4) guarantees 4-byte slices
                 .collect();
 
             // Build segment_ids from segment_starts
@@ -544,7 +544,7 @@ impl GpuPipelineBuffers {
         let sorted_codes: Vec<u64> = sorted_codes_bytes
             .chunks(8)
             .take(num_points)
-            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+            .map(|b| u64::from_le_bytes(b.try_into().unwrap())) // infallible: chunks(8) guarantees 8-byte slices
             .collect();
 
         // Build segment codes (code at each segment start)

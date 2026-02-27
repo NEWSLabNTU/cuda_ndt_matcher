@@ -183,10 +183,13 @@ fn regularize_covariance(
     }
 
     // Find the index of the smallest eigenvalue
+    if original_eigenvalues.iter().any(|e| !e.is_finite()) {
+        return None;
+    }
     let min_eigenvalue_idx = original_eigenvalues
         .iter()
         .enumerate()
-        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap()) // infallible: non-finite eigenvalues filtered above
         .map(|(i, _)| i)
         .unwrap_or(0);
 

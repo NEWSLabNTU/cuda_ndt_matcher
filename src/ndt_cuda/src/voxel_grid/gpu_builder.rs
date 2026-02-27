@@ -286,12 +286,12 @@ impl GpuVoxelGridBuilder {
         let morton_codes: Vec<u64> = morton_result
             .codes
             .chunks(8)
-            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+            .map(|b| u64::from_le_bytes(b.try_into().unwrap())) // infallible: chunks(8) guarantees 8-byte slices
             .collect();
         let original_indices: Vec<u32> = morton_result
             .indices
             .chunks(4)
-            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap())) // infallible: chunks(4) guarantees 4-byte slices
             .collect();
 
         // Step 3: Radix sort by Morton code (GPU via CUB with CPU fallback)
@@ -300,12 +300,12 @@ impl GpuVoxelGridBuilder {
         let sorted_codes: Vec<u64> = sort_result
             .keys
             .chunks(8)
-            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+            .map(|b| u64::from_le_bytes(b.try_into().unwrap())) // infallible: chunks(8) guarantees 8-byte slices
             .collect();
         let sorted_indices: Vec<u32> = sort_result
             .values
             .chunks(4)
-            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap())) // infallible: chunks(4) guarantees 4-byte slices
             .collect();
 
         // Step 4: Detect segments (voxel boundaries) - GPU via CUB with CPU fallback

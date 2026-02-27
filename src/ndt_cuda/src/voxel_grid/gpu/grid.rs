@@ -105,12 +105,12 @@ impl GpuVoxelGrid {
         let codes: Vec<u64> = morton_result
             .codes
             .chunks(8)
-            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+            .map(|b| u64::from_le_bytes(b.try_into().unwrap())) // infallible: chunks(8) guarantees 8-byte slices
             .collect();
         let indices: Vec<u32> = morton_result
             .indices
             .chunks(4)
-            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap())) // infallible: chunks(4) guarantees 4-byte slices
             .collect();
 
         let sort_result = radix_sort_by_key(&codes, &indices);
@@ -118,12 +118,12 @@ impl GpuVoxelGrid {
         let sorted_codes: Vec<u64> = sort_result
             .keys
             .chunks(8)
-            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+            .map(|b| u64::from_le_bytes(b.try_into().unwrap())) // infallible: chunks(8) guarantees 8-byte slices
             .collect();
         let sorted_indices: Vec<u32> = sort_result
             .values
             .chunks(4)
-            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap())) // infallible: chunks(4) guarantees 4-byte slices
             .collect();
 
         // Step 3: Detect segments (voxel boundaries)

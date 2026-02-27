@@ -148,6 +148,7 @@ pub fn dump_point_assignments(
     });
 
     for (i, (coord, voxel)) in entries.iter().enumerate() {
+        // invariant: point_indices and voxels are built with the same keys
         let indices = result.point_indices.get(coord).unwrap();
 
         // Get first few point coordinates for verification

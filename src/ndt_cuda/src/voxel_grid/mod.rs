@@ -252,7 +252,7 @@ impl VoxelGrid {
                 .eigenvalues
                 .iter()
                 .enumerate()
-                .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(i, _)| i)
                 .unwrap_or(0);
             let principal_axis = eigen.eigenvectors.column(min_idx).into_owned();
