@@ -1715,12 +1715,11 @@ mod tests {
     // GPU vs CPU comparison tests
     // ========================================================================
 
-    /// Skip test at runtime if CUDA is not available.
+    /// Fail test if CUDA is not available.
     macro_rules! require_cuda {
         () => {
             if !crate::runtime::is_cuda_available() {
-                crate::test_println!("Skipping test: CUDA not available");
-                return;
+                panic!("CUDA is not available — this test requires a CUDA GPU");
             }
         };
     }

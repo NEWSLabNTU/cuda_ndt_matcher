@@ -975,14 +975,12 @@ mod tests {
 
     use super::*;
 
-    /// Skip test at runtime if CUDA is not available.
-    /// This allows GPU tests to run on machines with CUDA while
-    /// gracefully skipping on machines without GPU.
+    /// Fail test if CUDA is not available.
+    /// Tests using this macro require a CUDA GPU to run.
     macro_rules! require_cuda {
         () => {
             if !is_cuda_available() {
-                crate::test_println!("Skipping test: CUDA not available");
-                return;
+                panic!("CUDA is not available — this test requires a CUDA GPU");
             }
         };
     }

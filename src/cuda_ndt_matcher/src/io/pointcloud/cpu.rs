@@ -50,7 +50,7 @@ pub(crate) fn from_pointcloud2(msg: &PointCloud2) -> Result<Vec<[f32; 3]>> {
     }
 
     let offsets = XyzOffsets::from_pointcloud2(msg)?;
-    let num_points = (msg.width * msg.height) as usize;
+    let num_points = (msg.width as usize) * (msg.height as usize);
 
     if msg.data.len() < num_points * offsets.point_step {
         bail!(
@@ -156,6 +156,7 @@ pub(crate) fn to_pointcloud2_with_rgb(
         count: 1,
     });
 
+    // Safe: point clouds are always << u32::MAX points
     PointCloud2 {
         header: header.clone(),
         height: 1,
@@ -174,6 +175,7 @@ pub(crate) fn to_pointcloud2(points: &[[f32; 3]], header: &Header) -> PointCloud
     let point_step = 12u32; // 3 * sizeof(f32)
     let data = encode_xyz_data(points);
 
+    // Safe: point clouds are always << u32::MAX points
     PointCloud2 {
         header: header.clone(),
         height: 1,

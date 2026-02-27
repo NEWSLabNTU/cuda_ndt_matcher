@@ -620,34 +620,25 @@ impl NdtScanMatcherNode {
         let topic_time_stamp = msg.header.stamp.sec as f64 + msg.header.stamp.nanosec as f64 * 1e-9;
 
         // Extract per-iteration arrays from AlignmentDebug if available
-        #[cfg(feature = "debug-output")]
+        #[cfg(feature = "debug-iterations")]
         let (tp_array, nvtl_array) = output
             .alignment_debug
             .as_ref()
-            .map(|_d| {
-                // Arrays are only populated when ndt_cuda is built with debug-iteration feature
-                #[cfg(feature = "debug-iterations")]
-                {
-                    let tp = if _d.transform_probability_array.is_empty() {
-                        None
-                    } else {
-                        Some(_d.transform_probability_array.clone())
-                    };
-                    let nvtl = if _d.nearest_voxel_transformation_likelihood_array.is_empty() {
-                        None
-                    } else {
-                        Some(_d.nearest_voxel_transformation_likelihood_array.clone())
-                    };
-                    (tp, nvtl)
-                }
-                #[cfg(not(feature = "debug-iterations"))]
-                {
-                    (None, None)
-                }
+            .map(|d| {
+                let tp = if d.transform_probability_array.is_empty() {
+                    None
+                } else {
+                    Some(d.transform_probability_array.clone())
+                };
+                let nvtl = if d.nearest_voxel_transformation_likelihood_array.is_empty() {
+                    None
+                } else {
+                    Some(d.nearest_voxel_transformation_likelihood_array.clone())
+                };
+                (tp, nvtl)
             })
             .unwrap_or((None, None));
-
-        #[cfg(not(feature = "debug-output"))]
+        #[cfg(not(feature = "debug-iterations"))]
         let (tp_array, nvtl_array): (Option<Vec<f64>>, Option<Vec<f64>>) = (None, None);
 
         let scan_diag = ScanMatchingDiagnostics {

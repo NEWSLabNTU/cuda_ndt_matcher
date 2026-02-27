@@ -19,8 +19,6 @@ fn main() -> Result<()> {
 
     let _ndt_node = NdtScanMatcherNode::new(&node)?;
 
-    // TODO: For testing, load a dummy map
-    // In production, this would come from pcd_loader_service
     log_info!(NODE_NAME, "Waiting for map and initial pose...");
 
     // Spin until shutdown (Ctrl-C or ROS shutdown)

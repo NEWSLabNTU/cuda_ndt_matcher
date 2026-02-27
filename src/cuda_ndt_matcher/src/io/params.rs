@@ -1,6 +1,6 @@
 //! NDT scan matcher parameters
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rclrs::Node;
 use std::sync::Arc;
 
@@ -241,12 +241,16 @@ impl NdtParams {
                     .declare_parameter("ndt.max_iterations")
                     .default(30)
                     .mandatory()?
-                    .get() as i32,
+                    .get()
+                    .try_into()
+                    .context("ndt.max_iterations out of i32 range")?,
                 num_threads: node
                     .declare_parameter("ndt.num_threads")
                     .default(4)
                     .mandatory()?
-                    .get() as i32,
+                    .get()
+                    .try_into()
+                    .context("ndt.num_threads out of i32 range")?,
                 use_line_search: node
                     .declare_parameter("ndt.use_line_search")
                     .default(false)
@@ -258,12 +262,16 @@ impl NdtParams {
                     .declare_parameter("initial_pose_estimation.particles_num")
                     .default(200)
                     .mandatory()?
-                    .get() as i32,
+                    .get()
+                    .try_into()
+                    .context("initial_pose_estimation.particles_num out of i32 range")?,
                 n_startup_trials: node
                     .declare_parameter("initial_pose_estimation.n_startup_trials")
                     .default(100)
                     .mandatory()?
-                    .get() as i32,
+                    .get()
+                    .try_into()
+                    .context("initial_pose_estimation.n_startup_trials out of i32 range")?,
                 yaw_weight_sigma: node
                     .declare_parameter("initial_pose_estimation.yaw_weight_sigma")
                     .default(30.0) // 30 degrees - moderate bias toward initial yaw
@@ -295,14 +303,18 @@ impl NdtParams {
                     .declare_parameter("validation.skipping_publish_num")
                     .default(5)
                     .mandatory()?
-                    .get() as i32,
+                    .get()
+                    .try_into()
+                    .context("validation.skipping_publish_num out of i32 range")?,
             },
             score: ScoreParams {
                 converged_param_type: node
                     .declare_parameter("score_estimation.converged_param_type")
                     .default(1)
                     .mandatory()?
-                    .get() as i32,
+                    .get()
+                    .try_into()
+                    .context("score_estimation.converged_param_type out of i32 range")?,
                 converged_param_transform_probability: node
                     .declare_parameter("score_estimation.converged_param_transform_probability")
                     .default(3.0)
@@ -338,7 +350,9 @@ impl NdtParams {
                     )
                     .default(0)
                     .mandatory()?
-                    .get() as i32,
+                    .get()
+                    .try_into()
+                    .context("covariance_estimation_type out of i32 range")?,
                 ),
                 estimation: CovarianceEstimationParams {
                     initial_pose_offset_model_x: node
@@ -408,22 +422,30 @@ impl NdtParams {
                     .declare_parameter("batch.max_queue_depth")
                     .default(8)
                     .mandatory()?
-                    .get() as i32,
+                    .get()
+                    .try_into()
+                    .context("batch.max_queue_depth out of i32 range")?,
                 max_scan_age_ms: node
                     .declare_parameter("batch.max_scan_age_ms")
                     .default(100)
                     .mandatory()?
-                    .get() as i32,
+                    .get()
+                    .try_into()
+                    .context("batch.max_scan_age_ms out of i32 range")?,
                 batch_trigger: node
                     .declare_parameter("batch.batch_trigger")
                     .default(4)
                     .mandatory()?
-                    .get() as i32,
+                    .get()
+                    .try_into()
+                    .context("batch.batch_trigger out of i32 range")?,
                 timeout_ms: node
                     .declare_parameter("batch.timeout_ms")
                     .default(20)
                     .mandatory()?
-                    .get() as i32,
+                    .get()
+                    .try_into()
+                    .context("batch.timeout_ms out of i32 range")?,
             },
         })
     }

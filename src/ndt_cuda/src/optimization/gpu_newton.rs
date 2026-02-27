@@ -391,7 +391,7 @@ impl GpuNewtonSolver {
         dst: &mut CudaSlice<f64>,
     ) -> Result<(), GpuNewtonError> {
         // Download, negate, upload (simple but adds latency)
-        // TODO: Replace with a simple CUDA kernel for better performance
+        // TECH-DEBT: Replace with a simple CUDA kernel for better performance
         let mut host = [0.0f64; 6];
         self.stream.memcpy_dtoh(src, &mut host)?;
         for v in &mut host {
