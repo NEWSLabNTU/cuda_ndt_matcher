@@ -10,12 +10,12 @@ use super::state::{
     DebugPublishers, NdtScanMatcherNode, PoseWithCovSrvRequest, PoseWithCovSrvResponse,
     TriggerResponse, NODE_NAME,
 };
-use crate::dual_ndt_manager::DualNdtManager;
+use crate::alignment::DualNdtManager;
 use crate::initial_pose;
-use crate::map_module::MapUpdateModule;
-use crate::params::NdtParams;
-use crate::pointcloud;
-use crate::pose_buffer::SmartPoseBuffer;
+use crate::io::params::NdtParams;
+use crate::io::pointcloud;
+use crate::map::MapUpdateModule;
+use crate::transform::SmartPoseBuffer;
 use crate::visualization::{self, ParticleMarkerConfig};
 
 /// Handle NDT align service request

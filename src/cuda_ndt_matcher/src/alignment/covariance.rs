@@ -6,8 +6,8 @@
 //! - MULTI_NDT: Run alignments from offset poses, compute sample covariance
 //! - MULTI_NDT_SCORE: Compute NVTL at offset poses, use softmax-weighted covariance
 
-use crate::ndt_manager::NdtManager;
-use crate::params::{CovarianceEstimationParams, CovarianceEstimationType, CovarianceParams};
+use super::manager::NdtManager;
+use crate::io::params::{CovarianceEstimationParams, CovarianceEstimationType, CovarianceParams};
 use geometry_msgs::msg::Pose;
 use nalgebra::{Matrix2, Vector2};
 
@@ -98,7 +98,7 @@ fn estimate_xy_covariance_by_laplace(hessian: &[[f64; 6]; 6]) -> [[f64; 2]; 2] {
 
 /// Rotate covariance matrix based on result pose orientation
 fn rotate_covariance(covariance: &[f64; 36], pose: &Pose) -> [f64; 36] {
-    let rotation = super::pose_utils::unit_quat_from_msg(&pose.orientation);
+    let rotation = crate::transform::pose_utils::unit_quat_from_msg(&pose.orientation);
     let rotation_matrix = rotation.to_rotation_matrix();
 
     // Create 6x6 rotation block matrix (rotation for position and rotation for orientation)
@@ -244,7 +244,7 @@ pub(crate) fn propose_offset_poses(
     );
 
     // Extract 2D rotation from result pose quaternion
-    let rotation = super::pose_utils::unit_quat_from_msg(&result_pose.orientation);
+    let rotation = crate::transform::pose_utils::unit_quat_from_msg(&result_pose.orientation);
     let rot_matrix = rotation.to_rotation_matrix();
     let rot_2d = Matrix2::new(
         rot_matrix[(0, 0)],

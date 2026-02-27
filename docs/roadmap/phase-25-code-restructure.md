@@ -149,20 +149,23 @@ Tighten up compiler warnings and API surface.
 
 ---
 
-### 25.4 Split main.rs
+### 25.4 Split main.rs ✓
 
 Split the 1,934-line `main.rs` into the `node/` module hierarchy.
 
+**Completed**: 2026-02-27
+
 **Criteria**:
-- [ ] **node/state.rs**: `NdtScanMatcherNode` struct definition extracted (lines 129-167)
-- [ ] **node/publishers.rs**: `DebugPublishers` struct, `publish_tf()`, marker helpers extracted (lines 84-123, 1507-1678)
-- [ ] **node/services.rs**: `on_ndt_align()`, `on_map_update()`, `on_map_received()` extracted (lines 1684-1903)
-- [ ] **node/processing.rs**: core alignment logic extracted from `on_points()` — pose interpolation, alignment execution, convergence gating, covariance estimation
-- [ ] **node/callbacks.rs**: remaining `on_points()` structure — point cloud conversion, sensor frame transform, calls to processing, debug publishing
-- [ ] **node/init.rs**: `NdtScanMatcherNode::new()` extracted (lines 170-617) — parameter loading, publisher/subscription/service creation
-- [ ] **main.rs** reduced to ~50 lines (entry point only)
-- [ ] All tests pass
-- [ ] No functionality changes
+- [x] **node/state.rs** (145 lines): `NdtScanMatcherNode`, `OnPointsContext`, `DebugPublishers` structs, type aliases, `NODE_NAME` constant
+- [x] **node/publishers.rs** (185 lines): `publish_tf()`, `create_pose_marker()`, `create_pose_history_markers()` as free functions
+- [x] **node/services.rs** (258 lines): `on_ndt_align()`, `on_map_received()`, `on_map_update()` as free functions; `set_map()` as impl method
+- [x] **node/processing.rs** (227 lines): `AlignmentOutput` struct, `run_alignment()` — alignment execution, score computation, convergence gating
+- [x] **node/callbacks.rs** (705 lines): `on_points()` — point cloud conversion, sensor frame transform, calls to processing, covariance estimation, pose/TF publishing, debug publishing
+- [x] **node/init.rs** (482 lines): `NdtScanMatcherNode::new()` — parameter loading, publisher/subscription/service creation
+- [x] **main.rs** reduced to 42 lines (entry point only)
+- [x] All tests pass (419 tests: 355 ndt_cuda + 64 cuda_ndt_matcher)
+- [x] No functionality changes
+- [x] Bonus: fixed pre-existing `#[cfg(feature = "debug-iteration")]` → `"debug-iterations"` typo
 
 ---
 

@@ -1,20 +1,10 @@
-mod covariance;
-mod debug_writer;
-mod diagnostics;
-mod dual_ndt_manager;
+mod alignment;
 mod initial_pose;
-mod map_module;
-mod ndt_manager;
+mod io;
+mod map;
 mod node;
-mod nvtl;
-mod params;
-mod particle;
-mod pointcloud;
-mod pose_buffer;
-mod pose_utils;
-mod scan_queue;
-mod tf_handler;
-mod tpe;
+mod scoring;
+mod transform;
 mod visualization;
 
 use anyhow::Result;

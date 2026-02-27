@@ -8,10 +8,10 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Instant;
 
 use super::state::NODE_NAME;
-use crate::ndt_manager::{AlignResult, NdtManager};
-use crate::params::NdtParams;
+use crate::alignment::{AlignResult, NdtManager};
+use crate::io::params::NdtParams;
 #[cfg(feature = "debug-output")]
-use crate::{debug_writer, pose_utils};
+use crate::{io::debug_writer, transform::pose_utils};
 
 /// Output from alignment execution, capturing all values needed by the
 /// debug publishing section of the on_points callback.

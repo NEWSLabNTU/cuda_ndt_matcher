@@ -5,7 +5,7 @@
 //! - Pose history markers
 //! - Particle filter visualization (multiple color schemes)
 
-use crate::particle::Particle;
+use crate::initial_pose::particle::Particle;
 use builtin_interfaces::msg::Duration as RosDuration;
 use geometry_msgs::msg::Vector3;
 #[cfg(test)]

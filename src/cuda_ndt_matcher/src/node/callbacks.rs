@@ -11,9 +11,11 @@ use visualization_msgs::msg::MarkerArray;
 
 use super::state::{NdtScanMatcherNode, OnPointsContext, NODE_NAME};
 use super::{processing, publishers};
-use crate::diagnostics::{DiagnosticLevel, ScanMatchingDiagnostics};
-use crate::scan_queue::QueuedScan;
-use crate::{covariance, pointcloud, pose_utils};
+use crate::alignment::batch::QueuedScan;
+use crate::alignment::covariance;
+use crate::io::diagnostics::{DiagnosticLevel, ScanMatchingDiagnostics};
+use crate::io::pointcloud;
+use crate::transform::pose_utils;
 
 impl NdtScanMatcherNode {
     pub(crate) fn on_points(msg: PointCloud2, ctx: &OnPointsContext) {

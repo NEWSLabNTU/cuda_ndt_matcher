@@ -11,13 +11,13 @@ use std_srvs::srv::{SetBool, Trigger};
 use tf2_msgs::msg::TFMessage;
 use visualization_msgs::msg::MarkerArray;
 
-use crate::diagnostics::DiagnosticsInterface;
-use crate::dual_ndt_manager::DualNdtManager;
-use crate::map_module::{DynamicMapLoader, MapUpdateModule};
-use crate::params::NdtParams;
-use crate::pose_buffer::SmartPoseBuffer;
-use crate::scan_queue::ScanQueue;
-use crate::tf_handler;
+use crate::alignment::batch::ScanQueue;
+use crate::alignment::DualNdtManager;
+use crate::io::diagnostics::DiagnosticsInterface;
+use crate::io::params::NdtParams;
+use crate::map::{DynamicMapLoader, MapUpdateModule};
+use crate::transform::tf_handler;
+use crate::transform::SmartPoseBuffer;
 
 // Type aliases
 pub(crate) type SetBoolRequest = std_srvs::srv::SetBool_Request;

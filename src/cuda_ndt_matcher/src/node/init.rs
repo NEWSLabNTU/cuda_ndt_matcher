@@ -13,14 +13,14 @@ use super::state::{
     NODE_NAME,
 };
 use super::{publishers, services};
-use crate::diagnostics::DiagnosticsInterface;
-use crate::dual_ndt_manager::DualNdtManager;
-use crate::map_module::{DynamicMapLoader, MapUpdateModule};
-use crate::params::NdtParams;
-use crate::pose_buffer::SmartPoseBuffer;
-use crate::pose_utils;
-use crate::scan_queue::{ScanQueue, ScanQueueConfig, ScanResult};
-use crate::tf_handler;
+use crate::alignment::batch::{ScanQueue, ScanQueueConfig, ScanResult};
+use crate::alignment::DualNdtManager;
+use crate::io::diagnostics::DiagnosticsInterface;
+use crate::io::params::NdtParams;
+use crate::map::{DynamicMapLoader, MapUpdateModule};
+use crate::transform::pose_utils;
+use crate::transform::tf_handler;
+use crate::transform::SmartPoseBuffer;
 use geometry_msgs::msg::PoseStamped;
 use parking_lot::Mutex;
 use std_srvs::srv::SetBool;
@@ -150,7 +150,7 @@ impl NdtScanMatcherNode {
 
             // Create alignment function that uses the NDT manager
             let align_ndt_manager = Arc::clone(&ndt_manager);
-            let align_fn: crate::scan_queue::AlignFn = Arc::new(move |requests| {
+            let align_fn: crate::alignment::batch::AlignFn = Arc::new(move |requests| {
                 // Get lock on active NDT manager
                 let manager = align_ndt_manager.lock();
                 // Use batch alignment through the ndt_cuda API
@@ -163,7 +163,7 @@ impl NdtScanMatcherNode {
             let result_pose_cov_pub = pose_cov_pub.clone();
             let result_debug_pubs = debug_pubs.clone();
             let result_params = Arc::clone(&params);
-            let result_callback: crate::scan_queue::ResultCallback =
+            let result_callback: crate::alignment::batch::ResultCallback =
                 Arc::new(move |results: Vec<ScanResult>| {
                     for result in results {
                         // Only publish if converged
@@ -374,7 +374,7 @@ impl NdtScanMatcherNode {
                                 let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
                                 log_info!(NODE_NAME, "Init-to-tracking time: {:.2}ms", elapsed_ms);
                                 // Write to debug file
-                                crate::debug_writer::write_init_to_tracking(elapsed_ms);
+                                crate::io::debug_writer::write_init_to_tracking(elapsed_ms);
                             }
                         }
                         pose_buffer.clear();
@@ -445,11 +445,11 @@ impl NdtScanMatcherNode {
         // Clear debug file at startup (only with debug-output feature)
         #[cfg(feature = "debug-output")]
         {
-            crate::debug_writer::clear_debug_file();
+            crate::io::debug_writer::clear_debug_file();
             log_info!(
                 NODE_NAME,
                 "Debug output cleared: {}",
-                crate::debug_writer::debug_file_path()
+                crate::io::debug_writer::debug_file_path()
             );
         }
 

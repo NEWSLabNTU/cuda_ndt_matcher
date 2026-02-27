@@ -13,8 +13,8 @@
 //! This matches Autoware's `ndt_scan_matcher` behavior which uses a secondary NDT
 //! instance for non-blocking map updates.
 
-use crate::ndt_manager::{AlignResult, NdtManager};
-use crate::params::NdtParams;
+use super::manager::{AlignResult, NdtManager};
+use crate::io::params::NdtParams;
 use anyhow::Result;
 use geometry_msgs::msg::Pose;
 #[cfg(feature = "debug-output")]
@@ -350,7 +350,7 @@ impl DualNdtManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::params::{
+    use crate::io::params::{
         BatchParams, CovarianceEstimationParams, CovarianceEstimationType, CovarianceParams,
         DynamicMapParams, FrameParams, InitialPoseParams, NdtAlgorithmParams, NdtParams,
         RegularizationParams, ScoreParams, SensorPointsParams, ValidationParams,
@@ -391,7 +391,7 @@ mod tests {
                 converged_param_type: 1,
                 converged_param_transform_probability: 3.0,
                 converged_param_nearest_voxel_transformation_likelihood: 2.3,
-                no_ground_points: crate::params::NoGroundPointsParams {
+                no_ground_points: crate::io::params::NoGroundPointsParams {
                     enable: false,
                     z_margin_for_ground_removal: 0.8,
                 },

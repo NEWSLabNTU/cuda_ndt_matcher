@@ -52,7 +52,7 @@ impl Default for ScanQueueConfig {
 
 impl ScanQueueConfig {
     /// Create config from params.
-    pub(crate) fn from_params(params: &crate::params::BatchParams) -> Self {
+    pub(crate) fn from_params(params: &crate::io::params::BatchParams) -> Self {
         Self {
             max_depth: params.max_queue_depth as usize,
             max_age_ms: params.max_scan_age_ms as u64,

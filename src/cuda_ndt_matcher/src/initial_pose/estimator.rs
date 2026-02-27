@@ -10,15 +10,15 @@
 //! on GPU when `use_gpu_batch_startup` is enabled. This provides significant
 //! speedup since TPE doesn't use trial data during the startup phase anyway.
 
-#[cfg(feature = "debug-output")]
-use super::debug_writer;
-use crate::ndt_manager::NdtManager;
-use crate::params::InitialPoseParams;
-use crate::particle::{select_best_particle, Particle};
-use crate::tpe::{
+use super::particle::{select_best_particle, Particle};
+use super::tpe::{
     pose_components_to_input, Direction, Input, TreeStructuredParzenEstimator, Trial, ANGLE_X,
     ANGLE_Y, ANGLE_Z, TRANS_X, TRANS_Y, TRANS_Z,
 };
+use crate::alignment::NdtManager;
+#[cfg(feature = "debug-output")]
+use crate::io::debug_writer;
+use crate::io::params::InitialPoseParams;
 use geometry_msgs::msg::{Point, Pose, PoseWithCovariance, PoseWithCovarianceStamped, Quaternion};
 use nalgebra::UnitQuaternion;
 use rclrs::log_debug;
@@ -478,7 +478,7 @@ fn pose_to_input(pose: &Pose) -> Input {
 
 /// Convert quaternion to roll-pitch-yaw angles
 fn quaternion_to_rpy(q: &Quaternion) -> (f64, f64, f64) {
-    super::pose_utils::unit_quat_from_msg(q).euler_angles()
+    crate::transform::pose_utils::unit_quat_from_msg(q).euler_angles()
 }
 
 /// Convert roll-pitch-yaw to quaternion
@@ -497,7 +497,7 @@ fn rpy_to_quaternion(roll: f64, pitch: f64, yaw: f64) -> Quaternion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tpe::INPUT_DIM;
+    use crate::initial_pose::tpe::INPUT_DIM;
 
     #[test]
     fn test_quaternion_rpy_roundtrip() {
