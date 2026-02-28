@@ -7,7 +7,8 @@
 //! - GPU segment detection for voxel boundaries
 //! - cuSOLVER batched Cholesky solver
 //! - Spatial hash table for GPU-accelerated voxel lookup
-//! - Persistent NDT kernel with cooperative groups
+//! - Batch persistent NDT kernel for parallel multi-scan alignment
+//! - Graph-based NDT kernels (K1-K5) for Newton optimization
 //!
 //! # Example
 //!
@@ -25,20 +26,12 @@ pub mod async_stream;
 pub mod batch_persistent_ndt;
 pub mod batched_solve;
 pub mod graph_ndt;
-pub mod persistent_ndt;
 pub mod radix_sort;
 pub mod segment_detect;
 pub mod segmented_reduce;
-pub mod texture;
 pub mod voxel_hash;
 
 pub use batched_solve::{BatchedCholeskySolver, CusolverDnHandle, CusolverError};
-pub use persistent_ndt::{
-    GridTooLargeError, PersistentNdt, is_supported as persistent_ndt_is_supported,
-    persistent_ndt_buffer_size, persistent_ndt_can_launch, persistent_ndt_launch_raw,
-    persistent_ndt_max_blocks, persistent_ndt_supported,
-    reduce_buffer_size as persistent_ndt_reduce_buffer_size,
-};
 pub use radix_sort::{
     CudaError, DeviceBuffer, RadixSorter, radix_sort_temp_size, sort_pairs_inplace,
 };
@@ -70,13 +63,7 @@ pub use async_stream::{
     AsyncDeviceBuffer, CudaEvent, CudaStream, PinnedBuffer, RawCudaEvent, RawCudaStream,
 };
 
-// Texture memory for voxel data
-pub use texture::{
-    CudaTextureObject, TextureError, TexturedBatchNdtParams, VoxelInvCovsTexture,
-    VoxelMeansTexture, batch_persistent_ndt_launch_textured_raw, texture_handle_size,
-};
-
-// Graph-based NDT kernels (Phase 24 - alternative to cooperative kernel)
+// Graph-based NDT kernels (Phase 24)
 pub use graph_ndt::{
     BLOCK_SIZE as GRAPH_NDT_BLOCK_SIZE, DEBUG_FLOATS_PER_ITER as GRAPH_NDT_DEBUG_FLOATS_PER_ITER,
     GraphNdtConfig, GraphNdtOutput, GraphNdtProfile, KernelTiming,

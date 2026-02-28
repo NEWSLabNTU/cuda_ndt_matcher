@@ -40,10 +40,8 @@ fn main() {
         "csrc/segmented_reduce.cu",
         "csrc/batched_solve.cu",
         "csrc/voxel_hash.cu",
-        "csrc/persistent_ndt.cu",
         "csrc/batch_persistent_ndt.cu",
         "csrc/async_stream.cu",
-        "csrc/texture_voxels.cu",
         "csrc/ndt_graph_kernels.cu",
     ];
 
@@ -67,10 +65,8 @@ fn main() {
     println!("cargo:rustc-link-lib=static=segmented_reduce");
     println!("cargo:rustc-link-lib=static=batched_solve");
     println!("cargo:rustc-link-lib=static=voxel_hash");
-    println!("cargo:rustc-link-lib=static=persistent_ndt");
     println!("cargo:rustc-link-lib=static=batch_persistent_ndt");
     println!("cargo:rustc-link-lib=static=async_stream");
-    println!("cargo:rustc-link-lib=static=texture_voxels");
     println!("cargo:rustc-link-lib=static=ndt_graph_kernels");
 
     // Link these again after static libs to resolve symbols

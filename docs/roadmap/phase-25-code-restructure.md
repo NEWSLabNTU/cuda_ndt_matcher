@@ -1,7 +1,7 @@
 # Phase 25: Code Restructure & Quality
 
-**Status**: Complete
-**Date**: 2026-01-28 (updated 2026-02-27)
+**Status**: In Progress (25.1–25.9 complete, 25.10 pending)
+**Date**: 2026-01-28 (updated 2026-02-28)
 
 ## Motivation
 
@@ -282,6 +282,103 @@ Improve test visibility, feature flag ergonomics, type safety, and clean up tech
 - [x] **Stale TODOs**: production TODO in `main.rs` removed; `gpu_newton.rs` TODO prefixed with `TECH-DEBT:`; test-only TODO in `ndt.rs` kept
 - [x] All tests pass
 
+---
+
+### 25.9 Remove Dead GPU Code ✓
+
+Remove CUDA kernels and FFI bindings that were superseded by the graph-based pipeline (Phase 24) but never deleted.
+
+**Completed**: 2026-02-28
+
+**Dead code removed** (~2,241 LOC):
+
+| File                             | LOC   | Why dead                                                          |
+|----------------------------------|-------|-------------------------------------------------------------------|
+| `csrc/persistent_ndt.cu`        | 1,209 | Cooperative groups approach; fails on Jetson, superseded by graph  |
+| `csrc/texture_voxels.cu`        | 240   | Texture memory objects; never integrated into any pipeline         |
+| `cuda_ffi/src/persistent_ndt.rs` | 455  | FFI bindings for `persistent_ndt.cu`                              |
+| `cuda_ffi/src/texture.rs`       | 337   | FFI bindings for `texture_voxels.cu`                              |
+
+**Verified alive** (NOT removed):
+
+| Item | Why alive |
+|------|-----------|
+| `batch_persistent_ndt.cu` + `.rs` | Used by `batch_pipeline.rs` and `async_pipeline.rs` |
+| `persistent_ndt_device.cuh` | Included by `batch_persistent_ndt.cu` and `ndt_graph_kernels.cu` |
+| `jacobi_svd_6x6.cuh` | Included by `ndt_graph_kernels.cu` |
+| All other `.cuh` headers | Included by live `.cu` files |
+| Point-to-plane CubeCL kernels | Used in `runtime.rs` for `DistanceMetric::PointToPlane` |
+
+**Criteria**:
+- [x] 2 `.cu` files removed from `cuda_ffi/csrc/` and `build.rs`
+- [x] 2 `.rs` FFI modules removed from `cuda_ffi/src/`, `lib.rs` updated
+- [x] All re-exports in `cuda_ffi/src/lib.rs` updated (no dangling `pub use`)
+- [x] `ndt_cuda` compiles — no references to removed items
+- [x] All 484 tests pass (1 skipped: opt-in benchmark)
+- [x] 2,241 LOC removed
+
+---
+
+### 25.10 Extract Stages in Large Functions
+
+Break large functions into smaller private helpers by extracting logical stages. No behavior changes — purely readability refactoring.
+
+#### `callbacks.rs::on_points()` (682 LOC → ~80 LOC orchestrator)
+
+Extract 6 helpers within the `impl NdtScanMatcherNode` block:
+
+| Helper                            | Lines   | What it does                                               |
+|-----------------------------------|---------|------------------------------------------------------------|
+| `convert_and_filter_points()`     | 27–65   | Parse PointCloud2, apply sensor filters                    |
+| `transform_to_base_frame()`       | 67–105  | TF lookup from sensor_frame → base_link                    |
+| `interpolate_initial_pose()`      | 117–167 | SmartPoseBuffer interpolation + validation                 |
+| `update_map_if_needed()`          | 174–230 | Check map freshness, request tiles, apply pending updates  |
+| `publish_converged_pose()`        | 303–368 | Covariance estimation + PoseStamped + TF + MULTI_NDT poses |
+| `publish_debug_and_diagnostics()` | 370–707 | All debug metric publishers + diagnostics collection       |
+
+The remaining `on_points()` becomes a ~80-line orchestrator calling these in sequence with early returns.
+
+#### `init.rs::NdtScanMatcherNode::new()` (455 LOC → ~90 LOC orchestrator)
+
+Extract 5 helpers:
+
+| Helper                      | Lines   | What it does                                               |
+|-----------------------------|---------|------------------------------------------------------------|
+| `create_publishers()`       | 91–141  | Create QoS + all 20 publishers + DebugPublishers struct    |
+| `create_batch_queue()`      | 143–236 | ScanQueue with alignment closure and result callback       |
+| `create_subscriptions()`    | 238–351 | 4 subscriptions: points_raw, EKF pose, regularization, map |
+| `create_services()`         | 353–449 | 3 services: trigger, ndt_align, map_update                 |
+| `initialize_debug_output()` | 451–460 | Clear debug file (feature-gated)                           |
+
+#### `solver.rs::align()` (169 LOC) and `align_with_debug()` (231 LOC)
+
+These two functions duplicate 90% of the Newton loop logic. Extract shared helpers:
+
+| Helper                            | What it does                                                                                                       |
+|-----------------------------------|--------------------------------------------------------------------------------------------------------------------|
+| `build_result()`                  | Build `NdtResult` from current state (pose, score, hessian, oscillation) — currently repeated 3 times in `align()` |
+| `compute_newton_step_and_check()` | Newton step + convergence/singular checks — shared between `align()` and `align_with_debug()`                      |
+
+#### `pipeline.rs::build()` (235 LOC → ~60 LOC orchestrator)
+
+Extract 3 helpers within `GpuVoxelGridBuilder`:
+
+| Helper                        | Lines   | What it does                                                   |
+|-------------------------------|---------|----------------------------------------------------------------|
+| `prepare_centered_points()`   | 374–412 | Center points around grid centroid, build segment_starts array |
+| `launch_statistics_kernels()` | 414–453 | Launch 3 CubeCL kernels (sums, means, covariances)             |
+| `download_and_finalize()`     | 455–575 | Download GPU buffers, un-center means, CPU finalization        |
+
+**Criteria**:
+- [ ] `on_points()` body reduced to <100 LOC (sequential helper calls + early returns)
+- [ ] `NdtScanMatcherNode::new()` body reduced to <100 LOC
+- [ ] `align()` and `align_with_debug()` share `build_result()` helper (no code duplication)
+- [ ] `pipeline.rs::build()` body reduced to <80 LOC
+- [ ] All extracted functions are `fn` (private), not `pub`
+- [ ] No behavior changes — identical output for identical input
+- [ ] All tests pass
+- [ ] `just lint` passes
+
 ## Module Classification
 
 ### GPU Path (alignment/)
@@ -295,15 +392,15 @@ Improve test visibility, feature flag ergonomics, type safety, and clean up tech
 
 ### CPU Modules
 
-| Module | Purpose |
-|--------|---------|
-| `map/` | Tile management, map loading |
-| `transform/` | TF buffer, pose interpolation, conversion utils |
-| `scoring/` | NVTL reference implementation |
-| `io/params.rs` | Parameter loading |
-| `io/diagnostics.rs` | ROS diagnostics |
-| `io/debug_writer.rs` | Centralized debug JSONL output |
-| `visualization/` | Debug markers and clouds |
+| Module               | Purpose                                         |
+|----------------------|-------------------------------------------------|
+| `map/`               | Tile management, map loading                    |
+| `transform/`         | TF buffer, pose interpolation, conversion utils |
+| `scoring/`           | NVTL reference implementation                   |
+| `io/params.rs`       | Parameter loading                               |
+| `io/diagnostics.rs`  | ROS diagnostics                                 |
+| `io/debug_writer.rs` | Centralized debug JSONL output                  |
+| `visualization/`     | Debug markers and clouds                        |
 
 ### Mixed CPU/GPU
 
@@ -315,20 +412,20 @@ Improve test visibility, feature flag ergonomics, type safety, and clean up tech
 
 ## Implementation Order
 
-| Sub-phase | Depends On | Effort |
-|-----------|------------|--------|
-| 25.1 Metadata & Cargo hygiene | — | 30 min |
-| 25.2 Code deduplication | — | 6 hours |
-| 25.3 Lint & visibility | — | 3 hours |
-| 25.4 Split main.rs | 25.2 | 4 hours |
-| 25.5 Reorganize modules | 25.4 | 3 hours |
-| 25.6 Split CPU/GPU | 25.5 | 2 hours |
-| 25.7 Error handling audit | — | 6 hours |
-| 25.8 Test & build hygiene | 25.4 | 4 hours |
+| Sub-phase                               | Depends On | Effort  |
+|-----------------------------------------|------------|---------|
+| 25.1 Metadata & Cargo hygiene           | —          | 30 min  |
+| 25.2 Code deduplication                 | —          | 6 hours |
+| 25.3 Lint & visibility                  | —          | 3 hours |
+| 25.4 Split main.rs                      | 25.2       | 4 hours |
+| 25.5 Reorganize modules                 | 25.4       | 3 hours |
+| 25.6 Split CPU/GPU                      | 25.5       | 2 hours |
+| 25.7 Error handling audit               | —          | 6 hours |
+| 25.8 Test & build hygiene               | 25.4       | 4 hours |
+| 25.9 Remove dead GPU code               | —          | 2 hours |
+| 25.10 Extract stages in large functions | 25.4       | 4 hours |
 
-**Total estimated effort**: ~28 hours
-
-Sub-phases 25.1–25.3 and 25.7 have no dependencies and can be done in parallel or any order. Sub-phases 25.4–25.6 are sequential (each builds on the previous). 25.8 depends on 25.4 because feature-flag cleanup touches the restructured callbacks.
+Sub-phases 25.9 and 25.10 are independent of each other. 25.9 touches `cuda_ffi` only. 25.10 touches `cuda_ndt_matcher` and `ndt_cuda`.
 
 ## Migration Strategy
 
@@ -373,3 +470,6 @@ just lint
 - [x] Zero bare `TODO` in production code paths (25.8)
 - [x] `package.xml` files have real maintainer info
 - [x] No functionality changes
+- [x] Dead GPU code removed (2,241 LOC: 2 `.cu`, 2 FFI `.rs`) (25.9)
+- [ ] `on_points()` body <100 LOC; `new()` body <100 LOC (25.10)
+- [ ] `align()` and `align_with_debug()` share `build_result()` — no duplication (25.10)
