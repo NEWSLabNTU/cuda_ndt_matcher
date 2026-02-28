@@ -2,7 +2,7 @@
 # Run NDT demo with simulation, rosbag playback, and recording
 # Usage: run_demo.sh [--cuda] <map_dir> <rosbag> <output_dir>
 
-set -euo pipefail
+set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -71,8 +71,9 @@ fi
 # Run simulation, bag play, and recording in parallel
 # --halt now,done=1: When any job finishes, kill all others immediately
 # This ensures cleanup when ros2 bag play completes (since -l flag removed)
-# Wait time before starting rosbag playback (Jetson needs longer startup)
-STARTUP_DELAY="${NDT_STARTUP_DELAY:-60}"
+# Wait time before starting rosbag playback
+# play_launch uses a Rust parser so Autoware starts fast; 5s is sufficient
+STARTUP_DELAY="${NDT_STARTUP_DELAY:-5}"
 
 parallel --halt now,done=1 --line-buffer ::: \
     "$SCRIPT_DIR/run_ndt_simulation.sh $USE_CUDA $INIT_MODE '$MAP_DIR'" \

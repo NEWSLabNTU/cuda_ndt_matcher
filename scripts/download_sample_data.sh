@@ -133,7 +133,11 @@ main() {
     else
         info "Fixing /clock timestamps in rosbag..."
         # Source ROS environment for the fix script
+        # Temporarily allow unbound variables — ROS/Autoware setup scripts
+        # reference variables like AMENT_TRACE_SETUP_FILES that may not be set
+        set +u
         source "${AUTOWARE_ACTIVATE}"
+        set -u
         python3 "${SCRIPT_DIR}/fix_rosbag_clock.py" \
             "${DATA_DIR}/sample-rosbag" \
             "${fixed_rosbag}" \
