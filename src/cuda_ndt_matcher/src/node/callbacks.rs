@@ -27,8 +27,8 @@ use crate::{
 impl NdtScanMatcherNode {
     pub(crate) fn on_points(msg: PointCloud2, ctx: &OnPointsContext) {
         let _cb_num = ctx.callback_count.fetch_add(1, Ordering::SeqCst) + 1;
-        let timestamp_ns =
-            msg.header.stamp.sec as u64 * 1_000_000_000 + msg.header.stamp.nanosec as u64;
+        let timestamp_ns = pose_utils::stamp_to_ns_u64(&msg.header.stamp);
+        let sensor_time_ns = pose_utils::stamp_to_ns(&msg.header.stamp);
 
         // Stage 1: Convert and filter sensor points
         let sensor_points = match convert_and_filter_points(&msg) {
@@ -41,7 +41,7 @@ impl NdtScanMatcherNode {
             sensor_points,
             &msg.header.frame_id,
             &ctx.params.frame.base_frame,
-            msg.header.stamp.sec as i64 * 1_000_000_000 + msg.header.stamp.nanosec as i64,
+            sensor_time_ns,
             &ctx.tf_handler,
         );
 
@@ -54,8 +54,6 @@ impl NdtScanMatcherNode {
         }
 
         // Stage 3: Interpolate initial pose to sensor timestamp
-        let sensor_time_ns =
-            msg.header.stamp.sec as i64 * 1_000_000_000 + msg.header.stamp.nanosec as i64;
         let interpolate_result = match interpolate_initial_pose(&ctx.pose_buffer, sensor_time_ns) {
             Some(r) => r,
             None => return,
@@ -64,11 +62,7 @@ impl NdtScanMatcherNode {
         ctx.pose_buffer.pop_old(sensor_time_ns);
 
         // Stage 4: Update map if needed
-        let current_position = geometry_msgs::msg::Point {
-            x: initial_pose.pose.pose.position.x,
-            y: initial_pose.pose.pose.position.y,
-            z: initial_pose.pose.pose.position.z,
-        };
+        let current_position = pose_utils::position_from_pose_cov(initial_pose);
         update_map_if_needed(ctx, &current_position, &msg.header.stamp);
 
         // Get map points
@@ -433,10 +427,10 @@ fn publish_debug_and_diagnostics(
     let _ = ctx.debug_pubs.initial_pose_cov_pub.publish(initial_pose);
 
     // Initial-to-result distance
-    let dx = output.result.pose.position.x - initial_pose.pose.pose.position.x;
-    let dy = output.result.pose.position.y - initial_pose.pose.pose.position.y;
-    let dz = output.result.pose.position.z - initial_pose.pose.pose.position.z;
-    let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+    let distance = pose_utils::point_distance(
+        &output.result.pose.position,
+        &initial_pose.pose.pose.position,
+    );
     let _ = ctx
         .debug_pubs
         .initial_to_result_distance_pub
@@ -447,10 +441,10 @@ fn publish_debug_and_diagnostics(
 
     // Distances from old/new interpolation poses to result
     {
-        let dx_old = output.result.pose.position.x - interpolate_result.old_pose.pose.pose.position.x;
-        let dy_old = output.result.pose.position.y - interpolate_result.old_pose.pose.pose.position.y;
-        let dz_old = output.result.pose.position.z - interpolate_result.old_pose.pose.pose.position.z;
-        let distance_old = (dx_old * dx_old + dy_old * dy_old + dz_old * dz_old).sqrt();
+        let distance_old = pose_utils::point_distance(
+            &output.result.pose.position,
+            &interpolate_result.old_pose.pose.pose.position,
+        );
         let _ = ctx
             .debug_pubs
             .initial_to_result_distance_old_pub
@@ -459,10 +453,10 @@ fn publish_debug_and_diagnostics(
                 data: distance_old as f32,
             });
 
-        let dx_new = output.result.pose.position.x - interpolate_result.new_pose.pose.pose.position.x;
-        let dy_new = output.result.pose.position.y - interpolate_result.new_pose.pose.pose.position.y;
-        let dz_new = output.result.pose.position.z - interpolate_result.new_pose.pose.pose.position.z;
-        let distance_new = (dx_new * dx_new + dy_new * dy_new + dz_new * dz_new).sqrt();
+        let distance_new = pose_utils::point_distance(
+            &output.result.pose.position,
+            &interpolate_result.new_pose.pose.pose.position,
+        );
         let _ = ctx
             .debug_pubs
             .initial_to_result_distance_new_pub
@@ -506,14 +500,7 @@ fn publish_debug_and_diagnostics(
 
     // Aligned points (sensor points transformed by result pose)
     let result_isometry = pose_utils::isometry_from_pose(&output.result.pose);
-    let aligned_points: Vec<[f32; 3]> = sensor_points
-        .iter()
-        .map(|p| {
-            let sensor_pt = Vector3::new(p[0] as f64, p[1] as f64, p[2] as f64);
-            let map_pt = result_isometry * nalgebra::Point3::from(sensor_pt);
-            [map_pt.x as f32, map_pt.y as f32, map_pt.z as f32]
-        })
-        .collect();
+    let aligned_points = pose_utils::transform_points_f32(sensor_points, &result_isometry);
     let aligned_msg = pointcloud::to_pointcloud2(&aligned_points, header);
     let _ = ctx.debug_pubs.points_aligned_pub.publish(&aligned_msg);
 
@@ -588,14 +575,7 @@ fn publish_no_ground_scores(
         .evaluate_nvtl(&no_ground_points, map, &output.result.pose, 0.55)
         .unwrap_or(0.0);
 
-    let no_ground_aligned: Vec<[f32; 3]> = no_ground_points
-        .iter()
-        .map(|pt| {
-            let sensor_pt = Vector3::new(pt[0] as f64, pt[1] as f64, pt[2] as f64);
-            let map_pt = pose_isometry * nalgebra::Point3::from(sensor_pt);
-            [map_pt.x as f32, map_pt.y as f32, map_pt.z as f32]
-        })
-        .collect();
+    let no_ground_aligned = pose_utils::transform_points_f32(&no_ground_points, &pose_isometry);
     let no_ground_cloud_msg = pointcloud::to_pointcloud2(&no_ground_aligned, header);
     let _ = ctx
         .debug_pubs

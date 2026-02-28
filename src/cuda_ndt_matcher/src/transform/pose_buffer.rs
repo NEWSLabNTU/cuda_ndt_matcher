@@ -5,8 +5,7 @@
 //!
 //! Reference: external/autoware_core/localization/autoware_localization_util/src/smart_pose_buffer.cpp
 
-use geometry_msgs::msg::{Point, Pose, PoseWithCovariance, PoseWithCovarianceStamped, Quaternion};
-use nalgebra::{Quaternion as NaQuaternion, UnitQuaternion};
+use geometry_msgs::msg::{Point, Pose, PoseWithCovariance, PoseWithCovarianceStamped};
 use parking_lot::Mutex;
 use std::collections::VecDeque;
 use std_msgs::msg::Header;
@@ -187,7 +186,7 @@ impl SmartPoseBuffer {
 
     /// Convert ROS timestamp to nanoseconds
     fn stamp_to_ns(stamp: &builtin_interfaces::msg::Time) -> i64 {
-        stamp.sec as i64 * 1_000_000_000 + stamp.nanosec as i64
+        super::pose_utils::stamp_to_ns(stamp)
     }
 
     /// Convert nanoseconds to ROS timestamp
@@ -206,11 +205,7 @@ impl SmartPoseBuffer {
 
     /// Check if position jump is within tolerance
     fn validate_position_difference(&self, p1: &Point, p2: &Point) -> bool {
-        let dx = p1.x - p2.x;
-        let dy = p1.y - p2.y;
-        let dz = p1.z - p2.z;
-        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
-        distance < self.pose_distance_tolerance_m
+        super::pose_utils::point_distance(p1, p2) < self.pose_distance_tolerance_m
     }
 
     /// Interpolate between two poses at a target timestamp
@@ -242,10 +237,10 @@ impl SmartPoseBuffer {
             + t * (pose_b.pose.pose.position.z - pose_a.pose.pose.position.z);
 
         // SLERP for orientation
-        let q_a = Self::ros_quat_to_unit_quat(&pose_a.pose.pose.orientation);
-        let q_b = Self::ros_quat_to_unit_quat(&pose_b.pose.pose.orientation);
+        let q_a = super::pose_utils::unit_quat_from_msg(&pose_a.pose.pose.orientation);
+        let q_b = super::pose_utils::unit_quat_from_msg(&pose_b.pose.pose.orientation);
         let q_interp = q_a.slerp(&q_b, t);
-        let orientation = Self::unit_quat_to_ros_quat(&q_interp);
+        let orientation = super::pose_utils::quat_to_msg(&q_interp);
 
         // Use old_pose covariance (Autoware does not interpolate covariance)
         PoseWithCovarianceStamped {
@@ -263,25 +258,12 @@ impl SmartPoseBuffer {
         }
     }
 
-    /// Convert ROS quaternion to nalgebra UnitQuaternion
-    fn ros_quat_to_unit_quat(q: &Quaternion) -> UnitQuaternion<f64> {
-        UnitQuaternion::from_quaternion(NaQuaternion::new(q.w, q.x, q.y, q.z))
-    }
-
-    /// Convert nalgebra UnitQuaternion to ROS quaternion
-    fn unit_quat_to_ros_quat(q: &UnitQuaternion<f64>) -> Quaternion {
-        Quaternion {
-            x: q.i,
-            y: q.j,
-            z: q.k,
-            w: q.w,
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use geometry_msgs::msg::Quaternion;
 
     fn make_pose(sec: i32, nanosec: u32, x: f64, y: f64, z: f64) -> PoseWithCovarianceStamped {
         PoseWithCovarianceStamped {

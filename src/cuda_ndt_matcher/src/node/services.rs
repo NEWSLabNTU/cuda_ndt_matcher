@@ -15,7 +15,7 @@ use crate::{
     initial_pose,
     io::{params::NdtParams, pointcloud},
     map::MapUpdateModule,
-    transform::SmartPoseBuffer,
+    transform::{SmartPoseBuffer, pose_utils},
     visualization::{self, ParticleMarkerConfig},
 };
 
@@ -182,11 +182,7 @@ pub(crate) fn on_map_update(
 ) -> TriggerResponse {
     // Get current position from latest pose in buffer
     let position = match pose_buffer.latest() {
-        Some(p) => geometry_msgs::msg::Point {
-            x: p.pose.pose.position.x,
-            y: p.pose.pose.position.y,
-            z: p.pose.pose.position.z,
-        },
+        Some(p) => pose_utils::position_from_pose_cov(&p),
         None => {
             return TriggerResponse {
                 success: false,

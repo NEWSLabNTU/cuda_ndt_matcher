@@ -1,6 +1,6 @@
 # Phase 25: Code Restructure & Quality
 
-**Status**: Complete (25.1–25.10)
+**Status**: Complete (25.1–25.11)
 **Date**: 2026-01-28 (updated 2026-02-28)
 
 ## Motivation
@@ -382,6 +382,57 @@ Extracted 3 methods on `GpuPipelineBuffers`:
 - [x] All 484 tests pass (1 skipped: opt-in benchmark)
 - [x] Clippy passes with no new warnings
 
+---
+
+### 25.11 Deduplicate Utility Patterns ✓
+
+Extend `transform/pose_utils.rs` with shared helpers that replace repeated inline patterns across the crate. No behavior changes — purely deduplication.
+
+**Completed**: 2026-02-28
+
+#### New functions in `pose_utils.rs`
+
+| Function | Replaces | Sites |
+|----------|----------|-------|
+| `stamp_to_ns(&Time) -> i64` | Inline `sec * 1_000_000_000 + nanosec` (i64) | 4 |
+| `stamp_to_ns_u64(&Time) -> u64` | Same pattern with u64 cast | 1 |
+| `quat_to_msg(&UnitQuaternion) -> Quaternion` | Inline quaternion field mapping + private `unit_quat_to_ros_quat` in pose_buffer | 3 |
+| `point_distance(&Point, &Point) -> f64` | Inline `(dx²+dy²+dz²).sqrt()` | 4 |
+| `position_from_pose_cov(&PoseWithCovarianceStamped) -> Point` | Manual field-by-field copy from `pose.pose.position` | 2 |
+| `transform_points_f32(&[[f32;3]], &Isometry3) -> Vec<[f32;3]>` | 6-line map/collect transform blocks | 3 |
+
+Also refactored `pose_from_isometry` to use `quat_to_msg` internally.
+
+#### Call sites updated (6 files, ~19 replacements)
+
+| File | Replacements |
+|------|-------------|
+| `node/callbacks.rs` | 9: timestamps (3), position extraction (1), distances (3), transforms (2) |
+| `node/services.rs` | 1: position extraction |
+| `transform/tf_handler.rs` | 1: timestamp |
+| `transform/pose_buffer.rs` | 5: delegate `stamp_to_ns`, `validate_position_difference`, replace 2 quaternion methods + delete them |
+| `visualization/markers.rs` | 1: point transform |
+| `transform/pose_utils.rs` | refactor `pose_from_isometry` |
+
+#### What stays inline
+
+- `callbacks.rs:87` — single-use `[f32;3]` norm in iterator
+- `callbacks.rs:570-576` — single-point transform in `.filter()` (different use case)
+- `diagnostics.rs:627` — stamp-to-f64-seconds (different conversion, single use)
+- Test helpers (`make_pose`) — test-only duplication is acceptable
+
+**Criteria**:
+- [x] 6 new utility functions added to `pose_utils.rs`
+- [x] All inline timestamp conversions replaced with `stamp_to_ns` / `stamp_to_ns_u64`
+- [x] All inline distance calculations replaced with `point_distance`
+- [x] All inline point-transform blocks replaced with `transform_points_f32`
+- [x] Duplicate quaternion helpers removed from `pose_buffer.rs`
+- [x] No behavior changes — identical output for identical input
+- [x] All 64 tests pass
+- [x] Clippy passes with no new warnings
+
+---
+
 ## Module Classification
 
 ### GPU Path (alignment/)
@@ -427,8 +478,9 @@ Extracted 3 methods on `GpuPipelineBuffers`:
 | 25.8 Test & build hygiene               | 25.4       | 4 hours |
 | 25.9 Remove dead GPU code               | —          | 2 hours |
 | 25.10 Extract stages in large functions | 25.4       | 4 hours |
+| 25.11 Deduplicate utility patterns      | 25.2       | 2 hours |
 
-Sub-phases 25.9 and 25.10 are independent of each other. 25.9 touches `cuda_ffi` only. 25.10 touches `cuda_ndt_matcher` and `ndt_cuda`.
+Sub-phases 25.9, 25.10, and 25.11 are independent of each other. 25.9 touches `cuda_ffi` only. 25.10 and 25.11 touch `cuda_ndt_matcher`.
 
 ## Migration Strategy
 
@@ -476,3 +528,4 @@ just lint
 - [x] Dead GPU code removed (2,241 LOC: 2 `.cu`, 2 FFI `.rs`) (25.9)
 - [x] Large functions extracted into helpers: `on_points()` 130 LOC, `new()` 118 LOC, `build()` 55 LOC (25.10)
 - [x] `align()` and `align_with_debug()` share `build_result()` — no duplication (25.10)
+- [x] Inline utility patterns deduplicated into `pose_utils.rs` (~19 sites across 6 files) (25.11)

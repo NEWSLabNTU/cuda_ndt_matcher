@@ -94,8 +94,7 @@ impl TfHandler {
 
         for ts in msg.transforms {
             let key = (ts.header.frame_id.clone(), ts.child_frame_id.clone());
-            let stamp_ns =
-                ts.header.stamp.sec as i64 * 1_000_000_000 + ts.header.stamp.nanosec as i64;
+            let stamp_ns = super::pose_utils::stamp_to_ns(&ts.header.stamp);
 
             let timestamped = TimestampedTransform {
                 transform: ts.transform,
