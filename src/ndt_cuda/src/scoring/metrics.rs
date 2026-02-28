@@ -5,6 +5,7 @@
 //! normalized by the number of correspondences.
 
 use nalgebra::{Isometry3, Matrix3, Vector3};
+use rayon::prelude::*;
 
 use crate::{derivatives::GaussianParams, voxel_grid::VoxelGrid};
 
@@ -64,15 +65,10 @@ pub fn compute_transform_probability(
         return ScoringResult::no_correspondences(0);
     }
 
-    let mut total_score = 0.0;
-    let mut num_correspondences = 0;
-    let mut num_no_correspondence = 0;
-
     // Use voxel resolution as search radius (matches Autoware's radiusSearch behavior)
     let search_radius = target_grid.resolution();
 
-    for source_point in source_points {
-        // Transform point
+    let score_point = |source_point: &[f32; 3]| -> (f64, usize, usize) {
         let pt = nalgebra::Point3::new(
             source_point[0] as f64,
             source_point[1] as f64,
@@ -85,25 +81,48 @@ pub fn compute_transform_probability(
             transformed.z as f32,
         ];
 
-        // Find corresponding voxels using radius search (like Autoware)
         let nearby_voxels = target_grid.radius_search(&transformed_f32, search_radius);
 
         if nearby_voxels.is_empty() {
-            num_no_correspondence += 1;
+            (0.0, 0, 1)
         } else {
-            // Accumulate scores from ALL nearby voxels (key difference from single-voxel lookup)
+            let mut score = 0.0;
+            let mut corr = 0;
             for voxel in nearby_voxels {
-                let score = compute_point_score(
+                score += compute_point_score(
                     &transformed,
                     &voxel.mean.cast::<f64>(),
                     &voxel.inv_covariance.cast::<f64>(),
                     gauss,
                 );
-                total_score += score;
-                num_correspondences += 1;
+                corr += 1;
             }
+            (score, corr, 0)
         }
-    }
+    };
+
+    let (total_score, num_correspondences, num_no_correspondence) = if source_points.len() > 4096 {
+        source_points
+            .par_iter()
+            .fold(
+                || (0.0f64, 0usize, 0usize),
+                |(s, c, n), pt| {
+                    let (ps, pc, pn) = score_point(pt);
+                    (s + ps, c + pc, n + pn)
+                },
+            )
+            .reduce(
+                || (0.0, 0, 0),
+                |(s1, c1, n1), (s2, c2, n2)| (s1 + s2, c1 + c2, n1 + n2),
+            )
+    } else {
+        source_points
+            .iter()
+            .fold((0.0f64, 0usize, 0usize), |(s, c, n), pt| {
+                let (ps, pc, pn) = score_point(pt);
+                (s + ps, c + pc, n + pn)
+            })
+    };
 
     let transform_probability = if num_correspondences > 0 {
         total_score / num_correspondences as f64
@@ -142,38 +161,38 @@ pub fn compute_per_point_scores(
     // Use voxel resolution as search radius (matches Autoware's radiusSearch behavior)
     let search_radius = target_grid.resolution();
 
-    source_points
-        .iter()
-        .map(|source_point| {
-            // Transform point
-            let pt = nalgebra::Point3::new(
-                source_point[0] as f64,
-                source_point[1] as f64,
-                source_point[2] as f64,
-            );
-            let transformed = pose * pt;
-            let transformed_f32 = [
-                transformed.x as f32,
-                transformed.y as f32,
-                transformed.z as f32,
-            ];
+    let score_fn = |source_point: &[f32; 3]| -> f64 {
+        let pt = nalgebra::Point3::new(
+            source_point[0] as f64,
+            source_point[1] as f64,
+            source_point[2] as f64,
+        );
+        let transformed = pose * pt;
+        let transformed_f32 = [
+            transformed.x as f32,
+            transformed.y as f32,
+            transformed.z as f32,
+        ];
 
-            // Find corresponding voxels and sum their scores
-            let nearby_voxels = target_grid.radius_search(&transformed_f32, search_radius);
+        let nearby_voxels = target_grid.radius_search(&transformed_f32, search_radius);
+        nearby_voxels
+            .iter()
+            .map(|voxel| {
+                compute_point_score(
+                    &transformed,
+                    &voxel.mean.cast::<f64>(),
+                    &voxel.inv_covariance.cast::<f64>(),
+                    gauss,
+                )
+            })
+            .sum()
+    };
 
-            nearby_voxels
-                .iter()
-                .map(|voxel| {
-                    compute_point_score(
-                        &transformed,
-                        &voxel.mean.cast::<f64>(),
-                        &voxel.inv_covariance.cast::<f64>(),
-                        gauss,
-                    )
-                })
-                .sum()
-        })
-        .collect()
+    if source_points.len() > 4096 {
+        source_points.par_iter().map(score_fn).collect()
+    } else {
+        source_points.iter().map(score_fn).collect()
+    }
 }
 
 /// Compute the NDT score for a single point-voxel pair.

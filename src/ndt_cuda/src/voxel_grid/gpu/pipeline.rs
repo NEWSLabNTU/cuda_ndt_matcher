@@ -373,12 +373,7 @@ impl GpuPipelineBuffers {
             self.prepare_centered_points_and_segments(&points_flat, num_segments, num_points)?;
 
         // Step 6: Launch statistics kernels (sums, means, covariances)
-        self.launch_statistics_kernels(
-            &points_gpu,
-            &segment_starts_gpu,
-            num_segments,
-            num_points,
-        );
+        self.launch_statistics_kernels(&points_gpu, &segment_starts_gpu, num_segments, num_points);
 
         // Step 7: Download GPU results and finalize on CPU
         self.download_and_finalize(
@@ -437,7 +432,12 @@ impl GpuPipelineBuffers {
             .collect();
         let segment_starts_gpu = self.client.create(&segment_starts_bytes);
 
-        Ok((points_gpu, segment_starts_gpu, full_segment_starts, centroid))
+        Ok((
+            points_gpu,
+            segment_starts_gpu,
+            full_segment_starts,
+            centroid,
+        ))
     }
 
     /// Launch the 3 CubeCL statistics kernels (sums, means, covariances).

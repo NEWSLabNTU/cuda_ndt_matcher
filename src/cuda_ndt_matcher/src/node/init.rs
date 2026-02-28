@@ -47,8 +47,7 @@ impl NdtScanMatcherNode {
         log_info!(NODE_NAME, "TF handler initialized for sensor transforms");
 
         // Shared state
-        let map_points: Arc<ArcSwap<Option<Vec<[f32; 3]>>>> =
-            Arc::new(ArcSwap::from_pointee(None));
+        let map_points: Arc<ArcSwap<Option<Vec<[f32; 3]>>>> = Arc::new(ArcSwap::from_pointee(None));
         let pose_buffer = Arc::new(SmartPoseBuffer::new(
             params.validation.initial_pose_timeout_sec,
             params.validation.initial_pose_distance_tolerance_m,
@@ -78,13 +77,8 @@ impl NdtScanMatcherNode {
         // Create publishers, diagnostics, batch queue
         let (pose_pub, pose_cov_pub, debug_pubs) = create_publishers(node)?;
         let diagnostics = Arc::new(Mutex::new(DiagnosticsInterface::new(node)?));
-        let scan_queue = create_batch_queue(
-            &params,
-            &ndt_manager,
-            &pose_pub,
-            &pose_cov_pub,
-            &debug_pubs,
-        );
+        let scan_queue =
+            create_batch_queue(&params, &ndt_manager, &pose_pub, &pose_cov_pub, &debug_pubs);
 
         // Create subscriptions
         let (points_sub, initial_pose_sub, regularization_pose_sub, map_sub) =
@@ -172,8 +166,7 @@ fn create_publishers(
         nvtl_pub: node.create_publisher("nearest_voxel_transformation_likelihood")?,
         iteration_num_pub: node.create_publisher("iteration_num")?,
         exe_time_pub: node.create_publisher("exe_time_ms")?,
-        oscillation_count_pub: node
-            .create_publisher("local_optimal_solution_oscillation_num")?,
+        oscillation_count_pub: node.create_publisher("local_optimal_solution_oscillation_num")?,
         initial_pose_cov_pub: node.create_publisher("initial_pose_with_covariance")?,
         initial_to_result_distance_pub: node.create_publisher("initial_to_result_distance")?,
         initial_to_result_distance_old_pub: node
@@ -191,8 +184,7 @@ fn create_publishers(
         voxel_score_points_pub: node.create_publisher("voxel_score_points")?,
         multi_ndt_pose_pub: node.create_publisher("multi_ndt_pose")?,
         multi_initial_pose_pub: node.create_publisher("multi_initial_pose")?,
-        debug_loaded_pointcloud_map_pub: node
-            .create_publisher("debug/loaded_pointcloud_map")?,
+        debug_loaded_pointcloud_map_pub: node.create_publisher("debug/loaded_pointcloud_map")?,
     };
 
     Ok((pose_pub, pose_cov_pub, debug_pubs))
@@ -233,8 +225,8 @@ fn create_batch_queue(
     let result_pose_cov_pub = pose_cov_pub.clone();
     let result_debug_pubs = debug_pubs.clone();
     let result_params = Arc::clone(params);
-    let result_callback: crate::alignment::batch::ResultCallback = Arc::new(
-        move |results: Vec<ScanResult>| {
+    let result_callback: crate::alignment::batch::ResultCallback =
+        Arc::new(move |results: Vec<ScanResult>| {
             for result in results {
                 if !result.converged {
                     log_debug!(
@@ -287,8 +279,7 @@ fn create_batch_queue(
                     result.latency_ms
                 );
             }
-        },
-    );
+        });
 
     Some(Arc::new(ScanQueue::new(config, align_fn, result_callback)))
 }
@@ -474,9 +465,7 @@ fn create_services(
                 if req.data {
                     #[cfg(feature = "debug-output")]
                     {
-                        if let Some(start) =
-                            init_request_time_for_trigger.lock().unwrap().take()
-                        {
+                        if let Some(start) = init_request_time_for_trigger.lock().unwrap().take() {
                             let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
                             log_info!(NODE_NAME, "Init-to-tracking time: {:.2}ms", elapsed_ms);
                             crate::io::debug_writer::write_init_to_tracking(elapsed_ms);

@@ -397,63 +397,69 @@ pub fn finalize_voxels_cpu(
     counts: Vec<u32>,
     min_points: u32,
 ) -> VoxelStatistics {
+    use rayon::prelude::*;
+
     let num_voxels = counts.len();
+
+    // Per-voxel result for parallel collect
+    struct VoxelResult {
+        covariance: [f32; 9],
+        inv_covariance: [f32; 9],
+        principal_axis: [f32; 3],
+        is_valid: bool,
+    }
+
+    let results: Vec<VoxelResult> = (0..num_voxels)
+        .into_par_iter()
+        .map(|v| {
+            let count = counts[v];
+
+            if count < min_points {
+                return VoxelResult {
+                    covariance: [0.0; 9],
+                    inv_covariance: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+                    principal_axis: [0.0, 0.0, 1.0],
+                    is_valid: false,
+                };
+            }
+
+            let denom = if count > 1 {
+                1.0 / (count - 1) as f32
+            } else {
+                1.0
+            };
+
+            let mut cov = [0.0f32; 9];
+            for i in 0..9 {
+                cov[i] = cov_sums[v * 9 + i] * denom;
+            }
+            // Add I/(n-1) to diagonal (Autoware identity initialization)
+            cov[0] += denom;
+            cov[4] += denom;
+            cov[8] += denom;
+
+            let reg = regularize_and_invert(&cov);
+
+            VoxelResult {
+                covariance: cov,
+                inv_covariance: reg.inv_covariance,
+                principal_axis: reg.principal_axis,
+                is_valid: reg.is_valid,
+            }
+        })
+        .collect();
+
+    // Flatten results into contiguous arrays
     let mut covariances = vec![0.0f32; num_voxels * 9];
     let mut inv_covariances = vec![0.0f32; num_voxels * 9];
     let mut principal_axes = vec![0.0f32; num_voxels * 3];
     let mut valid = vec![false; num_voxels];
 
-    for v in 0..num_voxels {
-        let count = counts[v];
-
-        if count < min_points {
-            // Not enough points - mark as invalid
-            valid[v] = false;
-            // Set identity matrix for safety
-            inv_covariances[v * 9] = 1.0;
-            inv_covariances[v * 9 + 4] = 1.0;
-            inv_covariances[v * 9 + 8] = 1.0;
-            // Default principal axis to Z
-            principal_axes[v * 3 + 2] = 1.0;
-            continue;
-        }
-
-        // Standard sample covariance formula (Autoware line 436 in multi_voxel_grid_covariance_omp_impl.hpp):
-        //   leaf.cov_ = (sum_xx - pt_sum * mean^T) / (n - 1)
-        //
-        // The GPU kernel accumulates centered deviations: cov_sums = Σ(x - mean)(x - mean)^T
-        // which equals: sum_xx - pt_sum * mean^T
-        //
-        // So we divide by (n-1) to get the sample covariance.
-        //
-        // IMPORTANT: Autoware initializes leaf.cov_ to Identity (line 132 of
-        // multi_voxel_grid_covariance_omp.h), not zero. This adds an implicit
-        // I/(n-1) term to the final covariance. We replicate this behavior.
-        let denom = if count > 1 {
-            1.0 / (count - 1) as f32
-        } else {
-            1.0
-        };
-
-        // Finalize covariance: cov = cov_sums / (n - 1) + I/(n-1)
-        for i in 0..9 {
-            covariances[v * 9 + i] = cov_sums[v * 9 + i] * denom;
-        }
-        // Add I/(n-1) to diagonal elements (indices 0, 4, 8) to match Autoware's identity initialization
-        covariances[v * 9] += denom;
-        covariances[v * 9 + 4] += denom;
-        covariances[v * 9 + 8] += denom;
-
-        // Regularize and invert covariance matrix
-        let result = regularize_and_invert(&covariances[v * 9..v * 9 + 9]);
-
-        for i in 0..9 {
-            inv_covariances[v * 9 + i] = result.inv_covariance[i];
-        }
-        for i in 0..3 {
-            principal_axes[v * 3 + i] = result.principal_axis[i];
-        }
-        valid[v] = result.is_valid;
+    for (v, r) in results.iter().enumerate() {
+        covariances[v * 9..v * 9 + 9].copy_from_slice(&r.covariance);
+        inv_covariances[v * 9..v * 9 + 9].copy_from_slice(&r.inv_covariance);
+        principal_axes[v * 3..v * 3 + 3].copy_from_slice(&r.principal_axis);
+        valid[v] = r.is_valid;
     }
 
     VoxelStatistics {

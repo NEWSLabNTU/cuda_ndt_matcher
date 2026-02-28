@@ -1,6 +1,5 @@
 use autoware_internal_debug_msgs::msg::{Float32Stamped, Int32Stamped};
 use geometry_msgs::msg::{PoseArray, PoseStamped, PoseWithCovariance, PoseWithCovarianceStamped};
-use nalgebra::Vector3;
 use rclrs::{log_debug, log_error, log_info, log_warn};
 use sensor_msgs::msg::PointCloud2;
 use std::{
@@ -37,13 +36,15 @@ impl NdtScanMatcherNode {
         };
 
         // Stage 2: Transform from sensor frame to base_link
-        let sensor_points = transform_to_base_frame(
-            sensor_points,
+        // Split into lookup + apply so TF lookup can potentially overlap with
+        // point filtering in future pipeline optimizations (Phase 27.6a).
+        let base_tf = lookup_base_transform(
             &msg.header.frame_id,
             &ctx.params.frame.base_frame,
             sensor_time_ns,
             &ctx.tf_handler,
         );
+        let sensor_points = apply_base_transform(sensor_points, base_tf.as_ref());
 
         // Store sensor points for ndt_align service (before any early returns)
         ctx.latest_sensor_points
@@ -183,28 +184,29 @@ fn convert_and_filter_points(msg: &PointCloud2) -> Option<Vec<[f32; 3]>> {
     Some(sensor_points)
 }
 
-/// Transform sensor points from sensor_frame to base_frame using TF.
-fn transform_to_base_frame(
-    sensor_points: Vec<[f32; 3]>,
+/// Look up the sensor-to-base transform (TF lookup only, no point processing).
+///
+/// Split from the bulk transform to allow the TF lookup to potentially
+/// overlap with point filtering in the pipeline (Phase 27.6a).
+fn lookup_base_transform(
     sensor_frame: &str,
     base_frame: &str,
     stamp_ns: i64,
     tf_handler: &Arc<crate::transform::tf_handler::TfHandler>,
-) -> Vec<[f32; 3]> {
+) -> Option<nalgebra::Isometry3<f64>> {
     if sensor_frame == base_frame {
-        return sensor_points;
+        return Some(nalgebra::Isometry3::identity());
     }
 
-    match tf_handler.transform_points(&sensor_points, sensor_frame, base_frame, Some(stamp_ns)) {
-        Some(transformed) => {
+    match tf_handler.lookup_transform(sensor_frame, base_frame, Some(stamp_ns)) {
+        Some(tf) => {
             log_debug!(
                 NODE_NAME,
-                "Transformed {} points: {} -> {}",
-                transformed.len(),
+                "TF lookup: {} -> {} OK",
                 sensor_frame,
                 base_frame
             );
-            transformed
+            Some(tf)
         }
         None => {
             log_warn!(
@@ -213,8 +215,23 @@ fn transform_to_base_frame(
                 sensor_frame,
                 base_frame
             );
-            sensor_points
+            None
         }
+    }
+}
+
+/// Apply the sensor-to-base transform to a point cloud.
+///
+/// If no transform is available (lookup returned None), returns points unchanged.
+fn apply_base_transform(
+    sensor_points: Vec<[f32; 3]>,
+    tf: Option<&nalgebra::Isometry3<f64>>,
+) -> Vec<[f32; 3]> {
+    match tf {
+        Some(tf) if *tf != nalgebra::Isometry3::identity() => {
+            pose_utils::transform_points_f32(&sensor_points, tf)
+        }
+        _ => sensor_points,
     }
 }
 
@@ -406,13 +423,10 @@ fn publish_debug_and_diagnostics(
         stamp: msg.header.stamp.clone(),
         data: output.result.iterations,
     });
-    let _ = ctx
-        .debug_pubs
-        .oscillation_count_pub
-        .publish(&Int32Stamped {
-            stamp: msg.header.stamp.clone(),
-            data: output.result.oscillation_count as i32,
-        });
+    let _ = ctx.debug_pubs.oscillation_count_pub.publish(&Int32Stamped {
+        stamp: msg.header.stamp.clone(),
+        data: output.result.oscillation_count as i32,
+    });
     let _ = ctx
         .debug_pubs
         .transform_probability_pub
@@ -554,15 +568,21 @@ fn publish_no_ground_scores(
         .no_ground_points
         .z_margin_for_ground_removal as f64;
 
-    let no_ground_points: Vec<[f32; 3]> = sensor_points
+    // Transform once, produce both sensor-frame and map-frame filtered points.
+    // This avoids the previous double-transform where filter transformed each point
+    // to check Z, then transform_points_f32 transformed survivors again for publishing.
+    let (no_ground_points, no_ground_aligned): (Vec<[f32; 3]>, Vec<[f32; 3]>) = sensor_points
         .iter()
-        .filter(|pt| {
-            let sensor_pt = Vector3::new(pt[0] as f64, pt[1] as f64, pt[2] as f64);
-            let map_pt = pose_isometry * nalgebra::Point3::from(sensor_pt);
-            map_pt.z - base_link_z > z_threshold
+        .filter_map(|pt| {
+            let sensor_pt = nalgebra::Point3::new(pt[0] as f64, pt[1] as f64, pt[2] as f64);
+            let map_pt = pose_isometry * sensor_pt;
+            if map_pt.z - base_link_z > z_threshold {
+                Some((*pt, [map_pt.x as f32, map_pt.y as f32, map_pt.z as f32]))
+            } else {
+                None
+            }
         })
-        .copied()
-        .collect();
+        .unzip();
 
     if no_ground_points.is_empty() {
         return;
@@ -574,8 +594,6 @@ fn publish_no_ground_scores(
     let no_ground_nvtl = manager
         .evaluate_nvtl(&no_ground_points, map, &output.result.pose, 0.55)
         .unwrap_or(0.0);
-
-    let no_ground_aligned = pose_utils::transform_points_f32(&no_ground_points, &pose_isometry);
     let no_ground_cloud_msg = pointcloud::to_pointcloud2(&no_ground_aligned, header);
     let _ = ctx
         .debug_pubs

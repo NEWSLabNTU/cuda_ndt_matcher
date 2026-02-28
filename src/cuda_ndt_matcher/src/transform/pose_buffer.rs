@@ -99,18 +99,14 @@ impl SmartPoseBuffer {
             return None;
         }
 
-        // Find bracketing poses (old_pose <= target_time <= new_pose)
-        let mut old_pose = buffer.front().unwrap().clone();
-        let mut new_pose = old_pose.clone();
+        // Find bracketing poses using binary search (O(log N) instead of O(N) linear scan).
+        // partition_point returns the index of the first element where stamp > target_time.
+        let idx = buffer.partition_point(|p| Self::stamp_to_ns(&p.header.stamp) <= target_time_ns);
 
-        for pose in buffer.iter() {
-            new_pose = pose.clone();
-            let pose_time_ns = Self::stamp_to_ns(&pose.header.stamp);
-            if pose_time_ns > target_time_ns {
-                break;
-            }
-            old_pose = pose.clone();
-        }
+        let old_idx = idx.saturating_sub(1);
+        let new_idx = idx.min(buffer.len() - 1);
+        let old_pose = buffer[old_idx].clone();
+        let new_pose = buffer[new_idx].clone();
 
         // Release lock before validation (validation doesn't need buffer)
         drop(buffer);
@@ -257,7 +253,6 @@ impl SmartPoseBuffer {
             },
         }
     }
-
 }
 
 #[cfg(test)]

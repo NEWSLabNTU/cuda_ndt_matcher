@@ -1,6 +1,7 @@
 //! CPU fallback implementations for point cloud filtering.
 
 use super::{FilterParams, FilterResult};
+use rayon::prelude::*;
 use std::collections::HashMap;
 
 /// Filter points using CPU (fallback when CUDA not available or for small point clouds).
@@ -11,27 +12,54 @@ pub fn filter_points_cpu(points: &[[f32; 3]], params: &FilterParams) -> FilterRe
     let max_dist_sq = params.max_distance * params.max_distance;
 
     // Apply distance and z filters
-    let mut filtered: Vec<[f32; 3]> = Vec::with_capacity(points.len());
-    let mut removed_by_distance = 0usize;
-    let mut removed_by_z = 0usize;
-
-    for p in points {
+    let classify = |p: &[f32; 3]| -> (Option<[f32; 3]>, usize, usize) {
         let dist_sq = p[0] * p[0] + p[1] * p[1] + p[2] * p[2];
-
-        // Distance filter
         if dist_sq < min_dist_sq || dist_sq > max_dist_sq {
-            removed_by_distance += 1;
-            continue;
+            (None, 1, 0)
+        } else if p[2] < params.min_z || p[2] > params.max_z {
+            (None, 0, 1)
+        } else {
+            (Some(*p), 0, 0)
         }
+    };
 
-        // Z filter
-        if p[2] < params.min_z || p[2] > params.max_z {
-            removed_by_z += 1;
-            continue;
+    let (filtered, removed_by_distance, removed_by_z) = if points.len() > 4096 {
+        points
+            .par_iter()
+            .fold(
+                || (Vec::new(), 0usize, 0usize),
+                |(mut f, mut d, mut z), p| {
+                    let (pt, dd, dz) = classify(p);
+                    if let Some(pt) = pt {
+                        f.push(pt);
+                    }
+                    d += dd;
+                    z += dz;
+                    (f, d, z)
+                },
+            )
+            .reduce(
+                || (Vec::new(), 0, 0),
+                |(mut f1, d1, z1), (mut f2, d2, z2)| {
+                    f1.append(&mut f2);
+                    (f1, d1 + d2, z1 + z2)
+                },
+            )
+    } else {
+        let mut filtered = Vec::with_capacity(points.len());
+        let mut removed_by_distance = 0usize;
+        let mut removed_by_z = 0usize;
+        for p in points {
+            let (pt, dd, dz) = classify(p);
+            if let Some(pt) = pt {
+                filtered.push(pt);
+            }
+            removed_by_distance += dd;
+            removed_by_z += dz;
         }
-
-        filtered.push(*p);
-    }
+        (filtered, removed_by_distance, removed_by_z)
+    };
+    let mut filtered = filtered;
 
     // Apply voxel downsampling if enabled
     let removed_by_downsampling = if let Some(resolution) = params.downsample_resolution {
@@ -71,23 +99,44 @@ pub fn voxel_downsample_cpu(points: &[[f32; 3]], resolution: f32) -> Vec<[f32; 3
 
     let inv_resolution = 1.0 / resolution;
 
-    // Accumulate points per voxel
+    // Accumulate points per voxel using thread-local HashMaps for large inputs
     // Key: (voxel_x, voxel_y, voxel_z) as integers
-    let mut voxel_accum: HashMap<(i32, i32, i32), VoxelAccum> = HashMap::new();
-
-    for p in points {
+    let accumulate = |map: &mut HashMap<(i32, i32, i32), VoxelAccum>, p: &[f32; 3]| {
         let vx = (p[0] * inv_resolution).floor() as i32;
         let vy = (p[1] * inv_resolution).floor() as i32;
         let vz = (p[2] * inv_resolution).floor() as i32;
 
-        let entry = voxel_accum
-            .entry((vx, vy, vz))
-            .or_insert((0.0, 0.0, 0.0, 0));
+        let entry = map.entry((vx, vy, vz)).or_insert((0.0, 0.0, 0.0, 0));
         entry.0 += p[0] as f64;
         entry.1 += p[1] as f64;
         entry.2 += p[2] as f64;
         entry.3 += 1;
-    }
+    };
+
+    let voxel_accum: HashMap<(i32, i32, i32), VoxelAccum> = if points.len() > 4096 {
+        points
+            .par_iter()
+            .fold(HashMap::new, |mut map, p| {
+                accumulate(&mut map, p);
+                map
+            })
+            .reduce(HashMap::new, |mut m1, m2| {
+                for (k, (sx, sy, sz, c)) in m2 {
+                    let entry = m1.entry(k).or_insert((0.0, 0.0, 0.0, 0));
+                    entry.0 += sx;
+                    entry.1 += sy;
+                    entry.2 += sz;
+                    entry.3 += c;
+                }
+                m1
+            })
+    } else {
+        let mut map = HashMap::new();
+        for p in points {
+            accumulate(&mut map, p);
+        }
+        map
+    };
 
     // Compute centroids
     voxel_accum

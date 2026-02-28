@@ -158,8 +158,7 @@ impl NdtOptimizer {
             pose: final_pose,
             status,
             score,
-            transform_probability: self
-                .compute_transform_probability(score, source_points.len()),
+            transform_probability: self.compute_transform_probability(score, source_points.len()),
             nvtl,
             iterations,
             hessian,
@@ -772,8 +771,15 @@ impl NdtOptimizer {
                 $debug.final_score = $self.compute_transform_probability($score, $source.len());
                 $debug.compute_oscillation();
                 let result = $self.build_result(
-                    $pose_vec, $status, $score, $iters, $hessian, $correspondences,
-                    $debug.oscillation_count, $source, $target,
+                    $pose_vec,
+                    $status,
+                    $score,
+                    $iters,
+                    $hessian,
+                    $correspondences,
+                    $debug.oscillation_count,
+                    $source,
+                    $target,
                 );
                 $debug.final_nvtl = result.nvtl;
                 $debug.exe_time_ms = Some($start.elapsed().as_secs_f64() * 1000.0);
@@ -808,9 +814,18 @@ impl NdtOptimizer {
                 debug.iterations.push(iter_debug);
                 if iteration == 0 {
                     let result = finalize_debug!(
-                        self, debug, start_time, "NoCorrespondences", iteration,
-                        &pose, derivatives.score, source_points, target_grid,
-                        ConvergenceStatus::NoCorrespondences, Matrix6::zeros(), 0
+                        self,
+                        debug,
+                        start_time,
+                        "NoCorrespondences",
+                        iteration,
+                        &pose,
+                        derivatives.score,
+                        source_points,
+                        target_grid,
+                        ConvergenceStatus::NoCorrespondences,
+                        Matrix6::zeros(),
+                        0
                     );
                     return (result, debug);
                 }
@@ -836,9 +851,18 @@ impl NdtOptimizer {
                 None => {
                     debug.iterations.push(iter_debug);
                     let result = finalize_debug!(
-                        self, debug, start_time, "SingularHessian", iteration,
-                        &best_pose, best_score, source_points, target_grid,
-                        ConvergenceStatus::SingularHessian, last_hessian, last_correspondences
+                        self,
+                        debug,
+                        start_time,
+                        "SingularHessian",
+                        iteration,
+                        &best_pose,
+                        best_score,
+                        source_points,
+                        target_grid,
+                        ConvergenceStatus::SingularHessian,
+                        last_hessian,
+                        last_correspondences
                     );
                     return (result, debug);
                 }
@@ -852,9 +876,18 @@ impl NdtOptimizer {
                 iter_debug.set_pose_after(&pose);
                 debug.iterations.push(iter_debug);
                 let result = finalize_debug!(
-                    self, debug, start_time, "Converged", iteration + 1,
-                    &pose, derivatives.score, source_points, target_grid,
-                    ConvergenceStatus::Converged, derivatives.hessian, derivatives.num_correspondences
+                    self,
+                    debug,
+                    start_time,
+                    "Converged",
+                    iteration + 1,
+                    &pose,
+                    derivatives.score,
+                    source_points,
+                    target_grid,
+                    ConvergenceStatus::Converged,
+                    derivatives.hessian,
+                    derivatives.num_correspondences
                 );
                 return (result, debug);
             }
@@ -893,9 +926,18 @@ impl NdtOptimizer {
 
         // Reached max iterations
         let result = finalize_debug!(
-            self, debug, start_time, "MaxIterations", self.config.ndt.max_iterations,
-            &best_pose, best_score, source_points, target_grid,
-            ConvergenceStatus::MaxIterations, last_hessian, last_correspondences
+            self,
+            debug,
+            start_time,
+            "MaxIterations",
+            self.config.ndt.max_iterations,
+            &best_pose,
+            best_score,
+            source_points,
+            target_grid,
+            ConvergenceStatus::MaxIterations,
+            last_hessian,
+            last_correspondences
         );
         (result, debug)
     }

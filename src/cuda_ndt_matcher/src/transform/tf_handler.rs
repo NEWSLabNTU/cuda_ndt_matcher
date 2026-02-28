@@ -260,6 +260,7 @@ impl TfHandler {
     ///
     /// # Returns
     /// Transformed points if transform is available, None otherwise.
+    #[allow(dead_code)]
     pub(crate) fn transform_points(
         &self,
         points: &[[f32; 3]],
@@ -268,21 +269,7 @@ impl TfHandler {
         time_ns: Option<i64>,
     ) -> Option<Vec<[f32; 3]>> {
         let transform = self.lookup_transform(source_frame, target_frame, time_ns)?;
-
-        let transformed: Vec<[f32; 3]> = points
-            .iter()
-            .map(|p| {
-                let pt = nalgebra::Point3::new(p[0] as f64, p[1] as f64, p[2] as f64);
-                let transformed = transform * pt;
-                [
-                    transformed.x as f32,
-                    transformed.y as f32,
-                    transformed.z as f32,
-                ]
-            })
-            .collect();
-
-        Some(transformed)
+        Some(super::pose_utils::transform_points_f32(points, &transform))
     }
 
     /// Check if a transform is available between two frames.

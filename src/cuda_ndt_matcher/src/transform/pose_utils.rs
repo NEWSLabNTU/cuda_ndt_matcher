@@ -5,6 +5,7 @@
 
 use geometry_msgs::msg::{Point, Pose, PoseWithCovarianceStamped};
 use nalgebra::{Isometry3, Quaternion as NaQuaternion, Translation3, UnitQuaternion};
+use rayon::prelude::*;
 
 /// Convert a ROS timestamp to nanoseconds (i64).
 pub(crate) fn stamp_to_ns(stamp: &builtin_interfaces::msg::Time) -> i64 {
@@ -49,19 +50,25 @@ pub(crate) fn position_from_pose_cov(p: &PoseWithCovarianceStamped) -> Point {
 }
 
 /// Bulk transform `[f32; 3]` points by an `Isometry3<f64>`.
+///
+/// Uses rayon parallel iteration for large point clouds (>4096 points)
+/// to avoid thread-spawning overhead on small inputs.
 pub(crate) fn transform_points_f32(points: &[[f32; 3]], tf: &Isometry3<f64>) -> Vec<[f32; 3]> {
-    points
-        .iter()
-        .map(|p| {
-            let pt = nalgebra::Point3::new(p[0] as f64, p[1] as f64, p[2] as f64);
-            let transformed = tf * pt;
-            [
-                transformed.x as f32,
-                transformed.y as f32,
-                transformed.z as f32,
-            ]
-        })
-        .collect()
+    let transform_fn = |p: &[f32; 3]| {
+        let pt = nalgebra::Point3::new(p[0] as f64, p[1] as f64, p[2] as f64);
+        let transformed = tf * pt;
+        [
+            transformed.x as f32,
+            transformed.y as f32,
+            transformed.z as f32,
+        ]
+    };
+
+    if points.len() > 4096 {
+        points.par_iter().map(transform_fn).collect()
+    } else {
+        points.iter().map(transform_fn).collect()
+    }
 }
 
 /// Convert a geometry_msgs Pose to a nalgebra Isometry3.

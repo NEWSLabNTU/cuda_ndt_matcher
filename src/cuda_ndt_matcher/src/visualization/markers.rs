@@ -88,7 +88,8 @@ pub(crate) fn visualize_point_scores(
     let scores = nvtl_result.per_point_scores.unwrap_or_default();
 
     // Transform source points to world frame
-    let transformed_points = crate::transform::pose_utils::transform_points_f32(source_points, pose);
+    let transformed_points =
+        crate::transform::pose_utils::transform_points_f32(source_points, pose);
 
     // Create PointCloud2 with XYZRGB fields
     let mut msg = PointCloud2::default();
