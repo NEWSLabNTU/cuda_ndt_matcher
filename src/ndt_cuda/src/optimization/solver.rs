@@ -27,6 +27,15 @@ use crate::{
     voxel_grid::VoxelGrid,
 };
 
+/// Count oscillations from a pose history.
+fn oscillation_count(pose_history: &[Isometry3<f64>]) -> usize {
+    super::oscillation::count_oscillation(
+        pose_history,
+        super::oscillation::DEFAULT_OSCILLATION_THRESHOLD,
+    )
+    .max_oscillation_count
+}
+
 /// Configuration for the optimization process.
 #[derive(Debug, Clone)]
 pub struct OptimizationConfig {
@@ -127,6 +136,38 @@ impl NdtOptimizer {
         self.regularization.clear_reference_pose();
     }
 
+    /// Build an NdtResult from optimization state.
+    ///
+    /// Computes NVTL, oscillation count, and transform probability — the common
+    /// work needed at every exit point of `align()` and `align_with_debug()`.
+    fn build_result(
+        &self,
+        pose_vec: &[f64; 6],
+        status: ConvergenceStatus,
+        score: f64,
+        iterations: usize,
+        hessian: Matrix6<f64>,
+        num_correspondences: usize,
+        oscillation_count: usize,
+        source_points: &[[f32; 3]],
+        target_grid: &VoxelGrid,
+    ) -> NdtResult {
+        let final_pose = pose_vector_to_isometry(pose_vec);
+        let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
+        NdtResult {
+            pose: final_pose,
+            status,
+            score,
+            transform_probability: self
+                .compute_transform_probability(score, source_points.len()),
+            nvtl,
+            iterations,
+            hessian,
+            num_correspondences,
+            oscillation_count,
+        }
+    }
+
     /// Align source points to target voxel grid.
     ///
     /// # Arguments
@@ -173,7 +214,6 @@ impl NdtOptimizer {
                 if iteration == 0 {
                     return NdtResult::no_correspondences(initial_guess);
                 }
-                // Use best result so far
                 break;
             }
 
@@ -200,73 +240,53 @@ impl NdtOptimizer {
             let (delta_opt, _hessian_regularized) = newton_step_negative_definite(
                 &total_gradient,
                 &total_hessian,
-                -1e-3, // Minimum eigenvalue: ensures all eigenvalues <= -1e-3
+                -1e-3,
                 self.config.svd_tolerance,
             );
             let delta = match delta_opt {
                 Some(d) => d,
                 None => {
-                    // Singular Hessian - return current best
-                    let final_pose = pose_vector_to_isometry(&best_pose);
-                    let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
-                    let oscillation = super::oscillation::count_oscillation(
-                        &pose_history,
-                        super::oscillation::DEFAULT_OSCILLATION_THRESHOLD,
+                    let osc = oscillation_count(&pose_history);
+                    return self.build_result(
+                        &best_pose,
+                        ConvergenceStatus::SingularHessian,
+                        best_score,
+                        iteration,
+                        last_hessian,
+                        last_correspondences,
+                        osc,
+                        source_points,
+                        target_grid,
                     );
-                    return NdtResult {
-                        pose: final_pose,
-                        status: ConvergenceStatus::SingularHessian,
-                        score: best_score,
-                        transform_probability: self
-                            .compute_transform_probability(best_score, source_points.len()),
-                        nvtl,
-                        iterations: iteration,
-                        hessian: last_hessian,
-                        num_correspondences: last_correspondences,
-                        oscillation_count: oscillation.max_oscillation_count,
-                    };
                 }
             };
 
-            // Clamp Newton step to maximum step length (Autoware behavior)
-            // step_size is the MAXIMUM allowed step length, not a damping factor
             let delta_norm = delta.norm();
 
             // Check convergence before clamping
             if delta_norm < self.config.ndt.trans_epsilon {
-                let final_pose = pose_vector_to_isometry(&pose);
-                let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
-                let oscillation = super::oscillation::count_oscillation(
-                    &pose_history,
-                    super::oscillation::DEFAULT_OSCILLATION_THRESHOLD,
+                let osc = oscillation_count(&pose_history);
+                return self.build_result(
+                    &pose,
+                    ConvergenceStatus::Converged,
+                    total_score,
+                    iteration + 1,
+                    total_hessian,
+                    derivatives.num_correspondences,
+                    osc,
+                    source_points,
+                    target_grid,
                 );
-                return NdtResult {
-                    pose: final_pose,
-                    status: ConvergenceStatus::Converged,
-                    score: total_score,
-                    transform_probability: self
-                        .compute_transform_probability(total_score, source_points.len()),
-                    nvtl,
-                    iterations: iteration + 1,
-                    hessian: total_hessian,
-                    num_correspondences: derivatives.num_correspondences,
-                    oscillation_count: oscillation.max_oscillation_count,
-                };
             }
 
             // Check if Newton step is an ascent direction for the score
-            // d_phi_0 = -(gradient · step_dir) for minimizing -score (i.e., maximizing score)
-            // If gradient · step_dir <= 0, the step is NOT ascending, so reverse it
-            // (Autoware's computeStepLengthMT, lines 901-912)
-            let mut step_dir = delta / delta_norm; // Normalized direction
+            let mut step_dir = delta / delta_norm;
             let grad_dot_step = total_gradient.dot(&step_dir);
             if grad_dot_step <= 0.0 {
-                // Not an ascent direction - reverse it
                 step_dir = -step_dir;
             }
 
             // Apply step (with optional line search to find optimal step length)
-            // Note: Line search uses total derivatives including regularization
             let step_length = if self.config.ndt.use_line_search {
                 self.line_search_with_regularization(
                     source_points,
@@ -277,7 +297,6 @@ impl NdtOptimizer {
                     &total_gradient,
                 )
             } else {
-                // Autoware behavior: step_length = min(newton_step_norm, step_size)
                 delta_norm.min(self.config.ndt.step_size)
             };
 
@@ -286,24 +305,18 @@ impl NdtOptimizer {
         }
 
         // Reached max iterations
-        let final_pose = pose_vector_to_isometry(&best_pose);
-        let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
-        let oscillation = super::oscillation::count_oscillation(
-            &pose_history,
-            super::oscillation::DEFAULT_OSCILLATION_THRESHOLD,
-        );
-        NdtResult {
-            pose: final_pose,
-            status: ConvergenceStatus::MaxIterations,
-            score: best_score,
-            transform_probability: self
-                .compute_transform_probability(best_score, source_points.len()),
-            nvtl,
-            iterations: self.config.ndt.max_iterations,
-            hessian: last_hessian,
-            num_correspondences: last_correspondences,
-            oscillation_count: oscillation.max_oscillation_count,
-        }
+        let osc = oscillation_count(&pose_history);
+        self.build_result(
+            &best_pose,
+            ConvergenceStatus::MaxIterations,
+            best_score,
+            self.config.ndt.max_iterations,
+            last_hessian,
+            last_correspondences,
+            osc,
+            source_points,
+            target_grid,
+        )
     }
 
     /// Align source points to target using full GPU Newton iteration with line search.
@@ -740,28 +753,46 @@ impl NdtOptimizer {
         debug.resolution = Some(self.config.ndt.resolution);
         debug.outlier_ratio = Some(self.gauss.outlier_ratio);
 
-        // Convert initial guess to pose vector
         let mut pose = isometry_to_pose_vector(&initial_guess);
         debug.set_initial_pose(&pose);
 
-        // Track best result
         let mut best_score = f64::NEG_INFINITY;
         let mut best_pose = pose;
         let mut last_hessian = Matrix6::zeros();
         let mut last_correspondences = 0;
 
-        // Main optimization loop
+        /// Finalize debug struct and build result with `build_result()`.
+        macro_rules! finalize_debug {
+            ($self:expr, $debug:expr, $start:expr, $status_str:expr, $iters:expr,
+             $pose_vec:expr, $score:expr, $source:expr, $target:expr,
+             $status:expr, $hessian:expr, $correspondences:expr) => {{
+                $debug.convergence_status = $status_str.to_string();
+                $debug.total_iterations = $iters;
+                $debug.set_final_pose($pose_vec);
+                $debug.final_score = $self.compute_transform_probability($score, $source.len());
+                $debug.compute_oscillation();
+                let result = $self.build_result(
+                    $pose_vec, $status, $score, $iters, $hessian, $correspondences,
+                    $debug.oscillation_count, $source, $target,
+                );
+                $debug.final_nvtl = result.nvtl;
+                $debug.exe_time_ms = Some($start.elapsed().as_secs_f64() * 1000.0);
+                $debug.build_arrays_from_iterations();
+                $debug.add_initial_transformation();
+                result
+            }};
+        }
+
         for iteration in 0..self.config.ndt.max_iterations {
             let mut iter_debug = IterationDebug::new(iteration);
             iter_debug.set_pose(&pose);
 
-            // Compute derivatives at current pose
             let derivatives = compute_derivatives_cpu_with_metric(
                 source_points,
                 target_grid,
                 &pose,
                 &self.gauss,
-                true, // compute_hessian
+                true,
                 self.config.ndt.distance_metric,
             );
 
@@ -773,20 +804,15 @@ impl NdtOptimizer {
             iter_debug.num_correspondences = derivatives.num_correspondences;
             iter_debug.used_line_search = self.config.ndt.use_line_search;
 
-            // Check for sufficient correspondences
             if derivatives.num_correspondences < self.config.min_correspondences {
                 debug.iterations.push(iter_debug);
                 if iteration == 0 {
-                    debug.convergence_status = "NoCorrespondences".to_string();
-                    debug.total_iterations = iteration;
-                    debug.set_final_pose(&pose);
-                    // Use normalized transform_probability for debug output (matches Autoware)
-                    debug.final_score =
-                        self.compute_transform_probability(derivatives.score, source_points.len());
-                    debug.exe_time_ms = Some(start_time.elapsed().as_secs_f64() * 1000.0);
-                    debug.build_arrays_from_iterations();
-                    debug.add_initial_transformation();
-                    return (NdtResult::no_correspondences(initial_guess), debug);
+                    let result = finalize_debug!(
+                        self, debug, start_time, "NoCorrespondences", iteration,
+                        &pose, derivatives.score, source_points, target_grid,
+                        ConvergenceStatus::NoCorrespondences, Matrix6::zeros(), 0
+                    );
+                    return (result, debug);
                 }
                 break;
             }
@@ -794,95 +820,43 @@ impl NdtOptimizer {
             last_correspondences = derivatives.num_correspondences;
             last_hessian = derivatives.hessian;
 
-            // Track best score
             if derivatives.score > best_score {
                 best_score = derivatives.score;
                 best_pose = pose;
             }
 
-            // Compute Newton step with negative-definite regularization for maximization
-            // This ensures the Newton step points in an ascent direction
-            let (delta_opt, _hessian_was_regularized) = newton_step_negative_definite(
+            let (delta_opt, _) = newton_step_negative_definite(
                 &derivatives.gradient,
                 &derivatives.hessian,
-                -1e-3, // Minimum eigenvalue: ensures all eigenvalues <= -1e-3
+                -1e-3,
                 self.config.svd_tolerance,
             );
             let delta = match delta_opt {
                 Some(d) => d,
                 None => {
                     debug.iterations.push(iter_debug);
-                    debug.convergence_status = "SingularHessian".to_string();
-                    debug.total_iterations = iteration;
-                    debug.set_final_pose(&best_pose);
-                    // Use normalized transform_probability for debug output (matches Autoware)
-                    debug.final_score =
-                        self.compute_transform_probability(best_score, source_points.len());
-                    debug.compute_oscillation();
-
-                    let final_pose = pose_vector_to_isometry(&best_pose);
-                    let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
-                    debug.final_nvtl = nvtl;
-                    debug.exe_time_ms = Some(start_time.elapsed().as_secs_f64() * 1000.0);
-                    debug.build_arrays_from_iterations();
-                    debug.add_initial_transformation();
-                    return (
-                        NdtResult {
-                            pose: final_pose,
-                            status: ConvergenceStatus::SingularHessian,
-                            score: best_score,
-                            transform_probability: self
-                                .compute_transform_probability(best_score, source_points.len()),
-                            nvtl,
-                            iterations: iteration,
-                            hessian: last_hessian,
-                            num_correspondences: last_correspondences,
-                            oscillation_count: debug.oscillation_count,
-                        },
-                        debug,
+                    let result = finalize_debug!(
+                        self, debug, start_time, "SingularHessian", iteration,
+                        &best_pose, best_score, source_points, target_grid,
+                        ConvergenceStatus::SingularHessian, last_hessian, last_correspondences
                     );
+                    return (result, debug);
                 }
             };
 
             iter_debug.set_newton_step(&delta);
             let delta_norm = delta.norm();
 
-            // Check convergence before clamping
             if delta_norm < self.config.ndt.trans_epsilon {
                 iter_debug.step_length = delta_norm;
                 iter_debug.set_pose_after(&pose);
                 debug.iterations.push(iter_debug);
-                debug.convergence_status = "Converged".to_string();
-                debug.total_iterations = iteration + 1;
-                debug.set_final_pose(&pose);
-                // Use normalized transform_probability for debug output (matches Autoware)
-                debug.final_score = self.compute_transform_probability(
-                    derivatives.score,
-                    derivatives.num_correspondences,
+                let result = finalize_debug!(
+                    self, debug, start_time, "Converged", iteration + 1,
+                    &pose, derivatives.score, source_points, target_grid,
+                    ConvergenceStatus::Converged, derivatives.hessian, derivatives.num_correspondences
                 );
-                debug.compute_oscillation();
-
-                let final_pose = pose_vector_to_isometry(&pose);
-                let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
-                debug.final_nvtl = nvtl;
-                debug.exe_time_ms = Some(start_time.elapsed().as_secs_f64() * 1000.0);
-                debug.build_arrays_from_iterations();
-                debug.add_initial_transformation();
-                return (
-                    NdtResult {
-                        pose: final_pose,
-                        status: ConvergenceStatus::Converged,
-                        score: derivatives.score,
-                        transform_probability: self
-                            .compute_transform_probability(derivatives.score, source_points.len()),
-                        nvtl,
-                        iterations: iteration + 1,
-                        hessian: derivatives.hessian,
-                        num_correspondences: derivatives.num_correspondences,
-                        oscillation_count: debug.oscillation_count,
-                    },
-                    debug,
-                );
+                return (result, debug);
             }
 
             // Check if Newton step is an ascent direction
@@ -895,20 +869,15 @@ impl NdtOptimizer {
             iter_debug.set_step_direction(&step_dir);
             iter_debug.directional_derivative = derivatives.gradient.dot(&step_dir);
 
-            // Apply step (with optional line search)
             let (step_length, line_search_converged) = if self.config.ndt.use_line_search {
-                let result = self.line_search_with_result(
+                self.line_search_with_result(
                     source_points,
                     target_grid,
                     &pose,
                     &step_dir,
                     &derivatives,
-                );
-                (result.0, result.1)
+                )
             } else {
-                // Autoware behavior: step_length = clamp(delta_norm, step_min, step_max)
-                // step_min = trans_epsilon / 2 = 0.005 (typically)
-                // step_max = step_size = 0.1
                 let step_min = self.config.ndt.trans_epsilon / 2.0;
                 let step_max = self.config.ndt.step_size;
                 (delta_norm.clamp(step_min, step_max), true)
@@ -923,35 +892,12 @@ impl NdtOptimizer {
         }
 
         // Reached max iterations
-        debug.convergence_status = "MaxIterations".to_string();
-        debug.total_iterations = self.config.ndt.max_iterations;
-        debug.set_final_pose(&best_pose);
-        // Use normalized transform_probability for debug output (matches Autoware)
-        debug.final_score = self.compute_transform_probability(best_score, source_points.len());
-        debug.compute_oscillation();
-
-        let final_pose = pose_vector_to_isometry(&best_pose);
-        let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
-        debug.final_nvtl = nvtl;
-        debug.exe_time_ms = Some(start_time.elapsed().as_secs_f64() * 1000.0);
-        debug.build_arrays_from_iterations();
-        debug.add_initial_transformation();
-
-        (
-            NdtResult {
-                pose: final_pose,
-                status: ConvergenceStatus::MaxIterations,
-                score: best_score,
-                transform_probability: self
-                    .compute_transform_probability(best_score, source_points.len()),
-                nvtl,
-                iterations: self.config.ndt.max_iterations,
-                hessian: last_hessian,
-                num_correspondences: last_correspondences,
-                oscillation_count: debug.oscillation_count,
-            },
-            debug,
-        )
+        let result = finalize_debug!(
+            self, debug, start_time, "MaxIterations", self.config.ndt.max_iterations,
+            &best_pose, best_score, source_points, target_grid,
+            ConvergenceStatus::MaxIterations, last_hessian, last_correspondences
+        );
+        (result, debug)
     }
 
     /// Line search that also returns convergence status.

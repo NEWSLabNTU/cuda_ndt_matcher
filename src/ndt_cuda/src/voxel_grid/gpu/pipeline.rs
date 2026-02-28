@@ -346,9 +346,8 @@ impl GpuPipelineBuffers {
     ) -> Result<PipelineResult> {
         let points_flat: Vec<f32> = points.iter().flat_map(|p| p.iter().copied()).collect();
 
-        // Step 1 & 2: Upload and compute Morton codes
+        // Steps 1-2: Upload and compute Morton codes
         let num_points = self.compute_morton_codes(&points_flat, resolution)?;
-
         if num_points == 0 {
             return Ok(PipelineResult::empty());
         }
@@ -358,11 +357,9 @@ impl GpuPipelineBuffers {
 
         // Step 4: Segment detection
         let num_segments = self.detect_segments_inplace(num_points)?;
-
         if num_segments == 0 {
             return Ok(PipelineResult::empty());
         }
-
         if num_segments as usize > self.max_segments {
             anyhow::bail!(
                 "Too many segments: {} > max {}",
@@ -371,15 +368,45 @@ impl GpuPipelineBuffers {
             );
         }
 
+        // Step 5: Center points around grid centroid and prepare segment_starts
+        let (points_gpu, segment_starts_gpu, full_segment_starts, centroid) =
+            self.prepare_centered_points_and_segments(&points_flat, num_segments, num_points)?;
+
+        // Step 6: Launch statistics kernels (sums, means, covariances)
+        self.launch_statistics_kernels(
+            &points_gpu,
+            &segment_starts_gpu,
+            num_segments,
+            num_points,
+        );
+
+        // Step 7: Download GPU results and finalize on CPU
+        self.download_and_finalize(
+            &points_flat,
+            centroid,
+            num_segments,
+            num_points,
+            min_points_per_voxel as u32,
+            &full_segment_starts,
+        )
+    }
+
+    /// Center points around grid centroid, download and rebuild segment_starts.
+    ///
+    /// Returns (centered_points_gpu, segment_starts_gpu, full_segment_starts, centroid).
+    fn prepare_centered_points_and_segments(
+        &self,
+        points_flat: &[f32],
+        num_segments: u32,
+        _num_points: usize,
+    ) -> Result<(Handle, Handle, Vec<u32>, [f32; 3])> {
         // Compute centroid for coordinate centering (improves f32 precision)
-        // Using grid center since grid_min/grid_max are already computed
         let centroid = [
             (self.grid_min[0] + self.grid_max[0]) * 0.5,
             (self.grid_min[1] + self.grid_max[1]) * 0.5,
             (self.grid_min[2] + self.grid_max[2]) * 0.5,
         ];
 
-        // Step 5 & 6: Statistics (need points on GPU)
         // Center points around the centroid to improve f32 precision for covariance
         // This is critical when coordinates have large absolute values (e.g., 89500)
         let centered_points: Vec<f32> = points_flat
@@ -399,7 +426,6 @@ impl GpuPipelineBuffers {
             .map(|b| u32::from_le_bytes(b.try_into().unwrap())) // infallible: chunks(4) guarantees 4-byte slices
             .collect();
 
-        // Prepend 0 for the first segment
         let mut full_segment_starts = Vec::with_capacity(num_segments as usize);
         full_segment_starts.push(0u32);
         full_segment_starts.extend(boundary_starts);
@@ -411,7 +437,17 @@ impl GpuPipelineBuffers {
             .collect();
         let segment_starts_gpu = self.client.create(&segment_starts_bytes);
 
-        // Launch statistics kernels
+        Ok((points_gpu, segment_starts_gpu, full_segment_starts, centroid))
+    }
+
+    /// Launch the 3 CubeCL statistics kernels (sums, means, covariances).
+    fn launch_statistics_kernels(
+        &self,
+        points_gpu: &Handle,
+        segment_starts_gpu: &Handle,
+        num_segments: u32,
+        num_points: usize,
+    ) {
         let cube_count = (num_segments as usize).div_ceil(256) as u32;
 
         unsafe {
@@ -419,9 +455,9 @@ impl GpuPipelineBuffers {
                 &self.client,
                 CubeCount::Static(cube_count, 1, 1),
                 CubeDim::new(256, 1, 1),
-                ArrayArg::from_raw_parts::<f32>(&points_gpu, num_points * 3, 1),
+                ArrayArg::from_raw_parts::<f32>(points_gpu, num_points * 3, 1),
                 ArrayArg::from_raw_parts::<u32>(&self.sorted_indices, num_points, 1),
-                ArrayArg::from_raw_parts::<u32>(&segment_starts_gpu, num_segments as usize, 1),
+                ArrayArg::from_raw_parts::<u32>(segment_starts_gpu, num_segments as usize, 1),
                 ScalarArg::new(num_segments),
                 ScalarArg::new(num_points as u32),
                 ArrayArg::from_raw_parts::<f32>(&self.position_sums, num_segments as usize * 3, 1),
@@ -442,21 +478,30 @@ impl GpuPipelineBuffers {
                 &self.client,
                 CubeCount::Static(cube_count, 1, 1),
                 CubeDim::new(256, 1, 1),
-                ArrayArg::from_raw_parts::<f32>(&points_gpu, num_points * 3, 1),
+                ArrayArg::from_raw_parts::<f32>(points_gpu, num_points * 3, 1),
                 ArrayArg::from_raw_parts::<u32>(&self.sorted_indices, num_points, 1),
-                ArrayArg::from_raw_parts::<u32>(&segment_starts_gpu, num_segments as usize, 1),
+                ArrayArg::from_raw_parts::<u32>(segment_starts_gpu, num_segments as usize, 1),
                 ArrayArg::from_raw_parts::<f32>(&self.means, num_segments as usize * 3, 1),
                 ScalarArg::new(num_segments),
                 ScalarArg::new(num_points as u32),
                 ArrayArg::from_raw_parts::<f32>(&self.cov_sums, num_segments as usize * 9, 1),
             );
         }
+    }
 
-        // Step 6: Download results
+    /// Download GPU statistics buffers and finalize voxels on CPU.
+    fn download_and_finalize(
+        &self,
+        points_flat: &[f32],
+        centroid: [f32; 3],
+        num_segments: u32,
+        num_points: usize,
+        min_points_per_voxel: u32,
+        full_segment_starts: &[u32],
+    ) -> Result<PipelineResult> {
+        // Download means and un-center (add centroid back)
         let means_bytes = self.client.read_one(self.means.clone());
         let centered_means = f32::from_bytes(&means_bytes).to_vec();
-
-        // Un-center means (add centroid back)
         let means: Vec<f32> = centered_means[..num_segments as usize * 3]
             .chunks(3)
             .flat_map(|m| [m[0] + centroid[0], m[1] + centroid[1], m[2] + centroid[2]])
@@ -471,6 +516,11 @@ impl GpuPipelineBuffers {
         // DEBUG: Compare GPU vs CPU covariance computation (only with debug-cov feature)
         #[cfg(feature = "debug-cov")]
         {
+            let centered_points: Vec<f32> = points_flat
+                .chunks(3)
+                .flat_map(|p| [p[0] - centroid[0], p[1] - centroid[1], p[2] - centroid[2]])
+                .collect();
+
             // Download sorted_indices
             let sorted_indices_bytes = self.client.read_one(self.sorted_indices.clone());
             let sorted_indices: Vec<u32> = sorted_indices_bytes
@@ -480,7 +530,6 @@ impl GpuPipelineBuffers {
                 .collect();
 
             // Build segment_ids from segment_starts
-            // segment_ids[i] = which segment point i belongs to
             let mut segment_ids = vec![0u32; num_points];
             for seg_idx in 0..num_segments as usize {
                 let start = full_segment_starts[seg_idx] as usize;
@@ -494,7 +543,6 @@ impl GpuPipelineBuffers {
                 }
             }
 
-            // Run CPU reference covariance computation
             let cpu_cov_sums = compute_covariance_sums_cpu(
                 &centered_points,
                 &sorted_indices,
@@ -503,7 +551,6 @@ impl GpuPipelineBuffers {
                 num_segments,
             );
 
-            // Compare GPU vs CPU cov_sums
             let mut max_diff = 0.0f32;
             let mut max_diff_seg = 0usize;
             let mut total_gpu_trace = 0.0f32;
@@ -543,6 +590,9 @@ impl GpuPipelineBuffers {
             );
         }
 
+        // Suppress unused variable warning when debug-cov is disabled
+        let _ = (points_flat, centroid);
+
         // Download segment codes for coordinate decoding
         let sorted_codes_bytes = self.client.read_one(self.sorted_codes.clone());
         let sorted_codes: Vec<u64> = sorted_codes_bytes
@@ -551,19 +601,17 @@ impl GpuPipelineBuffers {
             .map(|b| u64::from_le_bytes(b.try_into().unwrap())) // infallible: chunks(8) guarantees 8-byte slices
             .collect();
 
-        // Build segment codes (code at each segment start)
-        // full_segment_starts already has [0, boundary1, boundary2, ...]
         let segment_codes: Vec<u64> = full_segment_starts
             .iter()
             .map(|&start| sorted_codes[start as usize])
             .collect();
 
-        // Step 7: CPU finalization
+        // CPU finalization (eigendecomposition)
         let stats = finalize_voxels_cpu(
             means,
             cov_sums[..num_segments as usize * 9].to_vec(),
             counts[..num_segments as usize].to_vec(),
-            min_points_per_voxel as u32,
+            min_points_per_voxel,
         );
 
         Ok(PipelineResult {
