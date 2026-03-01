@@ -216,7 +216,7 @@ manager.align_batch(source_points, &initial_poses)?;
 
 **Performance**: GPU batch scoring replaces Rayon parallel CPU path.
 
-See `docs/roadmap/phase-13-gpu-scoring-pipeline.md` for implementation details.
+
 
 ---
 
@@ -248,7 +248,7 @@ The initial pose estimation has two phases with different parallelization potent
 
 ### GPU Batch Startup Pipeline (✅ Complete)
 
-See `docs/roadmap/phase-16-gpu-initial-pose-pipeline.md` for implementation details.
+
 
 ```
 Previous flow (sequential):
@@ -681,7 +681,7 @@ None - all debug publishers are implemented.
 | Batch alignment pipeline      | ✅ Working    | ✅ Integrated     | ~2-3x speedup            |
 | Batch startup pipeline        | ✅ Working    | ✅ Integrated     | Phase 16, ~6x speedup    |
 
-See `docs/roadmap/phase-15-gpu-line-search.md` for implementation details.
+
 
 ### CPU by Design (—)
 
@@ -940,7 +940,7 @@ CUDA 13+ has incompatible nvrtc that causes CubeCL JIT compilation to fail with
 
 **Last Updated**: 2026-01-12
 
-See `docs/profiling-results.md` for detailed profiling data.
+
 
 ### Current Performance Gap
 

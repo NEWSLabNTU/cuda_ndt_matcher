@@ -293,7 +293,7 @@ debug                  # Meta-feature: all debug features
 
 **Status**: 🟢 **CUDA Advantage** - Compile-time guarantees with zero overhead
 
-**Documentation**: `docs/debug-infrastructure.md`
+**Documentation**: `docs/debug/debug-infrastructure.md`
 
 ---
 

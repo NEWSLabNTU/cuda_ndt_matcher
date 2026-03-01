@@ -319,4 +319,4 @@ Add no-ground scoring support.
 **Modified files**:
 - `src/ndt_cuda/src/scoring/mod.rs` - Export new modules
 - `src/ndt_cuda/src/ndt.rs` - Integration with `NdtScanMatcher`
-- `docs/autoware-comparison.md` - Update GPU status
+- `docs/performance/autoware-comparison.md` - Update GPU status

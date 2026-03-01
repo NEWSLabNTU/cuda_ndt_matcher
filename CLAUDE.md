@@ -11,11 +11,10 @@ CUDA/Rust re-implementation of Autoware's `ndt_scan_matcher` using CubeCL for GP
 **Reference implementation**: `tests/comparison/autoware_core/localization/autoware_ndt_scan_matcher/`
 
 **Documentation**:
-- `docs/autoware-comparison.md` - Feature comparison and GPU acceleration status
-- `docs/autoware_vs_cuda_comparison.md` - Detailed CUDA vs Autoware comparison findings
+- `docs/reference/` - Architecture, kernel inventory, feature list
+- `docs/performance/autoware-comparison.md` - CUDA vs Autoware performance data
 - `docs/roadmap/` - Implementation phases and status
-- `docs/profiling-results.md` - Performance analysis
-- `docs/optimization-approaches.md` - Potential optimizations for iteration reduction
+- `docs/guides/rosbag-replay-guide.md` - Rosbag testing guide
 
 ## Build Commands
 
@@ -41,7 +40,7 @@ just run-cuda      # CUDA NDT
 just run-builtin   # Autoware NDT (baseline)
 ```
 
-See `docs/rosbag-replay-guide.md` for custom rosbag testing.
+See `docs/guides/rosbag-replay-guide.md` for custom rosbag testing.
 
 ## Project Structure
 
@@ -345,7 +344,7 @@ This adds `1/(n-1)` to each diagonal element. For n=6, this is +0.2 per diagonal
 
 ## Performance Summary (2026-01-30)
 
-See `docs/autoware_vs_cuda_comparison.md` for detailed analysis.
+See `docs/performance/autoware-comparison.md` for detailed analysis.
 
 ### Tracking Performance
 
