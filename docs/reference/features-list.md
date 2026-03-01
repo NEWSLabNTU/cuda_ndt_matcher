@@ -89,19 +89,17 @@ The `build_zero_copy()` method uses a GPU-accelerated pipeline with minimal CPU-
 
 ### GPU Derivative Kernels (Implemented)
 
-All kernels exist in `derivatives/gpu.rs` and are functional:
+Scoring kernels in `derivatives/gpu.rs` (used by `GpuRuntime` for NVTL/TP scoring):
 
-| Kernel                        | Location | Status     | Notes                                       |
-|-------------------------------|----------|------------|---------------------------------------------|
-| `radius_search_kernel`        | Line 61  | ✅ Working | Brute-force O(N×V), bounded loop workaround |
-| `compute_ndt_score_kernel`    | Line 145 | ✅ Working | Per-point score with neighbor accumulation  |
-| `compute_ndt_gradient_kernel` | Line 473 | ✅ Working | Unrolled 6-element gradient accumulator     |
-| `compute_ndt_hessian_kernel`  | Line 796 | ✅ Working | Combined jacobians+hessians parameter       |
+| Kernel                     | Location | Status     | Notes                                       |
+|----------------------------|----------|------------|---------------------------------------------|
+| `radius_search_kernel`     | Line 61  | ✅ Working | Brute-force O(N×V), bounded loop workaround |
+| `compute_ndt_score_kernel` | Line 145 | ✅ Working | Per-point score with neighbor accumulation  |
+| `compute_ndt_nvtl_kernel`  | Line 245 | ✅ Working | Per-point NVTL score                        |
+
+Gradient/Hessian kernels were removed in Phase 28 (superseded by CUDA graph K2).
 
 ### GPU Runtime Integration
-
-**Legacy path** (`NdtCudaRuntime::compute_derivatives()` in `runtime.rs:345`):
-- Chains all kernels but has excessive CPU-GPU transfers per call
 
 **Full GPU path** (`NdtOptimizer::align_full_gpu()` via `FullGpuPipelineV2`):
 1. Upload alignment data once (source points, voxel data, Gaussian params)
@@ -472,14 +470,11 @@ All diagnostic keys published by Autoware are now implemented:
 
 ### 2. Derivative Computation
 
-| Feature                     | Tests | Test Names                                                                                                    |
-|-----------------------------|-------|---------------------------------------------------------------------------------------------------------------|
-| Jacobian computation        | 6     | `test_point_jacobians_identity`, `test_gpu_jacobians_match_cpu`, `test_jacobians_match_angular_derivatives`   |
-| Hessian computation         | 4     | `test_gpu_point_hessians_match_cpu`, `test_point_hessians_match_angular_derivatives`, `test_hessian_symmetry` |
-| Angular derivatives (j_ang) | 4     | `test_zero_angles`, `test_point_gradient_terms`, `test_small_angles_approximation`                            |
-| Point Hessian (h_ang)       | 3     | `test_point_hessian_terms`, `test_hessian_not_computed_when_disabled`                                         |
-| Gradient accumulation       | 3     | `test_gradient_finite_difference`, `test_derivative_result_accumulate`                                        |
-| CPU vs GPU derivatives      | 4     | `test_cpu_vs_gpu_derivatives`, `test_cpu_vs_gpu_single_point_single_voxel`                                    |
+| Feature                     | Tests | Test Names                                                                         |
+|-----------------------------|-------|------------------------------------------------------------------------------------|
+| Angular derivatives (j_ang) | 4     | `test_zero_angles`, `test_point_gradient_terms`, `test_small_angles_approximation` |
+| Point Hessian (h_ang)       | 3     | `test_point_hessian_terms`, `test_hessian_not_computed_when_disabled`               |
+| Gradient accumulation       | 3     | `test_gradient_finite_difference`, `test_derivative_result_accumulate`              |
 
 ### 3. Scoring
 

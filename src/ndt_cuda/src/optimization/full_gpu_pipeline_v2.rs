@@ -43,9 +43,10 @@ use cubecl::{
 #[cfg(feature = "profiling")]
 use tracing::debug;
 
-use crate::{
-    derivatives::gpu::GpuVoxelData, optimization::gpu_pipeline_kernels::DEFAULT_NUM_CANDIDATES,
-};
+use crate::derivatives::gpu::GpuVoxelData;
+
+/// Default number of line search candidates.
+const DEFAULT_NUM_CANDIDATES: u32 = 8;
 
 /// Type alias for CUDA compute client.
 type CudaClient = ComputeClient<<CudaRuntime as Runtime>::Server>;

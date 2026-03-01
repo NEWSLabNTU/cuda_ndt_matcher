@@ -17,17 +17,12 @@
 
 pub mod cpu;
 pub mod gpu;
-pub mod gpu_builder;
 pub mod kernels;
 pub mod search;
 pub mod types;
 
 pub use search::VoxelSearch;
 pub use types::{Voxel, VoxelCoord, VoxelGridConfig};
-
-// GPU builder (requires CUDA)
-#[cfg(feature = "cuda")]
-pub use gpu_builder::GpuVoxelGridBuilder;
 
 use std::{collections::HashMap, path::Path};
 
@@ -154,30 +149,6 @@ impl VoxelGrid {
             max_bound,
             grid_dims,
         })
-    }
-
-    /// Build a voxel grid using GPU acceleration.
-    ///
-    /// Uses GPU for voxel ID computation (parallel) and CPU for statistics.
-    /// Falls back to CPU if GPU is not available.
-    ///
-    /// # Arguments
-    /// * `points` - Input point cloud
-    /// * `config` - Voxel grid configuration
-    ///
-    /// # Example
-    /// ```ignore
-    /// let grid = VoxelGrid::from_points_gpu(&points, config)?;
-    /// ```
-    #[cfg(feature = "cuda")]
-    pub fn from_points_gpu(points: &[[f32; 3]], config: VoxelGridConfig) -> Result<Self> {
-        match gpu_builder::GpuVoxelGridBuilder::new() {
-            Ok(builder) => builder.build(points, &config),
-            Err(_) => {
-                // Fall back to CPU if GPU not available
-                Self::from_points_with_config(points, config)
-            }
-        }
     }
 
     /// Load a voxel grid from a JSON dump file.

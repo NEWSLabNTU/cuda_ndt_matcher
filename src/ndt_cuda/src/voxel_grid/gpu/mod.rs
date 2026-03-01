@@ -36,7 +36,6 @@ pub mod statistics;
 // Re-export the main GpuVoxelGrid struct
 pub use grid::{GpuVoxelGrid, GpuVoxelGridConfig, ValidVoxel};
 
-// Re-export CPU reference implementations (GPU launchers to be added)
 pub use morton::{MortonCodeResult, compute_morton_codes_cpu, morton_decode_3d};
 pub use radius_search::{
     RadiusSearchConfig, RadiusSearchResult, radius_search_brute_force_cpu, radius_search_cpu,

@@ -4,25 +4,25 @@
 
 ### Subscriptions
 
-| Topic | Type | Description |
-|-------|------|-------------|
-| `points_raw` | PointCloud2 | Sensor point cloud |
-| `ekf_pose_with_covariance` | PoseWithCovarianceStamped | Initial pose from EKF |
-| `regularization_pose_with_covariance` | PoseWithCovarianceStamped | GNSS regularization |
+| Topic                                 | Type                      | Description           |
+|---------------------------------------|---------------------------|-----------------------|
+| `points_raw`                          | PointCloud2               | Sensor point cloud    |
+| `ekf_pose_with_covariance`            | PoseWithCovarianceStamped | Initial pose from EKF |
+| `regularization_pose_with_covariance` | PoseWithCovarianceStamped | GNSS regularization   |
 
 ### Publishers
 
-| Topic | Type | Description |
-|-------|------|-------------|
-| `ndt_pose` | PoseStamped | Estimated pose |
+| Topic                      | Type                      | Description          |
+|----------------------------|---------------------------|----------------------|
+| `ndt_pose`                 | PoseStamped               | Estimated pose       |
 | `ndt_pose_with_covariance` | PoseWithCovarianceStamped | Pose with covariance |
 
 ### Services
 
-| Service | Type | Description |
-|---------|------|-------------|
-| `trigger_node_srv` | SetBool | Enable/disable node |
-| `pcd_loader_service` | - | Map loading client |
+| Service              | Type    | Description         |
+|----------------------|---------|---------------------|
+| `trigger_node_srv`   | SetBool | Enable/disable node |
+| `pcd_loader_service` | -       | Map loading client  |
 
 ### Parameters
 

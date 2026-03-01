@@ -78,10 +78,6 @@ pub use scoring::{
 pub use timing::{AlignmentTiming, IterationTiming, Timer, TimingCollector};
 pub use voxel_grid::{Voxel, VoxelGrid, VoxelGridConfig};
 
-// GPU-accelerated voxel grid construction
-#[cfg(feature = "cuda")]
-pub use voxel_grid::GpuVoxelGridBuilder;
-
 // High-level API (recommended for most users)
 pub use ndt::{AlignResult, NdtScanMatcher, NdtScanMatcherBuilder, NdtScanMatcherConfig};
 
@@ -91,7 +87,7 @@ pub use multi_grid::{
 };
 
 // GPU runtime (optional, for direct GPU access)
-pub use runtime::{GpuDerivativeResult, GpuRuntime, GpuScoreResult, is_cuda_available};
+pub use runtime::{GpuRuntime, GpuScoreResult, is_cuda_available};
 
 // GPU-accelerated point cloud filtering
 #[cfg(feature = "cuda")]

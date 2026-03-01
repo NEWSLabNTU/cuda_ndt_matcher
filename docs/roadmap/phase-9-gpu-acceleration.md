@@ -67,12 +67,12 @@ for i in 0..MAX_NEIGHBORS {  // Static bound
 - Monitor CubeCL 0.9.0 stable release for easier migration path
 - GPU derivative computation for optimization loop (Phase 9.3)
 
-## 9.2 Enable GPU Voxel Grid Construction ✅ COMPLETE
+## 9.2 Enable GPU Voxel Grid Construction ✅ COMPLETE (Superseded)
 
-**Status (2026-01-03)**: Hybrid GPU/CPU approach implemented and working.
+**Status**: Superseded by zero-copy pipeline (Phase 11) and cuda_ffi hash table. `GpuVoxelGridBuilder` was removed in Phase 28.
 
-**Implementation**:
-- `GpuVoxelGridBuilder` struct in `src/ndt_cuda/src/voxel_grid/gpu_builder.rs`
+**Original Implementation** (2026-01-03):
+- `GpuVoxelGridBuilder` struct in `src/ndt_cuda/src/voxel_grid/gpu_builder.rs` (deleted)
 - GPU computes voxel IDs in parallel using `compute_voxel_ids_kernel`
 - CPU handles statistics accumulation (mean, covariance) with rayon parallelism
 - Automatic fallback to pure CPU if CUDA unavailable

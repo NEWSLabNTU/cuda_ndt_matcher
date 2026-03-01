@@ -29,6 +29,7 @@
 | 25 | Code Restructure & Quality | ✅ Complete | [archive](../archive/phase-25-code-restructure.md) |
 | 26 | Nextest Migration | ✅ Complete | [archive](../archive/phase-26-nextest-migration.md) |
 | 27 | CPU Parallelism | ✅ Complete | [archive](../archive/phase-27-cpu-parallelism.md) |
+| 28 | Legacy Kernel Cleanup | ✅ Complete | [archive](../archive/phase-28-legacy-kernel-cleanup.md) |
 
 ## Active Phases
 

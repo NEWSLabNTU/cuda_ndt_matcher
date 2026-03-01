@@ -15,30 +15,21 @@
 //! Key kernels:
 //! - `radius_search_kernel`: Find neighboring voxels for each transformed point
 //! - `compute_ndt_score_kernel`: Compute per-point scores
-//! - `compute_ndt_gradient_kernel`: Compute per-point gradients
-//! - `compute_ndt_hessian_kernel`: Compute per-point Hessians
+//! - `compute_ndt_nvtl_kernel`: Compute per-point NVTL scores
 
 pub mod angular;
 pub mod cpu;
 pub mod gpu;
 pub mod gpu_batch;
-pub mod gpu_jacobian;
 pub mod types;
 
 pub use angular::AngularDerivatives;
 pub use cpu::{compute_derivatives_cpu, compute_derivatives_cpu_with_metric};
-pub use gpu::{
-    GpuDerivativeResult, GpuDerivatives, GpuVoxelData, MAX_NEIGHBORS, compute_ndt_hessian_kernel,
-    compute_ndt_hessian_kernel_v2, compute_point_hessians_cpu, compute_point_jacobians_cpu,
-    pose_to_transform_matrix,
-};
+pub use gpu::{GpuDerivatives, GpuVoxelData, MAX_NEIGHBORS, pose_to_transform_matrix};
 pub use gpu_batch::{
     check_convergence_batch_kernel, compute_jacobians_batch_kernel,
     compute_ndt_gradient_batch_kernel, compute_ndt_hessian_batch_kernel,
     compute_ndt_score_batch_kernel, radius_search_batch_kernel, update_poses_batch_kernel,
-};
-pub use gpu_jacobian::{
-    compute_jacobians_kernel, compute_point_hessians_kernel, compute_sin_cos_kernel,
 };
 pub use types::{
     AggregatedDerivatives, DerivativeResult, DistanceMetric, GaussianParams, PointDerivatives,
