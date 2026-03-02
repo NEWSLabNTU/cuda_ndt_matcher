@@ -29,7 +29,7 @@ just test     # Run tests (requires build first)
 
 **Running cargo directly** (for specific tests):
 ```bash
-cargo --config build/ros2_cargo_config.toml test -p ndt_cuda --lib test_name
+cargo test -p ndt_cuda --lib test_name
 ```
 
 ## Running
