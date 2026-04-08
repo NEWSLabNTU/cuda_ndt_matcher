@@ -117,7 +117,7 @@ ros2 launch cuda_ndt_matcher_launch ndt_scan_matcher_switcher.launch.xml use_cud
 
 ## Configuration
 
-Edit `config/ndt_scan_matcher.param.yaml`:
+Edit `config/cuda_scan_matcher.param.yaml`:
 
 ```yaml
 ndt:

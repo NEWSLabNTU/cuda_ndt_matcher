@@ -35,7 +35,7 @@
   <arg name="user_defined_initial_pose" default="[89571.0, 42301.0, -3.3, 0.0, 0.0, 0.28, 0.96]"/>
 
   <!-- CUDA NDT parameter file -->
-  <arg name="ndt_param_file" default="$(find-pkg-share cuda_ndt_matcher_launch)/config/ndt_scan_matcher.param.yaml"/>
+  <arg name="ndt_param_file" default="$(find-pkg-share cuda_ndt_matcher_launch)/config/cuda_scan_matcher.param.yaml"/>
 
   <!-- Common disabled components -->
   <let name="disabled_components" value="true"/>

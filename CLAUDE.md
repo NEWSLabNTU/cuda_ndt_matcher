@@ -98,6 +98,33 @@ Enable features with: `cargo test --features test-verbose` or `cargo build --fea
 
 **ndt_align_srv Service Type**: Uses `autoware_internal_localization_msgs/srv/PoseWithCovarianceStamped` to match Autoware's `pose_initializer`. Init mode (`user_defined_initial_pose=false`) now works with Monte Carlo pose estimation.
 
+## Launch File Conventions
+
+**Following Autoware 1.5.0**: The launch files follow Autoware 1.5.0 structure:
+
+- General localization configs (EKF, pose initializer, etc.) come from `localization_config_path` (defaults to `$(find-pkg-share autoware_launch)/config/localization`)
+- Pointcloud preprocessor configs are self-contained in the package via `$(find-pkg-share cuda_ndt_matcher_launch)/config/`
+
+**Package config structure** (`cuda_ndt_matcher_launch/config/`):
+```
+config/
+├── cuda_scan_matcher.param.yaml          # CUDA-specific NDT parameters
+└── pointcloud_preprocessor/             # Preprocessor configs (self-contained)
+    ├── crop_box_filter_measurement_range.param.yaml
+    ├── voxel_grid_filter.param.yaml
+    └── random_downsample_filter.param.yaml
+```
+
+Preprocessor configs are referenced via `$(find-pkg-share cuda_ndt_matcher_launch)/config/pointcloud_preprocessor/` in both `cuda_localization.launch.xml` and `autoware_localization.launch.xml`, allowing independent tuning from stock Autoware NDT settings.
+
+**Local util.launch.xml**: We maintain a local copy of `tier4_localization_launch/launch/util/util.launch.xml` in `cuda_ndt_matcher_launch/launch/util/` to fix a ROS 2 component name collision issue:
+
+- **Problem**: ROS 2 component containers silently fail to load a composable node if another node with the same base name already exists, even in a different namespace
+- **Symptom**: `voxel_grid_downsample_filter` from perception loads first, then localization's attempt to load its own `voxel_grid_downsample_filter` silently fails
+- **Solution**: Renamed localization's node to `localization_voxel_grid_downsample_filter` to avoid the collision
+
+This affects both `cuda_localization.launch.xml` and `autoware_localization.launch.xml`.
+
 ## Coding Conventions
 
 - **Logging**: Use `rclrs::log_*!` in `cuda_ndt_matcher`, `tracing::*!` in `ndt_cuda`
