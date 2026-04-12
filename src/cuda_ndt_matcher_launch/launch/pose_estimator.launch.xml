@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- Standard pose estimator plugin interface args -->
+  <arg name="input_pointcloud"/>
+  <arg name="input_initial_pose_topic"/>
+  <arg name="input_regularization_pose_topic"/>
+  <arg name="input_service_trigger_node"/>
+  <arg name="output_pose_topic"/>
+  <arg name="output_pose_with_covariance_topic"/>
+  <arg name="client_map_loader"/>
+  <arg name="param_file" default="$(find-pkg-share cuda_ndt_matcher_launch)/config/cuda_scan_matcher.param.yaml"/>
+
+  <include file="$(find-pkg-share cuda_ndt_matcher_launch)/launch/cuda_ndt_scan_matcher.launch.xml">
+    <arg name="input_pointcloud" value="$(var input_pointcloud)"/>
+    <arg name="input_initial_pose_topic" value="$(var input_initial_pose_topic)"/>
+    <arg name="input_regularization_pose_topic" value="$(var input_regularization_pose_topic)"/>
+    <arg name="input_service_trigger_node" value="$(var input_service_trigger_node)"/>
+    <arg name="output_pose_topic" value="$(var output_pose_topic)"/>
+    <arg name="output_pose_with_covariance_topic" value="$(var output_pose_with_covariance_topic)"/>
+    <arg name="client_map_loader" value="$(var client_map_loader)"/>
+    <arg name="param_file" value="$(var param_file)"/>
+  </include>
+</launch>
