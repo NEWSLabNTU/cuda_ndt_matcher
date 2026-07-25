@@ -405,7 +405,13 @@ fn create_subscriptions(
         let params = Arc::clone(params);
 
         let mut opts = SubscriptionOptions::new("pointcloud_map");
-        opts.qos = QoSProfile::default();
+        // The pointcloud_map_loader publishes the whole map once with
+        // TRANSIENT_LOCAL durability (a latched topic), so a late-joining
+        // subscriber only receives it if it also requests TRANSIENT_LOCAL.
+        // With the rclrs default (VOLATILE) this subscription would silently
+        // never receive the map if it starts after the publisher's one-shot
+        // publish, causing NDT align to fail forever with "No map loaded".
+        opts.qos = QoSProfile::default().keep_last(1).transient_local();
 
         node.create_subscription(opts, move |msg: PointCloud2| {
             services::on_map_received(
