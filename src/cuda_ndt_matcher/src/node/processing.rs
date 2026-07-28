@@ -146,8 +146,14 @@ pub(crate) fn run_alignment(
     // ---- Compute scores for filtering decision ----
     // Like Autoware, we compute NVTL and transform_probability before deciding to publish
 
-    // Compute transform probability (fitness score converted to probability)
-    let transform_prob = (-result.score / 10.0).exp();
+    // Transform probability, already computed by the solver as Autoware defines
+    // it (total score / number of source points). This used to be recomputed
+    // here as exp(-score/10), which is not that quantity: NDT scores on this
+    // map are large and positive, so the exponential underflowed and the
+    // published /localization/pose_estimator/transform_probability was
+    // identically 0.000. Harmless while converged_param_type is 1 (NVTL gates
+    // publishing), but with converged_param_type 0 it rejected every frame.
+    let transform_prob = result.transform_probability;
 
     // Compute NVTL score
     let nvtl_score = manager

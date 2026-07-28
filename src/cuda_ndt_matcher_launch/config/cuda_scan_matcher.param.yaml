@@ -12,6 +12,16 @@
     ndt:
       trans_epsilon: 0.01
       step_size: 0.1
+      # Keep at 2.0. Raising it to 4.0 was tried on the COSS map and measured
+      # worse: 5x the per-frame position scatter (0.106 m vs 0.020 m) and
+      # double the prediction correction, because coarser voxels localise less
+      # precisely. It looks better only through NVTL, which scales with voxel
+      # size (4.84 vs 2.90) and so buys margin over
+      # converged_param_nearest_voxel_transformation_likelihood without buying
+      # accuracy: NVTL gates convergence, it does not rank quality.
+      # If NVTL here ever sits near the 2.3 gate, suspect the pose prior handed
+      # to NDT, not this value -- a stale prior was what pushed it to 2.22 and
+      # stopped publishing. See docs/reports/cuda-ndt-coss-replay.md.
       resolution: 2.0
       max_iterations: 30
       num_threads: 4
