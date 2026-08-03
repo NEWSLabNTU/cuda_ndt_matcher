@@ -88,7 +88,10 @@ pub struct PipelineV2Config {
     pub initial_step: f32,
     /// Minimum step size
     pub step_min: f32,
-    /// Maximum step size
+    /// Maximum step length the line search may take, in the units of the pose
+    /// vector. This is Autoware's `ndt.step_size`, and it is a real bound now:
+    /// the kernel clamps its candidate lengths to it. It was inert while the
+    /// kernel applied alpha to an unnormalised Newton step.
     pub step_max: f32,
     /// Sufficient decrease parameter (mu) for Armijo condition
     pub armijo_mu: f32,
@@ -109,7 +112,10 @@ impl Default for PipelineV2Config {
             use_line_search: true,
             initial_step: 1.0,
             step_min: 0.001,
-            step_max: 10.0,
+            // Autoware's ndt.step_size default. Was 10.0 while this field was
+            // unused; leaving it there would now hand the line search a bound
+            // 100x looser than the reference for any caller relying on Default.
+            step_max: 0.1,
             armijo_mu: 1e-4,
             wolfe_nu: 0.9,
             fixed_step_size: 0.1, // Matches Autoware default when line search disabled
@@ -569,8 +575,14 @@ impl FullGpuPipelineV2 {
             config
         };
 
+        // step_max bounds the line search's candidate lengths; fixed_step_size
+        // is the clamp when the line search is off. Both land in the same
+        // kernel field, so carry it in either case -- with_fixed_step alone
+        // cannot, because it also clears ls_enabled.
         let config = if self.config.use_line_search {
-            config.with_line_search(true, 8, self.config.armijo_mu, self.config.wolfe_nu)
+            config
+                .with_step_bound(self.config.step_max)
+                .with_line_search(true, 8, self.config.armijo_mu, self.config.wolfe_nu)
         } else {
             config.with_fixed_step(self.config.fixed_step_size)
         };
@@ -756,8 +768,14 @@ impl FullGpuPipelineV2 {
             config
         };
 
+        // step_max bounds the line search's candidate lengths; fixed_step_size
+        // is the clamp when the line search is off. Both land in the same
+        // kernel field, so carry it in either case -- with_fixed_step alone
+        // cannot, because it also clears ls_enabled.
         let config = if self.config.use_line_search {
-            config.with_line_search(true, 8, self.config.armijo_mu, self.config.wolfe_nu)
+            config
+                .with_step_bound(self.config.step_max)
+                .with_line_search(true, 8, self.config.armijo_mu, self.config.wolfe_nu)
         } else {
             config.with_fixed_step(self.config.fixed_step_size)
         };

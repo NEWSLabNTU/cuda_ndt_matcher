@@ -387,7 +387,49 @@ __global__ void ndt_graph_solve_kernel(
 
     // Prepare for line search or direct update
     if (config.ls_enabled) {
-        // Direction check for maximization
+        // The Newton step supplies a *direction*; the line search supplies a
+        // *length*, bounded by ndt.step_size. That is what the reference does:
+        // multigrid_ndt_omp_impl.hpp:340-349 normalises delta_p, then calls
+        // computeStepLengthMT with delta_p_norm as the trial step and
+        // step_size as the upper bound.
+        //
+        // This kernel used to apply alpha to an unnormalised delta with
+        // candidates decaying from 1.0, which made alpha dimensionless and let
+        // one iteration travel the whole Newton step regardless of step_size.
+        //
+        // Measured on the COSS replay, that deviation turned out to be inert:
+        // the two forms give the *same* ladder whenever |delta| <= step_size,
+        // since 0.618^k * |delta| == 0.618^k * min(|delta|, step_size) there,
+        // and with a seeded pose and EKF prior the Newton step stays well
+        // inside 0.1 m. Three runs either side of this change were
+        // indistinguishable (init iterations 1.73-1.80 both ways). It is
+        // corrected because it is wrong, not because it was costing anything
+        // here -- it would bite in a large-displacement regime: a bad prior,
+        // a recovery, or Monte Carlo init from far away, where the unbounded
+        // form can overshoot in a single step.
+        //
+        // This is about the step *length* only. The two arms' differing
+        // convergence tests are a separate matter and are deliberately left
+        // alone: aligning the CPU's to Autoware's letter was measured strictly
+        // worse (11.0 ms -> 19.2), because its check sits before the line
+        // search and lets a frame with a tiny Newton step skip More-Thuente
+        // entirely. See "Explain why the GPU stops earlier, and why not to
+        // fix it" in the AutoSDV phase doc.
+        float delta_norm_sq = 0.0f;
+        for (int i = 0; i < 6; i++) {
+            float d = state_buffer[StateOffset::DELTA + i];
+            delta_norm_sq += d * d;
+        }
+        float delta_norm = sqrtf(delta_norm_sq);
+        if (delta_norm > 1e-10f) {
+            for (int i = 0; i < 6; i++) {
+                state_buffer[StateOffset::DELTA + i] /= delta_norm;
+            }
+        }
+
+        // Direction check for maximization. Computed on the unit direction, so
+        // dphi_0 is a derivative per unit length and shares units with the
+        // alpha the Armijo test multiplies it by in K5.
         float dphi_0_val = 0.0f;
         for (int i = 0; i < 6; i++) {
             dphi_0_val += reduce_buffer[ReduceOffset::GRADIENT + i] *
@@ -408,16 +450,23 @@ __global__ void ndt_graph_solve_kernel(
         ls_buffer[LineSearchOffset::PHI_0] = score;
         ls_buffer[LineSearchOffset::DPHI_0] = dphi_0_val;
 
-        // Generate candidates (golden ratio decay from 1.0)
-        float step = 1.0f;
+        // Candidates are step lengths now, not fractions. Start at the Newton
+        // length clamped to step_size -- the reference's trial point -- and
+        // decay by the golden ratio. step_min mirrors its trans_epsilon/2.
+        float step_max = config.fixed_step_size;
+        float step_min = 0.5f * sqrtf(config.epsilon_sq);
+        float step = (delta_norm < step_max) ? delta_norm : step_max;
+        if (step < step_min) step = step_min;
+
         int num_cands = (config.ls_num_candidates < GRAPH_MAX_LS_CANDIDATES)
                         ? config.ls_num_candidates : GRAPH_MAX_LS_CANDIDATES;
+        float first_step = step;
         for (int k = 0; k < num_cands; k++) {
             state_buffer[StateOffset::ALPHA_CANDIDATES + k] = step;
             step *= 0.618f;
         }
         ls_buffer[LineSearchOffset::EARLY_TERM] = 0.0f;
-        ls_buffer[LineSearchOffset::BEST_ALPHA] = 1.0f;
+        ls_buffer[LineSearchOffset::BEST_ALPHA] = first_step;
 
         // Clear line search reduction slots
         for (int k = 0; k < GRAPH_MAX_LS_CANDIDATES; k++) {

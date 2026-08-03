@@ -166,6 +166,19 @@ impl GraphNdtConfig {
         self
     }
 
+    /// Set the maximum step length without touching the line-search flag.
+    ///
+    /// The kernel reads `fixed_step_size` in both arms: as the clamp when the
+    /// line search is off, and as the upper bound on candidate step lengths
+    /// when it is on. `with_fixed_step` cannot be used to carry it in the
+    /// latter case because it also disables the line search, so before this
+    /// existed the bound silently kept its 0.1 default and any other
+    /// configured `ndt.step_size` was ignored on the line-search path.
+    pub fn with_step_bound(mut self, step_size: f32) -> Self {
+        self.fixed_step_size = step_size;
+        self
+    }
+
     /// Enable debug output.
     pub fn with_debug(mut self, enabled: bool) -> Self {
         self.debug_enabled = if enabled { 1 } else { 0 };
