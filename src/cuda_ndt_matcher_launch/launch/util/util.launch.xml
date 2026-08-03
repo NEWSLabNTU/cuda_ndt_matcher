@@ -16,7 +16,12 @@
       <extra_arg name="use_intra_process_comms" value="$(var use_intra_process)"/>
     </composable_node>
 
-    <composable_node pkg="autoware_pointcloud_preprocessor" plugin="autoware::pointcloud_preprocessor::VoxelGridDownsampleFilterComponent" name="voxel_grid_downsample_filter">
+    <!-- localization_ prefix is load-bearing: see the note in
+         tier4_localization_launch/launch/util/util.launch.xml. A component
+         container silently drops a composable node whose base name is already
+         registered, so perception's voxel_grid_downsample_filter would take
+         this one's place and leave NDT with no points. -->
+    <composable_node pkg="autoware_pointcloud_preprocessor" plugin="autoware::pointcloud_preprocessor::VoxelGridDownsampleFilterComponent" name="localization_voxel_grid_downsample_filter">
       <param from="$(var ndt_scan_matcher/pointcloud_preprocessor/voxel_grid_downsample_filter_param_path)"/>
       <remap from="input" to="measurement_range/pointcloud"/>
       <remap from="output" to="voxel_grid_downsample/pointcloud"/>
