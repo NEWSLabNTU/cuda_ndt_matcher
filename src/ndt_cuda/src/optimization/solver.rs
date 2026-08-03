@@ -1010,6 +1010,7 @@ pub fn pose_change(old_pose: &[f64; 6], new_pose: &[f64; 6]) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use nalgebra::{Translation3, UnitQuaternion};
     use super::*;
     use approx::assert_relative_eq;
     use rand::prelude::*;
@@ -1177,6 +1178,159 @@ mod tests {
         scaled[(0, 0)] = 100.0;
         let cond_scaled = optimizer.hessian_condition_number(&scaled);
         assert_relative_eq!(cond_scaled, 100.0, epsilon = 1e-5);
+    }
+
+    /// A scene with structure in all three axes, unlike `create_test_grid`'s
+    /// single blob: three orthogonal planes, which constrain translation and
+    /// rotation rather than leaving the pose free to slide.
+    fn create_corner_grid() -> VoxelGrid {
+        let mut points = Vec::new();
+        let mut x = -6.0f32;
+        while x <= 6.0 {
+            let mut y = -6.0f32;
+            while y <= 6.0 {
+                points.push([x, y, 0.0]); // floor
+                y += 0.25;
+            }
+            let mut z = 0.0f32;
+            while z <= 4.0 {
+                points.push([x, -6.0, z]); // wall along x
+                z += 0.25;
+            }
+            x += 0.25;
+        }
+        let mut y = -6.0f32;
+        while y <= 6.0 {
+            let mut z = 0.0f32;
+            while z <= 4.0 {
+                points.push([-6.0, y, z]); // wall along y
+                z += 0.25;
+            }
+            y += 0.25;
+        }
+        VoxelGrid::from_points(&points, 2.0).unwrap()
+    }
+
+    /// The scan: the same corner, sampled more coarsely. All three planes must
+    /// be present or the pose is not observable -- with only the floor and one
+    /// wall, translation along the remaining axis is free and any answer is
+    /// "correct".
+    fn corner_cloud() -> Vec<[f32; 3]> {
+        let mut points = Vec::new();
+        let mut x = -5.5f32;
+        while x <= 5.5 {
+            let mut y = -5.5f32;
+            while y <= 5.5 {
+                points.push([x, y, 0.0]); // floor
+                y += 0.5;
+            }
+            let mut z = 0.25f32;
+            while z <= 3.5 {
+                points.push([x, -6.0, z]); // wall along x, constrains y
+                z += 0.5;
+            }
+            x += 0.5;
+        }
+        let mut y = -5.5f32;
+        while y <= 5.5 {
+            let mut z = 0.25f32;
+            while z <= 3.5 {
+                points.push([-6.0, y, z]); // wall along y, constrains x
+                z += 0.5;
+            }
+            y += 0.5;
+        }
+        points
+    }
+
+    /// The CPU path must recover a known transform on a well-conditioned scene.
+    ///
+    /// This is the property the production stack depends on and the older
+    /// parity test could not see: it compared a 100-point blob in a single
+    /// voxel with a score ratio tolerance of 0.5-2.0 and half a metre of
+    /// position slack, which passes whatever the optimiser does.
+    #[test]
+    fn test_cpu_recovers_known_transform() {
+        let grid = create_corner_grid();
+        let truth = Isometry3::from_parts(
+            Translation3::new(0.30, -0.20, 0.05),
+            UnitQuaternion::from_euler_angles(0.0, 0.0, 0.03),
+        );
+        // The scan is what a sensor at `truth` would see, so aligning it from
+        // identity has to converge back to `truth`.
+        let source: Vec<[f32; 3]> = corner_cloud()
+            .iter()
+            .map(|p| {
+                let q = truth.inverse()
+                    * nalgebra::Point3::new(p[0] as f64, p[1] as f64, p[2] as f64);
+                [q.x as f32, q.y as f32, q.z as f32]
+            })
+            .collect();
+
+        let optimizer = NdtOptimizer::with_defaults();
+        let result = optimizer.align(&source, &grid, Isometry3::identity());
+
+        let err = (result.pose.translation.vector - truth.translation.vector).norm();
+        assert!(
+            result.status.is_usable(),
+            "CPU align did not produce a usable result: {:?}",
+            result.status
+        );
+        assert!(
+            err < 0.10,
+            "CPU path recovered {:?} instead of {:?} (error {err:.3} m) in {} iterations",
+            result.pose.translation.vector,
+            truth.translation.vector,
+            result.iterations
+        );
+    }
+
+    /// The CPU and GPU arms must converge to the same pose from the same input.
+    ///
+    /// `NDT_USE_GPU=0` is documented as "the same algorithm without the GPU",
+    /// and the benchmark relies on that: a speed comparison between arms that
+    /// converge differently is meaningless. On the COSS bag they did not --
+    /// 13.0 iterations against 2.4, NVTL 1.979 against 2.792, and every frame
+    /// rejected by the convergence gate -- so this pins the property down.
+    #[test]
+    fn test_cpu_and_gpu_agree_on_known_transform() {
+        let grid = create_corner_grid();
+        let truth = Isometry3::from_parts(
+            Translation3::new(0.30, -0.20, 0.05),
+            UnitQuaternion::from_euler_angles(0.0, 0.0, 0.03),
+        );
+        let source: Vec<[f32; 3]> = corner_cloud()
+            .iter()
+            .map(|p| {
+                let q = truth.inverse()
+                    * nalgebra::Point3::new(p[0] as f64, p[1] as f64, p[2] as f64);
+                [q.x as f32, q.y as f32, q.z as f32]
+            })
+            .collect();
+
+        let optimizer = NdtOptimizer::with_defaults();
+        let cpu = optimizer.align(&source, &grid, Isometry3::identity());
+        let gpu = optimizer
+            .align_full_gpu(&source, &grid, Isometry3::identity())
+            .expect("GPU align failed");
+
+        let cpu_err = (cpu.pose.translation.vector - truth.translation.vector).norm();
+        let gpu_err = (gpu.pose.translation.vector - truth.translation.vector).norm();
+        let between = (cpu.pose.translation.vector - gpu.pose.translation.vector).norm();
+
+        println!(
+            "cpu: err {cpu_err:.4} m, {} iters, score {:.2}\ngpu: err {gpu_err:.4} m, {} iters, score {:.2}\nbetween: {between:.4} m",
+            cpu.iterations, cpu.score, gpu.iterations, gpu.score
+        );
+
+        assert!(cpu_err < 0.10, "CPU arm missed the truth by {cpu_err:.3} m");
+        assert!(gpu_err < 0.10, "GPU arm missed the truth by {gpu_err:.3} m");
+        assert!(
+            between < 0.05,
+            "arms disagree by {between:.3} m: cpu {:?} gpu {:?}",
+            cpu.pose.translation.vector,
+            gpu.pose.translation.vector
+        );
     }
 
     // GPU path tests

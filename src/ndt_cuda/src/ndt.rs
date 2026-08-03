@@ -1326,6 +1326,86 @@ impl NdtScanMatcher {
 }
 
 #[cfg(test)]
+mod nvtl_parity_tests {
+    use super::*;
+    use crate::scoring::nvtl::compute_nvtl_simple;
+    use nalgebra::{Translation3, UnitQuaternion};
+
+    fn corner_points(step: f32) -> Vec<[f32; 3]> {
+        let mut points = Vec::new();
+        let mut x = -6.0f32;
+        while x <= 6.0 {
+            let mut y = -6.0f32;
+            while y <= 6.0 {
+                points.push([x, y, 0.0]);
+                y += step;
+            }
+            let mut z = 0.0f32;
+            while z <= 4.0 {
+                points.push([x, -6.0, z]);
+                z += step;
+            }
+            x += step;
+        }
+        let mut y = -6.0f32;
+        while y <= 6.0 {
+            let mut z = 0.0f32;
+            while z <= 4.0 {
+                points.push([-6.0, y, z]);
+                z += step;
+            }
+            y += step;
+        }
+        points
+    }
+
+    /// NVTL must not depend on which arm computed it.
+    ///
+    /// `evaluate_nvtl` prefers the GPU kernel and silently falls back to
+    /// `compute_nvtl_simple`, but the value gates publishing against a fixed
+    /// threshold (2.3 in this repository's config). If the two disagree, the
+    /// same pose is accepted on GPU and rejected on CPU, which is what a
+    /// benchmark run showed: 1128 of ~1128 alignments rejected with
+    /// NDT_USE_GPU=0, against 6 with the GPU.
+    #[test]
+    fn test_nvtl_cpu_matches_gpu() {
+        let target = corner_points(0.25);
+        let mut matcher = NdtScanMatcher::builder()
+            .resolution(2.0)
+            .use_gpu(true)
+            .build()
+            .expect("build");
+        matcher.set_target(&target).expect("set_target");
+
+        let source = corner_points(0.5);
+        let pose = Isometry3::from_parts(
+            Translation3::new(0.10, -0.05, 0.02),
+            UnitQuaternion::from_euler_angles(0.0, 0.0, 0.01),
+        );
+
+        let gpu = matcher
+            .evaluate_nvtl(&source, &pose)
+            .expect("evaluate_nvtl failed");
+        let cpu = compute_nvtl_simple(
+            &source,
+            matcher.target_grid().expect("grid"),
+            &pose,
+            &GaussianParams::new(2.0, 0.55),
+        );
+
+        println!("nvtl gpu={gpu:.4}  cpu={cpu:.4}  ratio={:.4}", cpu / gpu);
+        let rel = (cpu - gpu).abs() / gpu.abs().max(1e-9);
+        assert!(
+            rel < 0.02,
+            "NVTL differs by {:.1}% between arms: gpu={gpu:.4} cpu={cpu:.4}. \
+             The convergence gate is a fixed threshold, so a discrepancy here \
+             accepts a pose on one arm and rejects it on the other.",
+            rel * 100.0
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
 
     use super::*;
