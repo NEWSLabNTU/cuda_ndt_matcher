@@ -3,6 +3,30 @@
 **Date**: 2026-01-28 (init pose profiling updated)
 **Sample Data**: sample-rosbag-fixed (256+ alignment frames)
 
+> **The Jetson AGX Orin figures below are superseded.** They were taken before
+> the July 2026 investigation and before three faults were found that made
+> replay measurements on this platform unreliable: NDT was receiving no points
+> at all (a silent ROS 2 component name collision), the readiness gate was
+> passing on a previous run's log so the pose was seeded before NDT existed,
+> and the GPU clock was not pinned, which alone accounts for a 1.9x swing.
+>
+> Re-measured on Orin at pinned clocks, 2026-08-04, after the euler-convention
+> fixes in 13a4e36 and 324df7c —
+> `AutoSDV/docs/reports/ndt-gpu-vs-cpu-orin.md`:
+>
+> | metric | this doc | re-measured | note |
+> |---|---|---|---|
+> | tracking speedup | 1.32x | **~2.5x** | median of 3 runs each |
+> | NDT CPU | 34.8 % vs 81.0 % | **23 % vs 119 %** | per-node |
+> | power | "Equal" | **roughly equal** | +208 mW GPU rail, −325 mW CPU rail |
+> | poses published | not reported | **100 % of alignments** | Autoware 23-100 % |
+>
+> The speed and CPU figures here understate the CUDA path and should be
+> replaced. The **"equal power" claim stands** — a draft of the re-measurement
+> reported +506 mW and called it wrong, but that was taken before the euler
+> fixes, and on corrected code the GPU rail's +208 mW is more than repaid by
+> −325 mW on the CPU rail.
+
 ## Executive Summary
 
 The CUDA NDT implementation produces functionally equivalent results to Autoware's NDT with:

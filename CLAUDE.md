@@ -125,6 +125,19 @@ Preprocessor configs are referenced via `$(find-pkg-share cuda_ndt_matcher_launc
 
 This affects both `cuda_localization.launch.xml` and `autoware_localization.launch.xml`.
 
+**This section described the fix as applied while the rename was absent from
+both copies of `util.launch.xml`** (found 2026-08-04, applied then). The
+failure is completely silent — `play_launch` reports the composable node as
+loaded, the crop box either side of it keeps running at 10 Hz, and only NDT's
+own log gives it away, with `NDT align failed: No sensor points available`
+followed by `NDT scan matcher disabled` forever. If a replay produces zero
+published poses, check for the node before anything else:
+
+```bash
+ros2 node list | grep voxel_grid          # expect localization_voxel_grid_downsample_filter
+ros2 topic hz /localization/util/downsample/pointcloud
+```
+
 ## Coding Conventions
 
 - **Logging**: Use `rclrs::log_*!` in `cuda_ndt_matcher`, `tracing::*!` in `ndt_cuda`
