@@ -228,11 +228,29 @@ fn main() -> anyhow::Result<()> {
         let gpu_m = build(true)?;
         let cpu_m = build(false)?;
         println!("NVTL at the identical recorded pose, per arm\n");
-        println!("{:>6} {:>10} {:>10} {:>9}", "frame", "gpu nvtl", "cpu nvtl", "cpu/gpu");
+        println!(
+            "{:>6} {:>10} {:>10} {:>9}   {:>10} {:>10} {:>9}",
+            "frame", "gpu nvtl", "cpu nvtl", "cpu/gpu", "gpu yaw0", "cpu yaw0", "cpu/gpu"
+        );
         for (k, f) in frames.iter().take(n).enumerate() {
             let g = gpu_m.evaluate_nvtl(&f.points, &f.pose).unwrap_or(f64::NAN);
             let c = cpu_m.evaluate_nvtl(&f.points, &f.pose).unwrap_or(f64::NAN);
-            println!("{k:>6} {g:>10.4} {c:>10.4} {:>9.4}", c / g);
+            // Same pose with roll and pitch removed. The euler round trip the
+            // GPU scoring path takes is exact when only one angle is non-zero,
+            // so if the arms agree here and not above, that round trip is the
+            // difference rather than anything in the kernel.
+            let (_, _, yaw) = f.pose.rotation.euler_angles();
+            let flat = Isometry3::from_parts(
+                f.pose.translation,
+                UnitQuaternion::from_euler_angles(0.0, 0.0, yaw),
+            );
+            let gf = gpu_m.evaluate_nvtl(&f.points, &flat).unwrap_or(f64::NAN);
+            let cf = cpu_m.evaluate_nvtl(&f.points, &flat).unwrap_or(f64::NAN);
+            println!(
+                "{k:>6} {g:>10.4} {c:>10.4} {:>9.4}   {gf:>10.4} {cf:>10.4} {:>9.4}",
+                c / g,
+                cf / gf
+            );
         }
         return Ok(());
     }

@@ -1091,13 +1091,10 @@ impl NdtScanMatcher {
         let voxel_data = self.gpu_voxel_data.as_ref()?;
 
         // Convert pose to transform matrix
-        use crate::{
-            derivatives::gpu::pose_to_transform_matrix,
-            optimization::types::isometry_to_pose_vector,
-        };
-
-        let pose_vec = isometry_to_pose_vector(pose);
-        let transform = pose_to_transform_matrix(&pose_vec);
+        // Straight from the isometry: routing through the pose vector applies a
+        // different euler convention than the matrix builder assumes, which made
+        // this score a different pose than the CPU fallback did.
+        let transform = crate::derivatives::gpu::isometry_to_transform_matrix(pose);
 
         // Use GPU for score computation
         match runtime.compute_scores(
@@ -1124,14 +1121,12 @@ impl NdtScanMatcher {
         let runtime = self.gpu_runtime.as_ref()?;
         let voxel_data = self.gpu_voxel_data.as_ref()?;
 
-        // Convert pose to transform matrix
-        use crate::{
-            derivatives::gpu::pose_to_transform_matrix,
-            optimization::types::isometry_to_pose_vector,
-        };
-
-        let pose_vec = isometry_to_pose_vector(pose);
-        let transform = pose_to_transform_matrix(&pose_vec);
+        // Straight from the isometry. Going via the pose vector applies a
+        // different euler convention than the matrix builder assumes, so the
+        // GPU scored a different pose than the CPU fallback did for the same
+        // argument: 2.82 against 1.92 on the COSS bag, either side of the 2.3
+        // publish gate.
+        let transform = crate::derivatives::gpu::isometry_to_transform_matrix(pose);
 
         // Use GPU for NVTL computation (max per point, not sum)
         match runtime.compute_nvtl_scores(

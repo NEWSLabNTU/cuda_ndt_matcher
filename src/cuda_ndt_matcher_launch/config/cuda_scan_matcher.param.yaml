@@ -19,9 +19,11 @@
       # size (4.84 vs 2.90) and so buys margin over
       # converged_param_nearest_voxel_transformation_likelihood without buying
       # accuracy: NVTL gates convergence, it does not rank quality.
-      # If NVTL here ever sits near the 2.3 gate, suspect the pose prior handed
-      # to NDT, not this value -- a stale prior was what pushed it to 2.22 and
-      # stopped publishing. See docs/reports/cuda-ndt-coss-replay.md.
+      # If NVTL here ever sits near the gate below, suspect the pose prior
+      # handed to NDT, not this value -- a stale prior was what pushed it under
+      # and stopped publishing. See docs/reports/cuda-ndt-coss-replay.md.
+      # (The 2.90-vs-4.84 figures above predate the GPU NVTL fix and so are
+      # inflated by ~1.45x; the comparison between resolutions still holds.)
       resolution: 2.0
       max_iterations: 30
       num_threads: 4
@@ -59,7 +61,23 @@
     score_estimation:
       converged_param_type: 1
       converged_param_transform_probability: 3.0
-      converged_param_nearest_voxel_transformation_likelihood: 2.3
+      # Lowered from 2.3 together with the GPU NVTL fix in ndt_cuda. The GPU
+      # scoring path converted the pose through a euler round trip whose two
+      # halves disagree on rotation order, so it evaluated a different rotation
+      # and reported NVTL about 1.45x too high: 2.79 where the true value on the
+      # COSS bag is 1.92. The old 2.3 was calibrated against that inflated
+      # number and would now reject every frame.
+      #
+      # Chosen from the score distribution of a healthy run rather than by
+      # rescaling: tracking frames sit at p50 1.85, p5 1.48, p1 1.34, so 1.4
+      # rejects 0.7% of frames against the 0.4% the old pair rejected. 1.6
+      # rejected 3.1% and opened a 2 s hole in the pose stream.
+      #
+      # Be aware this gate does not separate a bad prior from hard geometry on
+      # this map: the frozen-EKF failure of 2026-07-28 scored about 1.43-1.63
+      # true, which overlaps healthy tracking. It rejects non-converged
+      # alignments, nothing more. See docs/guides/ndt-tuning.md.
+      converged_param_nearest_voxel_transformation_likelihood: 1.4
 
       no_ground_points:
         enable: false

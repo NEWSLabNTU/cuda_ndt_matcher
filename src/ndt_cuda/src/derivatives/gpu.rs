@@ -443,6 +443,32 @@ pub struct GpuDerivativeResult {
     pub num_correspondences: usize,
 }
 
+/// Convert an `Isometry3` straight to the row-major 4x4 transform the kernels use.
+///
+/// Prefer this over `isometry_to_pose_vector` followed by
+/// `pose_to_transform_matrix` whenever a caller already holds an isometry. That
+/// route is not a round trip: the pose-vector helpers use nalgebra's euler
+/// convention (R = Rz·Ry·Rx) while `pose_to_transform_matrix` composes
+/// Autoware's (R = Rx·Ry·Rz), so the two agree only when at most one angle is
+/// non-zero.
+///
+/// It cost a real bug. GPU NVTL scored 2.82 where the CPU scored 1.92 on the
+/// COSS bag -- the vehicle drives at yaw ~175 deg with a couple of degrees of
+/// roll and pitch -- and since publishing is gated on a fixed threshold of 2.3,
+/// the same pose was accepted on one arm and rejected on the other. With roll
+/// and pitch zeroed the two agreed to four decimals, which is what identified
+/// the conversion rather than the kernel.
+pub fn isometry_to_transform_matrix(iso: &nalgebra::Isometry3<f64>) -> [f32; 16] {
+    let r = iso.rotation.to_rotation_matrix();
+    let t = iso.translation.vector;
+    [
+        r[(0, 0)] as f32, r[(0, 1)] as f32, r[(0, 2)] as f32, t.x as f32,
+        r[(1, 0)] as f32, r[(1, 1)] as f32, r[(1, 2)] as f32, t.y as f32,
+        r[(2, 0)] as f32, r[(2, 1)] as f32, r[(2, 2)] as f32, t.z as f32,
+        0.0, 0.0, 0.0, 1.0,
+    ]
+}
+
 /// Convert pose [tx, ty, tz, roll, pitch, yaw] to 4x4 transformation matrix.
 pub fn pose_to_transform_matrix(pose: &[f64; 6]) -> [f32; 16] {
     let (tx, ty, tz) = (pose[0], pose[1], pose[2]);
@@ -486,5 +512,84 @@ mod tests {
         assert!(ctx.gauss_d1 < 0.0);
         assert!(ctx.gauss_d2 > 0.0);
         assert_eq!(ctx.search_radius, 2.0);
+    }
+}
+
+#[cfg(test)]
+mod transform_roundtrip_tests {
+    use super::{isometry_to_transform_matrix, pose_to_transform_matrix};
+    use crate::optimization::types::isometry_to_pose_vector;
+    use nalgebra::{Isometry3, Translation3, UnitQuaternion};
+
+    fn cases() -> Vec<(f64, f64, f64)> {
+        vec![
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.03),
+            (0.0, 0.0, 3.06),     // the COSS heading, yaw only
+            (0.05, -0.04, 3.06),  // the COSS heading as actually driven
+            (0.1, 0.2, -2.5),
+        ]
+    }
+
+    fn iso(roll: f64, pitch: f64, yaw: f64) -> Isometry3<f64> {
+        Isometry3::from_parts(
+            Translation3::new(1.5, -2.5, 0.5),
+            UnitQuaternion::from_euler_angles(roll, pitch, yaw),
+        )
+    }
+
+    fn worst_diff(m: &[f32; 16], iso: &Isometry3<f64>) -> f64 {
+        let expect = iso.to_homogeneous();
+        let mut worst = 0.0f64;
+        for r in 0..3 {
+            for c in 0..4 {
+                worst = worst.max((m[r * 4 + c] as f64 - expect[(r, c)]).abs());
+            }
+        }
+        worst
+    }
+
+    /// The direct conversion must reproduce the isometry at any orientation.
+    #[test]
+    fn test_isometry_to_transform_matrix_is_exact() {
+        for (roll, pitch, yaw) in cases() {
+            let i = iso(roll, pitch, yaw);
+            let worst = worst_diff(&isometry_to_transform_matrix(&i), &i);
+            assert!(
+                worst < 1e-6,
+                "direct conversion differs by {worst:.8} at rpy ({roll}, {pitch}, {yaw})"
+            );
+        }
+    }
+
+    /// Going through the pose vector does *not* round trip, and this pins that
+    /// down so nobody reintroduces the detour thinking it is equivalent.
+    ///
+    /// The helpers either side use different euler conventions: nalgebra's
+    /// R = Rz·Ry·Rx for the pose vector, Autoware's R = Rx·Ry·Rz for the
+    /// matrix. They agree only when at most one angle is non-zero, which is why
+    /// synthetic tests near zero yaw never caught it.
+    #[test]
+    fn test_pose_vector_detour_is_not_a_round_trip() {
+        let single_angle = iso(0.0, 0.0, 3.06);
+        assert!(
+            worst_diff(
+                &pose_to_transform_matrix(&isometry_to_pose_vector(&single_angle)),
+                &single_angle
+            ) < 1e-6,
+            "with one non-zero angle the conventions coincide"
+        );
+
+        let as_driven = iso(0.05, -0.04, 3.06);
+        let worst = worst_diff(
+            &pose_to_transform_matrix(&isometry_to_pose_vector(&as_driven)),
+            &as_driven,
+        );
+        assert!(
+            worst > 1e-3,
+            "the detour is expected to differ once roll and pitch are non-zero; \
+             if this now passes, the conventions have been unified and \
+             isometry_to_transform_matrix's warning should be revisited"
+        );
     }
 }
