@@ -155,14 +155,51 @@ impl NdtResult {
 /// Convert a 6-DOF pose vector [tx, ty, tz, roll, pitch, yaw] to an Isometry3.
 pub fn pose_vector_to_isometry(pose: &[f64; 6]) -> Isometry3<f64> {
     let translation = Vector3::new(pose[0], pose[1], pose[2]);
-    let rotation = UnitQuaternion::from_euler_angles(pose[3], pose[4], pose[5]);
-    Isometry3::from_parts(translation.into(), rotation)
+    Isometry3::from_parts(translation.into(), rotation_from_pose_angles(pose[3], pose[4], pose[5]))
+}
+
+/// Build the rotation a pose vector's angles denote: R = Rx(roll) Ry(pitch) Rz(yaw).
+///
+/// This is Autoware's convention, and it is what every consumer of a pose
+/// vector in this crate already assumes -- `pose_to_transform_matrix`, the GPU
+/// kernels' angular derivatives, and `derivatives/cpu.rs`, which builds its
+/// rotation in the same XYZ order.
+///
+/// It is *not* nalgebra's `from_euler_angles`, which composes R = Rz Ry Rx.
+/// These converters used to call that, so a pose vector meant one thing at the
+/// boundary and another everywhere inside. The two agree only when at most one
+/// angle is non-zero, which is why it survived: synthetic tests sit near zero
+/// yaw, and the error is common to both the CPU and GPU arms so they agreed
+/// with each other while both drifted from the caller's isometry.
+pub fn rotation_from_pose_angles(roll: f64, pitch: f64, yaw: f64) -> UnitQuaternion<f64> {
+    UnitQuaternion::from_axis_angle(&Vector3::x_axis(), roll)
+        * UnitQuaternion::from_axis_angle(&Vector3::y_axis(), pitch)
+        * UnitQuaternion::from_axis_angle(&Vector3::z_axis(), yaw)
+}
+
+/// Recover the angles of `rotation_from_pose_angles`, its exact inverse.
+///
+/// For R = Rx Ry Rz: r02 = sin(pitch), r01 = -cos(pitch) sin(yaw),
+/// r00 = cos(pitch) cos(yaw), r12 = -sin(roll) cos(pitch), r22 = cos(roll) cos(pitch).
+pub fn pose_angles_from_rotation(rotation: &UnitQuaternion<f64>) -> (f64, f64, f64) {
+    let r = rotation.to_rotation_matrix();
+    let sp = r[(0, 2)].clamp(-1.0, 1.0);
+    let pitch = sp.asin();
+    // Near gimbal lock (pitch = +/- 90 deg) roll and yaw are not separable; put
+    // the whole rotation in yaw, which is the axis a ground vehicle cares about.
+    if (sp.abs() - 1.0).abs() < 1e-9 {
+        let yaw = (-r[(1, 0)]).atan2(r[(1, 1)]);
+        return (0.0, pitch, yaw);
+    }
+    let yaw = (-r[(0, 1)]).atan2(r[(0, 0)]);
+    let roll = (-r[(1, 2)]).atan2(r[(2, 2)]);
+    (roll, pitch, yaw)
 }
 
 /// Convert an Isometry3 to a 6-DOF pose vector [tx, ty, tz, roll, pitch, yaw].
 pub fn isometry_to_pose_vector(isometry: &Isometry3<f64>) -> [f64; 6] {
     let translation = isometry.translation.vector;
-    let (roll, pitch, yaw) = isometry.rotation.euler_angles();
+    let (roll, pitch, yaw) = pose_angles_from_rotation(&isometry.rotation);
     [
         translation.x,
         translation.y,
@@ -225,6 +262,56 @@ mod tests {
         assert!(ConvergenceStatus::Converged.is_usable());
         assert!(ConvergenceStatus::MaxIterations.is_usable());
         assert!(!ConvergenceStatus::NoCorrespondences.is_usable());
+    }
+
+    /// The pose vector must mean the same rotation at the boundary as it does
+    /// inside: `pose_vector_to_isometry` has to agree with the matrix the GPU
+    /// and CPU derivative paths build from the same numbers.
+    ///
+    /// Nothing checked this before, and the two disagreed for any pose with
+    /// more than one non-zero angle -- which is every pose a vehicle actually
+    /// drives.
+    #[test]
+    fn test_pose_vector_agrees_with_transform_matrix() {
+        use crate::derivatives::gpu::pose_to_transform_matrix;
+        let cases = [
+            [1.0, 2.0, 3.0, 0.0, 0.0, 0.0],
+            [1.0, 2.0, 3.0, 0.0, 0.0, 3.06],
+            [1.0, 2.0, 3.0, 0.05, -0.04, 3.06], // as driven on the COSS bag
+            [0.0, 0.0, 0.0, 0.1, 0.2, -2.5],
+        ];
+        for pose in cases {
+            let iso = pose_vector_to_isometry(&pose);
+            let m = pose_to_transform_matrix(&pose);
+            let expect = iso.to_homogeneous();
+            let mut worst = 0.0f64;
+            for r in 0..3 {
+                for c in 0..4 {
+                    worst = worst.max((m[r * 4 + c] as f64 - expect[(r, c)]).abs());
+                }
+            }
+            assert!(
+                worst < 1e-6,
+                "pose vector {pose:?} means different rotations at the boundary \
+                 and inside: differs by {worst:.8}"
+            );
+        }
+    }
+
+    /// The round trip must hold at orientations a vehicle reaches, not just
+    /// near zero.
+    #[test]
+    fn test_pose_vector_roundtrip_at_real_orientations() {
+        for pose in [
+            [1.0, 2.0, 3.0, 0.05, -0.04, 3.06],
+            [0.0, 0.0, 0.0, 0.1, 0.2, -2.5],
+            [1.0, -1.0, 0.5, -0.3, 0.4, 1.2],
+        ] {
+            let recovered = isometry_to_pose_vector(&pose_vector_to_isometry(&pose));
+            for i in 0..6 {
+                assert_relative_eq!(pose[i], recovered[i], epsilon = 1e-9);
+            }
+        }
     }
 
     #[test]

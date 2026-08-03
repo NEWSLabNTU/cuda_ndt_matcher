@@ -562,34 +562,34 @@ mod transform_roundtrip_tests {
         }
     }
 
-    /// Going through the pose vector does *not* round trip, and this pins that
-    /// down so nobody reintroduces the detour thinking it is equivalent.
+    /// The pose-vector detour is now equivalent, and this keeps it that way.
     ///
-    /// The helpers either side use different euler conventions: nalgebra's
-    /// R = Rz·Ry·Rx for the pose vector, Autoware's R = Rx·Ry·Rz for the
-    /// matrix. They agree only when at most one angle is non-zero, which is why
-    /// synthetic tests near zero yaw never caught it.
+    /// It was not always: the pose-vector helpers used nalgebra's euler
+    /// convention (R = Rz·Ry·Rx) while `pose_to_transform_matrix` composes
+    /// Autoware's (R = Rx·Ry·Rz), so a pose vector meant one rotation at the
+    /// boundary and another inside the optimizer. Everything that consumes a
+    /// pose vector -- this matrix builder, the GPU angular derivatives, and
+    /// `derivatives/cpu.rs` -- assumes XYZ, so the converters were moved to
+    /// match rather than the other way round.
+    ///
+    /// `isometry_to_transform_matrix` is still the better route for a caller
+    /// holding an isometry: it needs no angle extraction and so has no gimbal
+    /// lock case to reason about.
     #[test]
-    fn test_pose_vector_detour_is_not_a_round_trip() {
-        let single_angle = iso(0.0, 0.0, 3.06);
-        assert!(
-            worst_diff(
-                &pose_to_transform_matrix(&isometry_to_pose_vector(&single_angle)),
-                &single_angle
-            ) < 1e-6,
-            "with one non-zero angle the conventions coincide"
-        );
-
-        let as_driven = iso(0.05, -0.04, 3.06);
-        let worst = worst_diff(
-            &pose_to_transform_matrix(&isometry_to_pose_vector(&as_driven)),
-            &as_driven,
-        );
-        assert!(
-            worst > 1e-3,
-            "the detour is expected to differ once roll and pitch are non-zero; \
-             if this now passes, the conventions have been unified and \
-             isometry_to_transform_matrix's warning should be revisited"
-        );
+    fn test_pose_vector_detour_matches_direct_conversion() {
+        for (roll, pitch, yaw) in cases() {
+            let i = iso(roll, pitch, yaw);
+            let detour = pose_to_transform_matrix(&isometry_to_pose_vector(&i));
+            let direct = isometry_to_transform_matrix(&i);
+            let mut worst = 0.0f64;
+            for k in 0..16 {
+                worst = worst.max((detour[k] as f64 - direct[k] as f64).abs());
+            }
+            assert!(
+                worst < 1e-6,
+                "detour and direct conversion differ by {worst:.8} at rpy \
+                 ({roll}, {pitch}, {yaw}); the euler conventions have diverged again"
+            );
+        }
     }
 }

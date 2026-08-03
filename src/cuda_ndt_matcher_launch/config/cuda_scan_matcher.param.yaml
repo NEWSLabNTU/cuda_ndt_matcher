@@ -61,23 +61,24 @@
     score_estimation:
       converged_param_type: 1
       converged_param_transform_probability: 3.0
-      # Lowered from 2.3 together with the GPU NVTL fix in ndt_cuda. The GPU
-      # scoring path converted the pose through a euler round trip whose two
-      # halves disagree on rotation order, so it evaluated a different rotation
-      # and reported NVTL about 1.45x too high: 2.79 where the true value on the
-      # COSS bag is 1.92. The old 2.3 was calibrated against that inflated
-      # number and would now reject every frame.
+      # Set from the score distribution of a healthy run, not inherited: on the
+      # COSS bag a good run sits at mean 2.80, p50 2.81, min 2.29 over 1422
+      # frames, so 2.0 leaves about 0.3 of margin under the worst honest frame.
       #
-      # Chosen from the score distribution of a healthy run rather than by
-      # rescaling: tracking frames sit at p50 1.85, p5 1.48, p1 1.34, so 1.4
-      # rejects 0.7% of frames against the 0.4% the old pair rejected. 1.6
-      # rejected 3.1% and opened a 2 s hole in the pose stream.
+      # Two defects moved this number during 2026-08-03/04 and the history is
+      # worth keeping, because both made NVTL mean something different:
+      #   - the GPU scored at a rotation mangled by a euler round trip and read
+      #     ~1.45x high (2.79 where the truth was 1.92), which the old 2.3 was
+      #     calibrated against;
+      #   - the pose vector carried nalgebra's euler convention at the boundary
+      #     while every consumer assumed Autoware's, so the pose NDT returned
+      #     was itself wrong; fixing that lifted NVTL from 2.00 to 2.80 and cut
+      #     the per-frame correction from 0.070 m to 0.025 m.
       #
-      # Be aware this gate does not separate a bad prior from hard geometry on
-      # this map: the frozen-EKF failure of 2026-07-28 scored about 1.43-1.63
-      # true, which overlaps healthy tracking. It rejects non-converged
-      # alignments, nothing more. See docs/guides/ndt-tuning.md.
-      converged_param_nearest_voxel_transformation_likelihood: 1.4
+      # Re-derive from the distribution if the map, resolution or downsample
+      # count changes. And note the gate rejects non-converged alignments, not
+      # bad priors -- see docs/guides/ndt-tuning.md.
+      converged_param_nearest_voxel_transformation_likelihood: 2.0
 
       no_ground_points:
         enable: false
