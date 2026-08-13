@@ -26,6 +26,18 @@
   <arg name="user_defined_initial_pose_enable" default="false"/>
   <arg name="user_defined_initial_pose" default="[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]"/>
   <arg name="gnss_enabled" default="true" description="Enable GNSS for pose initialization (enables automatic_pose_initializer)"/>
+  <!--
+    NDT regularization source. Upstream documents this feature as correcting
+    longitudinal degeneracy in tunnels using GNSS, which is the same geometry
+    problem as an indoor corridor — so indoors this must be repointed at a
+    marker- or tag-derived pose before regularization is enabled. It must be a
+    tag-only pose, never the merged pose that feeds the EKF: that output
+    re-enters NDT, whose output re-enters the EKF, and the loop is not obvious
+    from either end. Inert while ndt_scan_matcher.param.yaml has
+    regularization.enable: false.
+  -->
+  <arg name="regularization_pose_topic" default="/sensing/gnss/pose_with_covariance"
+       description="Pose source for NDT regularization; must be tag-only indoors"/>
   <arg name="ndt_enabled" default="true"/>
   <arg name="ekf_enabled" default="true"/>
   <arg name="stop_check_enabled" default="false"/>
@@ -46,7 +58,7 @@
       <include file="$(find-pkg-share cuda_ndt_matcher_launch)/launch/cuda_ndt_scan_matcher.launch.xml">
         <arg name="input_pointcloud" value="/localization/util/downsample/pointcloud"/>
         <arg name="input_initial_pose_topic" value="/localization/pose_twist_fusion_filter/biased_pose_with_covariance"/>
-        <arg name="input_regularization_pose_topic" value="/sensing/gnss/pose_with_covariance"/>
+        <arg name="input_regularization_pose_topic" value="$(var regularization_pose_topic)"/>
         <arg name="input_service_trigger_node" value="trigger_node"/>
         <arg name="output_pose_topic" value="pose"/>
         <arg name="output_pose_with_covariance_topic" value="pose_with_covariance"/>
