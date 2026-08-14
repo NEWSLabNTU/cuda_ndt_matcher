@@ -3521,7 +3521,7 @@ dependencies = [
 
 [[package]]
 name = "tf2_msgs"
-version = "0.25.19"
+version = "0.25.20"
 dependencies = [
  "action_msgs",
  "builtin_interfaces",
@@ -4837,3 +4837,27 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[patch.unused]]
+name = "autoware_control_msgs"
+version = "1.11.0"
+
+[[patch.unused]]
+name = "autoware_planning_msgs"
+version = "1.11.0"
+
+[[patch.unused]]
+name = "autoware_vehicle_msgs"
+version = "1.11.0"
+
+[[patch.unused]]
+name = "nav_msgs"
+version = "4.9.1"
+
+[[patch.unused]]
+name = "tier4_control_msgs"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "tier4_vehicle_msgs"
+version = "0.1.0"
