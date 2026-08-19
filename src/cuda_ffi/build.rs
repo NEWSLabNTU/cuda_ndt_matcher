@@ -28,10 +28,21 @@ fn main() {
     // Output directory
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // Determine target architecture
-    // Default to Jetson Orin (sm_87), can be overridden via CUDA_ARCH env var
-    let cuda_arch = env::var("CUDA_ARCH").unwrap_or_else(|_| "87".to_string());
+    // Determine target architecture.
+    //
+    // CUDA_ARCH wins; otherwise ask the local GPU; otherwise fall back to the
+    // Jetson Orin's sm_87, which is what this package targets on the vehicle.
+    //
+    // Detecting matters because the failure is remote from the cause. Kernels
+    // built for sm_87 do not run on, say, an sm_86 workstation GPU: every launch
+    // returns CUDA error 209, cudaErrorNoKernelImageForDevice, which surfaces
+    // only as "NDT alignment failed: CUDA error code 209" in the node's stderr.
+    // The node otherwise looks healthy -- it keeps its services, publishes
+    // diagnostics, and reports "Node is not activated" -- so the visible symptom
+    // is that localization never initializes, with nothing pointing at the GPU.
+    let cuda_arch = env::var("CUDA_ARCH").unwrap_or_else(|_| detect_cuda_arch());
     println!("cargo:rerun-if-env-changed=CUDA_ARCH");
+    println!("cargo:warning=building CUDA kernels for sm_{cuda_arch}");
 
     // Compile CUDA source files
     let cuda_sources = [
@@ -168,5 +179,32 @@ fn compile_cuda_source(source: &str, out_dir: &Path, cuda_include: &Path, cuda_a
             "ar failed to create library for {stem}:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+}
+
+/// Compute capability of the first local GPU as nvcc wants it ("86" for 8.6).
+///
+/// Falls back to the Jetson Orin's "87" when there is no usable GPU here, so a
+/// cross-build or a CI box without CUDA still produces the vehicle's target.
+fn detect_cuda_arch() -> String {
+    let out = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=compute_cap", "--format=csv,noheader"])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            let text = String::from_utf8_lossy(&o.stdout);
+            let first = text.lines().next().unwrap_or("").trim();
+            let digits: String = first.chars().filter(|c| c.is_ascii_digit()).collect();
+            if digits.is_empty() {
+                println!("cargo:warning=could not parse compute_cap {first:?}, using sm_87");
+                "87".to_string()
+            } else {
+                digits
+            }
+        }
+        _ => {
+            println!("cargo:warning=nvidia-smi unavailable, building for Jetson Orin sm_87");
+            "87".to_string()
+        }
     }
 }
