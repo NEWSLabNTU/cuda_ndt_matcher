@@ -496,6 +496,7 @@ fn create_services(
     // NDT align service (initial pose estimation)
     let ndt_align_srv = {
         let ndt_manager = Arc::clone(ndt_manager);
+        let map_module = Arc::clone(map_module);
         let map_points = Arc::clone(map_points);
         let latest_sensor_points = Arc::clone(latest_sensor_points);
         let params = Arc::clone(params);
@@ -515,6 +516,7 @@ fn create_services(
                 services::on_ndt_align(
                     req,
                     &ndt_manager,
+                    &map_module,
                     &map_points,
                     &latest_sensor_points,
                     &params,

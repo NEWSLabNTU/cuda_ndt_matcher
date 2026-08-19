@@ -9,3 +9,14 @@
     min_z: -30.0
     max_z: 50.0
     negative: False
+    # Required by autoware::pointcloud_preprocessor::CropBoxFilterComponent as of
+    # Autoware 1.5.0. It is statically typed with no default, so omitting it does
+    # not fall back -- the component throws at load:
+    #
+    #   Statically typed parameter 'processing_time_threshold_sec' must be
+    #   initialized.
+    #
+    # The whole localization preprocessing chain then goes silent while every
+    # other node reports healthy, and the visible symptom is "no cloud on
+    # /localization/util/downsample/pointcloud".
+    processing_time_threshold_sec: 0.01

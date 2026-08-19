@@ -26,6 +26,7 @@ use crate::{
 pub(crate) fn on_ndt_align(
     req: PoseWithCovSrvRequest,
     ndt_manager: &Arc<DualNdtManager>,
+    map_module: &Arc<MapUpdateModule>,
     map_points: &Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
     latest_sensor_points: &Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
     params: &NdtParams,
@@ -35,6 +36,37 @@ pub(crate) fn on_ndt_align(
 
     // Get initial pose from request
     let initial_pose = req.pose_with_covariance;
+
+    // Load the map around the requested pose FIRST, matching upstream
+    // autoware_ndt_scan_matcher: service_ndt_align_main() calls
+    // map_update_module_->update_map() before it tests is_set_map_points.
+    //
+    // Without this the node deadlocks on startup and never localizes:
+    // pose_initializer DEACTIVATES the matcher, then calls align. Our map is
+    // otherwise only loaded from on_points(), which returns early while
+    // deactivated -- so align finds no map, returns success=false,
+    // LocalizationModule::align_pose throws, and pose_initializer never reaches
+    // the re-activation call. is_activated stays false forever, nothing retries
+    // it, and the EKF dead-reckons while every node reports healthy.
+    //
+    // Sensor points do not need this: on_points() stores them before its
+    // enabled check, which already matches upstream's setInputSource() ordering.
+    {
+        let position = pose_utils::position_from_pose_cov(&initial_pose);
+        let result = map_module.update_map(&position);
+        if result.updated
+            && let Some(filtered_points) = map_module.get_map_points()
+        {
+            log_info!(
+                NODE_NAME,
+                "NDT align loaded map: {} tiles, {} points",
+                result.tiles_loaded,
+                result.total_points
+            );
+            map_points.store(Arc::new(Some(filtered_points.clone())));
+            ndt_manager.start_background_update(filtered_points);
+        }
+    }
 
     // Get map points
     let map = map_points.load();
