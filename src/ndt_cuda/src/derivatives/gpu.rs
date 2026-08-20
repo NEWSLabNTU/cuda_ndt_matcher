@@ -176,7 +176,7 @@ pub fn compute_ndt_score_kernel<F: Float>(
     let (tx, ty, tz) = transform_point_inline(sx, sy, sz, transform);
 
     // Accumulate score across all neighbors
-    let mut total_score = F::new(0.0);
+    let mut total_score = F::new(0.0_f32);
     let mut total_correspondences = 0u32;
 
     let num_neighbors = neighbor_counts[point_idx];
@@ -222,8 +222,8 @@ pub fn compute_ndt_score_kernel<F: Float>(
                 let x_c_x = x0 * cx0 + x1 * cx1 + x2 * cx2;
 
                 // Score: -d1 * exp(-d2/2 * x'Σ⁻¹x)
-                let exponent = gauss_d2 * x_c_x * F::new(-0.5);
-                let score = gauss_d1 * F::new(-1.0) * F::exp(exponent);
+                let exponent = gauss_d2 * x_c_x * F::new(-0.5_f32);
+                let score = gauss_d1 * F::new(-1.0_f32) * F::exp(exponent);
 
                 total_score += score;
                 total_correspondences += 1u32;
@@ -291,7 +291,7 @@ pub fn compute_ndt_nvtl_kernel<F: Float>(
     let (tx, ty, tz) = transform_point_inline(sx, sy, sz, transform);
 
     // Track maximum score across all neighbors (NVTL algorithm)
-    let mut max_score = F::new(0.0);
+    let mut max_score = F::new(0.0_f32);
     let mut found_neighbor = 0u32;
 
     let num_neighbors = neighbor_counts[point_idx];
@@ -337,8 +337,8 @@ pub fn compute_ndt_nvtl_kernel<F: Float>(
                 let x_c_x = x0 * cx0 + x1 * cx1 + x2 * cx2;
 
                 // Score: -d1 * exp(-d2/2 * x'Σ⁻¹x)
-                let exponent = gauss_d2 * x_c_x * F::new(-0.5);
-                let score = gauss_d1 * F::new(-1.0) * F::exp(exponent);
+                let exponent = gauss_d2 * x_c_x * F::new(-0.5_f32);
+                let score = gauss_d1 * F::new(-1.0_f32) * F::exp(exponent);
 
                 // Track maximum score (key difference from sum-based kernel)
                 if found_neighbor == 0u32 || score > max_score {

@@ -170,7 +170,7 @@ pub fn compute_ndt_score_batch_kernel<F: Float>(
     let tz = t20 * sx + t21 * sy + t22 * sz + t23;
 
     // Accumulate score across neighbors
-    let mut total_score = F::new(0.0);
+    let mut total_score = F::new(0.0_f32);
     let batch_point_idx = batch_idx * num_points + point_idx;
     let num_neighbors = neighbor_counts[batch_point_idx];
     let neighbor_base = batch_point_idx * MAX_NEIGHBORS;
@@ -211,9 +211,9 @@ pub fn compute_ndt_score_batch_kernel<F: Float>(
                 let mahal_sq = x * tmp0 + y * tmp1 + z * tmp2;
 
                 // Score: -d1 * exp(-d2/2 * mahal_sq)
-                let half = F::new(0.5);
-                let exponent = F::new(0.0) - half * gauss_d2 * mahal_sq;
-                let score = F::new(0.0) - gauss_d1 * F::exp(exponent);
+                let half = F::new(0.5_f32);
+                let exponent = F::new(0.0_f32) - half * gauss_d2 * mahal_sq;
+                let score = F::new(0.0_f32) - gauss_d1 * F::exp(exponent);
 
                 total_score += score;
             }
@@ -330,12 +330,12 @@ pub fn compute_ndt_gradient_batch_kernel<F: Float>(
     let j52 = jacobians[jac_offset + 17]; // ∂z/∂rz
 
     // Initialize gradient accumulators
-    let mut g0 = F::new(0.0);
-    let mut g1 = F::new(0.0);
-    let mut g2 = F::new(0.0);
-    let mut g3 = F::new(0.0);
-    let mut g4 = F::new(0.0);
-    let mut g5 = F::new(0.0);
+    let mut g0 = F::new(0.0_f32);
+    let mut g1 = F::new(0.0_f32);
+    let mut g2 = F::new(0.0_f32);
+    let mut g3 = F::new(0.0_f32);
+    let mut g4 = F::new(0.0_f32);
+    let mut g5 = F::new(0.0_f32);
 
     let batch_point_idx = batch_idx * num_points + point_idx;
     let num_neighbors = neighbor_counts[batch_point_idx];
@@ -379,8 +379,8 @@ pub fn compute_ndt_gradient_batch_kernel<F: Float>(
                 let mahal_sq = x * q0 + y * q1 + z * q2;
 
                 // Score derivative factor: d1 * d2 * exp(-d2/2 * mahal_sq)
-                let half = F::new(0.5);
-                let exponent = F::new(0.0) - half * gauss_d2 * mahal_sq;
+                let half = F::new(0.5_f32);
+                let exponent = F::new(0.0_f32) - half * gauss_d2 * mahal_sq;
                 let score_factor = gauss_d1 * gauss_d2 * F::exp(exponent);
 
                 // Gradient: factor × J^T × q
@@ -479,27 +479,27 @@ pub fn compute_ndt_hessian_batch_kernel<F: Float>(
     let tz = t20 * sx + t21 * sy + t22 * sz + t23;
 
     // Initialize Hessian accumulators (6×6 = 36 elements, row-major)
-    let mut h00 = F::new(0.0);
-    let mut h01 = F::new(0.0);
-    let mut h02 = F::new(0.0);
-    let mut h03 = F::new(0.0);
-    let mut h04 = F::new(0.0);
-    let mut h05 = F::new(0.0);
-    let mut h11 = F::new(0.0);
-    let mut h12 = F::new(0.0);
-    let mut h13 = F::new(0.0);
-    let mut h14 = F::new(0.0);
-    let mut h15 = F::new(0.0);
-    let mut h22 = F::new(0.0);
-    let mut h23 = F::new(0.0);
-    let mut h24 = F::new(0.0);
-    let mut h25 = F::new(0.0);
-    let mut h33 = F::new(0.0);
-    let mut h34 = F::new(0.0);
-    let mut h35 = F::new(0.0);
-    let mut h44 = F::new(0.0);
-    let mut h45 = F::new(0.0);
-    let mut h55 = F::new(0.0);
+    let mut h00 = F::new(0.0_f32);
+    let mut h01 = F::new(0.0_f32);
+    let mut h02 = F::new(0.0_f32);
+    let mut h03 = F::new(0.0_f32);
+    let mut h04 = F::new(0.0_f32);
+    let mut h05 = F::new(0.0_f32);
+    let mut h11 = F::new(0.0_f32);
+    let mut h12 = F::new(0.0_f32);
+    let mut h13 = F::new(0.0_f32);
+    let mut h14 = F::new(0.0_f32);
+    let mut h15 = F::new(0.0_f32);
+    let mut h22 = F::new(0.0_f32);
+    let mut h23 = F::new(0.0_f32);
+    let mut h24 = F::new(0.0_f32);
+    let mut h25 = F::new(0.0_f32);
+    let mut h33 = F::new(0.0_f32);
+    let mut h34 = F::new(0.0_f32);
+    let mut h35 = F::new(0.0_f32);
+    let mut h44 = F::new(0.0_f32);
+    let mut h45 = F::new(0.0_f32);
+    let mut h55 = F::new(0.0_f32);
 
     let batch_point_idx = batch_idx * num_points + point_idx;
     let num_neighbors = neighbor_counts[batch_point_idx];
@@ -567,8 +567,8 @@ pub fn compute_ndt_hessian_batch_kernel<F: Float>(
                 let mahal_sq = x * q0 + y * q1 + z * q2;
 
                 // Common factors
-                let half = F::new(0.5);
-                let exponent = F::new(0.0) - half * gauss_d2 * mahal_sq;
+                let half = F::new(0.5_f32);
+                let exponent = F::new(0.0_f32) - half * gauss_d2 * mahal_sq;
                 let exp_val = F::exp(exponent);
                 let d1_d2 = gauss_d1 * gauss_d2;
                 let d1_d2_sq = d1_d2 * gauss_d2;
@@ -582,7 +582,7 @@ pub fn compute_ndt_hessian_batch_kernel<F: Float>(
                 let gj5 = j50 * q0 + j51 * q1 + j52 * q2;
 
                 // Hessian term 1: -d1*d2^2 * exp * (J^T q)(J^T q)^T
-                let factor1 = F::new(0.0) - d1_d2_sq * exp_val;
+                let factor1 = F::new(0.0_f32) - d1_d2_sq * exp_val;
                 h00 += factor1 * gj0 * gj0;
                 h01 += factor1 * gj0 * gj1;
                 h02 += factor1 * gj0 * gj2;
@@ -795,7 +795,7 @@ pub fn check_convergence_batch_kernel<F: Float>(
     let alpha = alphas[batch_idx];
 
     // Compute squared norm of scaled delta
-    let mut norm_sq = F::new(0.0);
+    let mut norm_sq = F::new(0.0_f32);
     for i in 0..6u32 {
         let scaled = alpha * deltas[delta_offset + i];
         norm_sq += scaled * scaled;
@@ -861,35 +861,35 @@ pub fn compute_jacobians_batch_kernel<F: Float>(
     // Rotation Jacobians depend on point and angles
 
     // ∂T/∂roll
-    let jr0 = (cy * sp * cr + sy * sr) * y + (F::new(0.0) - cy * sp * sr + sy * cr) * z;
-    let jr1 = (sy * sp * cr - cy * sr) * y + (F::new(0.0) - sy * sp * sr - cy * cr) * z;
+    let jr0 = (cy * sp * cr + sy * sr) * y + (F::new(0.0_f32) - cy * sp * sr + sy * cr) * z;
+    let jr1 = (sy * sp * cr - cy * sr) * y + (F::new(0.0_f32) - sy * sp * sr - cy * cr) * z;
     let jr2 = cp * cr * y - cp * sr * z;
 
     // ∂T/∂pitch
-    let jp0 = (F::new(0.0) - cy * sp) * x + cy * cp * sr * y + cy * cp * cr * z;
-    let jp1 = (F::new(0.0) - sy * sp) * x + sy * cp * sr * y + sy * cp * cr * z;
-    let jp2 = (F::new(0.0) - cp) * x - sp * sr * y - sp * cr * z;
+    let jp0 = (F::new(0.0_f32) - cy * sp) * x + cy * cp * sr * y + cy * cp * cr * z;
+    let jp1 = (F::new(0.0_f32) - sy * sp) * x + sy * cp * sr * y + sy * cp * cr * z;
+    let jp2 = (F::new(0.0_f32) - cp) * x - sp * sr * y - sp * cr * z;
 
     // ∂T/∂yaw
-    let jy0 = (F::new(0.0) - sy * cp) * x
-        + (F::new(0.0) - sy * sp * sr - cy * cr) * y
-        + (F::new(0.0) - sy * sp * cr + cy * sr) * z;
+    let jy0 = (F::new(0.0_f32) - sy * cp) * x
+        + (F::new(0.0_f32) - sy * sp * sr - cy * cr) * y
+        + (F::new(0.0_f32) - sy * sp * cr + cy * sr) * z;
     let jy1 = cy * cp * x + (cy * sp * sr - sy * cr) * y + (cy * sp * cr + sy * sr) * z;
-    let jy2 = F::new(0.0);
+    let jy2 = F::new(0.0_f32);
 
     // Write Jacobian
     let jac_offset = (batch_idx * num_points + point_idx) * 18;
 
     // Translation derivatives (identity)
-    jacobians[jac_offset] = F::new(1.0); // ∂x/∂tx
-    jacobians[jac_offset + 1] = F::new(0.0); // ∂y/∂tx
-    jacobians[jac_offset + 2] = F::new(0.0); // ∂z/∂tx
-    jacobians[jac_offset + 3] = F::new(0.0); // ∂x/∂ty
-    jacobians[jac_offset + 4] = F::new(1.0); // ∂y/∂ty
-    jacobians[jac_offset + 5] = F::new(0.0); // ∂z/∂ty
-    jacobians[jac_offset + 6] = F::new(0.0); // ∂x/∂tz
-    jacobians[jac_offset + 7] = F::new(0.0); // ∂y/∂tz
-    jacobians[jac_offset + 8] = F::new(1.0); // ∂z/∂tz
+    jacobians[jac_offset] = F::new(1.0_f32); // ∂x/∂tx
+    jacobians[jac_offset + 1] = F::new(0.0_f32); // ∂y/∂tx
+    jacobians[jac_offset + 2] = F::new(0.0_f32); // ∂z/∂tx
+    jacobians[jac_offset + 3] = F::new(0.0_f32); // ∂x/∂ty
+    jacobians[jac_offset + 4] = F::new(1.0_f32); // ∂y/∂ty
+    jacobians[jac_offset + 5] = F::new(0.0_f32); // ∂z/∂ty
+    jacobians[jac_offset + 6] = F::new(0.0_f32); // ∂x/∂tz
+    jacobians[jac_offset + 7] = F::new(0.0_f32); // ∂y/∂tz
+    jacobians[jac_offset + 8] = F::new(1.0_f32); // ∂z/∂tz
 
     // Rotation derivatives
     jacobians[jac_offset + 9] = jr0; // ∂x/∂roll

@@ -224,7 +224,7 @@ pub fn compute_transforms_batch_kernel<F: Float>(
     let r10 = sy * cp;
     let r11 = sy * sp * sr + cy * cr;
     let r12 = sy * sp * cr - cy * sr;
-    let r20 = F::new(0.0) - sp;
+    let r20 = F::new(0.0_f32) - sp;
     let r21 = cp * sr;
     let r22 = cp * cr;
 
@@ -250,10 +250,10 @@ pub fn compute_transforms_batch_kernel<F: Float>(
     transforms[t_offset + 11] = tz;
 
     // Row 3 (homogeneous)
-    transforms[t_offset + 12] = F::new(0.0);
-    transforms[t_offset + 13] = F::new(0.0);
-    transforms[t_offset + 14] = F::new(0.0);
-    transforms[t_offset + 15] = F::new(1.0);
+    transforms[t_offset + 12] = F::new(0.0_f32);
+    transforms[t_offset + 13] = F::new(0.0_f32);
+    transforms[t_offset + 14] = F::new(0.0_f32);
+    transforms[t_offset + 15] = F::new(1.0_f32);
 }
 
 /// Compute sin/cos values for K poses.

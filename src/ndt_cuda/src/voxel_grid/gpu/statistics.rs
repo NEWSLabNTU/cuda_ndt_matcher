@@ -104,9 +104,9 @@ pub fn accumulate_segment_sums_kernel<F: Float>(
     };
 
     // Accumulate position sums for this segment
-    let mut sum_x = F::new(0.0);
-    let mut sum_y = F::new(0.0);
-    let mut sum_z = F::new(0.0);
+    let mut sum_x = F::new(0.0_f32);
+    let mut sum_y = F::new(0.0_f32);
+    let mut sum_z = F::new(0.0_f32);
     let mut count = 0u32;
 
     // Process all points in this segment
@@ -179,12 +179,12 @@ pub fn accumulate_segment_covariances_kernel<F: Float>(
     let mean_z = means[mean_base + 2];
 
     // Accumulate covariance components (symmetric 3x3 matrix)
-    let mut cov00 = F::new(0.0); // dx*dx
-    let mut cov01 = F::new(0.0); // dx*dy
-    let mut cov02 = F::new(0.0); // dx*dz
-    let mut cov11 = F::new(0.0); // dy*dy
-    let mut cov12 = F::new(0.0); // dy*dz
-    let mut cov22 = F::new(0.0); // dz*dz
+    let mut cov00 = F::new(0.0_f32); // dx*dx
+    let mut cov01 = F::new(0.0_f32); // dx*dy
+    let mut cov02 = F::new(0.0_f32); // dx*dz
+    let mut cov11 = F::new(0.0_f32); // dy*dy
+    let mut cov12 = F::new(0.0_f32); // dy*dz
+    let mut cov22 = F::new(0.0_f32); // dz*dz
 
     // Process all points in this segment
     let max_points_per_segment = end - start;
@@ -248,14 +248,14 @@ pub fn compute_means_kernel<F: Float>(
     let base = segment_idx * 3;
 
     if count > 0 {
-        let inv_count = F::new(1.0) / F::cast_from(count);
+        let inv_count = F::new(1.0_f32) / F::cast_from(count);
         means[base] = position_sums[base] * inv_count;
         means[base + 1] = position_sums[base + 1] * inv_count;
         means[base + 2] = position_sums[base + 2] * inv_count;
     } else {
-        means[base] = F::new(0.0);
-        means[base + 1] = F::new(0.0);
-        means[base + 2] = F::new(0.0);
+        means[base] = F::new(0.0_f32);
+        means[base + 1] = F::new(0.0_f32);
+        means[base + 2] = F::new(0.0_f32);
     }
 }
 

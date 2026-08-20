@@ -108,13 +108,13 @@ pub fn compute_scores_batch_kernel<F: Float>(
         + transforms[tbase + 11];
 
     // Accumulate scores across all neighbors
-    let mut total_score = F::new(0.0);
-    let mut max_score = F::new(0.0);
-    let mut found_neighbor = F::new(0.0);
-    let mut num_correspondences = F::new(0.0);
+    let mut total_score = F::new(0.0_f32);
+    let mut max_score = F::new(0.0_f32);
+    let mut found_neighbor = F::new(0.0_f32);
+    let mut num_correspondences = F::new(0.0_f32);
 
     // Max neighbors limit (same as MAX_NEIGHBORS = 8)
-    let max_neighbors_limit = F::new(8.0);
+    let max_neighbors_limit = F::new(8.0_f32);
 
     // Brute-force neighbor search: check all voxels within radius
     // Note: We avoid using `break` due to CubeCL optimizer bug
@@ -161,19 +161,19 @@ pub fn compute_scores_batch_kernel<F: Float>(
                     let x_c_x = x0 * cx0 + x1 * cx1 + x2 * cx2;
 
                     // Score: -d1 * exp(-d2/2 * x'Σ⁻¹x)
-                    let exponent = gauss_d2 * x_c_x * F::new(-0.5);
-                    let score = gauss_d1 * F::new(-1.0) * F::exp(exponent);
+                    let exponent = gauss_d2 * x_c_x * F::new(-0.5_f32);
+                    let score = gauss_d1 * F::new(-1.0_f32) * F::exp(exponent);
 
                     // Accumulate for transform probability
                     total_score += score;
 
                     // Track maximum for NVTL
-                    if found_neighbor == F::new(0.0) || score > max_score {
+                    if found_neighbor == F::new(0.0_f32) || score > max_score {
                         max_score = score;
                     }
 
-                    found_neighbor = F::new(1.0);
-                    num_correspondences += F::new(1.0);
+                    found_neighbor = F::new(1.0_f32);
+                    num_correspondences += F::new(1.0_f32);
                 }
             }
         }
