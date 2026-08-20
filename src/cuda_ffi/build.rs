@@ -40,7 +40,9 @@ fn main() {
     // The node otherwise looks healthy -- it keeps its services, publishes
     // diagnostics, and reports "Node is not activated" -- so the visible symptom
     // is that localization never initializes, with nothing pointing at the GPU.
-    let cuda_arch = env::var("CUDA_ARCH").unwrap_or_else(|_| detect_cuda_arch());
+    let cuda_arch = clamp_to_supported_arch(
+        env::var("CUDA_ARCH").unwrap_or_else(|_| detect_cuda_arch()),
+    );
     println!("cargo:rerun-if-env-changed=CUDA_ARCH");
     println!("cargo:warning=building CUDA kernels for sm_{cuda_arch}");
 
@@ -132,9 +134,17 @@ fn compile_cuda_source(source: &str, out_dir: &Path, cuda_include: &Path, cuda_a
     let obj_path = out_dir.join(format!("{stem}.o"));
     let lib_path = out_dir.join(format!("lib{stem}.a"));
 
-    // Build architecture flags
+    // Build architecture flags.
+    //
+    // Both SASS and PTX are embedded. The SASS is what runs on a GPU this
+    // toolkit knows; the PTX is what lets the driver JIT for a newer one, which
+    // is the case when the card is ahead of the CUDA release — an RTX 5090
+    // (sm_120) against CUDA 12.3, whose newest target is sm_90. Without the PTX
+    // that pairing produces no runnable image and every launch returns
+    // cudaErrorNoKernelImageForDevice.
     let arch_flag = format!("-arch=sm_{cuda_arch}");
-    let gencode_flag = format!("-gencode=arch=compute_{cuda_arch},code=sm_{cuda_arch}");
+    let gencode_flag =
+        format!("-gencode=arch=compute_{cuda_arch},code=[sm_{cuda_arch},compute_{cuda_arch}]");
 
     // Compile with nvcc
     let output = Command::new("nvcc")
@@ -186,6 +196,63 @@ fn compile_cuda_source(source: &str, out_dir: &Path, cuda_include: &Path, cuda_a
 ///
 /// Falls back to the Jetson Orin's "87" when there is no usable GPU here, so a
 /// cross-build or a CI box without CUDA still produces the vehicle's target.
+/// Architectures this nvcc can actually target, newest first.
+///
+/// Empty when `nvcc --list-gpu-arch` is unavailable or unparseable, which the
+/// caller treats as "do not clamp" rather than as an error: an older nvcc
+/// without the flag should not stop a build that would otherwise work.
+fn supported_arches() -> Vec<u32> {
+    let out = std::process::Command::new("nvcc")
+        .arg("--list-gpu-arch")
+        .output();
+    let Ok(out) = out else { return Vec::new() };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    let mut arches: Vec<u32> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("compute_"))
+        .filter_map(|digits| digits.parse::<u32>().ok())
+        .collect();
+    arches.sort_unstable();
+    arches.reverse();
+    arches
+}
+
+/// Reduce a requested arch to the newest one this nvcc supports.
+///
+/// Detecting the local GPU is not enough on its own: a card can be newer than
+/// the installed CUDA. nvcc then rejects the arch outright —
+///
+///   nvcc fatal : Value 'sm_120' is not defined for option 'gpu-architecture'
+///
+/// — which stops the build with a message about a flag rather than about the
+/// mismatch that caused it. Clamping keeps the build working, and the PTX
+/// embedded alongside the SASS is what makes the result run on the newer card.
+fn clamp_to_supported_arch(requested: String) -> String {
+    let Ok(requested_num) = requested.parse::<u32>() else {
+        return requested;
+    };
+    let supported = supported_arches();
+    if supported.is_empty() || supported.contains(&requested_num) {
+        return requested;
+    }
+    match supported.iter().find(|&&arch| arch <= requested_num) {
+        Some(&arch) => {
+            println!(
+                "cargo:warning=this nvcc cannot target sm_{requested_num}; building for \
+                 sm_{arch} with PTX, which the driver will JIT for the local GPU"
+            );
+            arch.to_string()
+        }
+        None => {
+            // The GPU is older than anything this toolkit emits. Nothing to
+            // fall back to, so leave it and let nvcc give its own message.
+            requested
+        }
+    }
+}
+
 fn detect_cuda_arch() -> String {
     let out = std::process::Command::new("nvidia-smi")
         .args(["--query-gpu=compute_cap", "--format=csv,noheader"])
