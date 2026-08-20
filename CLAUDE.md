@@ -62,9 +62,44 @@ src/
 | `NDT_DEBUG_COV=1` | Compare GPU vs CPU covariance (output via tracing::debug) |
 | `NDT_DUMP_VOXELS=1` | Dump voxel data to JSON for comparison |
 | `NDT_DUMP_VOXELS_FILE` | Output path (default: `/tmp/ndt_cuda_voxels.json`) |
-| `CUDA_ARCH` | CUDA compute capability (default: 87 for Jetson Orin) |
+| `CUDA_ARCHS` | Architectures to build kernels for: `deploy` (default), `native`, `all`, or a list such as `87,120` |
+| `CUDA_ARCH` | A single compute capability; overrides `CUDA_ARCHS` |
+| `CUDA_PATH` / `CUDA_HOME` | Preferred CUDA toolkit; used whenever it can build the requested architectures |
 
 **Pipeline config**: `PipelineV2Config::enable_debug = true` collects per-iteration debug data (score, gradient, Hessian, step size) from the graph kernels with zero overhead when disabled.
+
+## CUDA Toolkits and Architectures
+
+A kernel image only runs on the architecture it was built for, so `cuda_ffi`
+builds a fat binary. The default set, `deploy`, covers every card this project
+targets -- sm_86 (RTX 3090), sm_87 (AGX Orin), sm_89 (RTX 4090), sm_90 (H100)
+and sm_120 (RTX 5090) -- plus PTX of the newest, which the driver compiles on
+first launch for anything newer still. Building all five costs about twice a
+single-architecture build: 13.7s against 6.1s on the development desktop.
+
+`CUDA_ARCHS=native` builds only for the local GPU and is the one to use while
+iterating.
+
+The toolkit is chosen to satisfy that request rather than the other way round.
+sm_120 needs CUDA 12.8 or newer, and a host commonly has several toolkits with
+`CUDA_PATH` left pointing at the oldest -- `/usr/local/cuda` follows
+`update-alternatives`, which on the development desktop still resolves to 12.3.
+The build therefore prefers `CUDA_PATH` whenever it can build what was asked
+for, and otherwise takes the toolkit that can, warning that it did so:
+
+    warning: using /usr/local/cuda-12.8 instead of /usr/local/cuda, which
+    cannot build sm_120; set CUDA_ARCHS=native to build only for this
+    machine's GPU
+
+To pin a toolkit for real, point `CUDA_PATH` at a versioned directory
+(`/usr/local/cuda-12.8`) rather than the symlink, or move the symlink with
+`sudo update-alternatives --config cuda`.
+
+At runtime the toolkit matters again, and `CUDA_PATH` does not govern it:
+CubeCL compiles its kernels with NVRTC using the compute capability read from
+the device, and cudarc resolves cuSOLVER symbols on load. Both come from
+whatever `LD_LIBRARY_PATH` finds, which is why `scripts/select_cuda.sh` sets
+both variables for the test recipes.
 
 ## Cargo Features
 
