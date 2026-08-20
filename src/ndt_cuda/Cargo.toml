@@ -12,15 +12,34 @@ description = "CubeCL-based CUDA NDT scan matching"
 cubecl = { version = "0.8", features = ["cuda"] }
 
 # cudarc for cuSOLVER (GPU Newton solve)
-# Note: Using cuda-12050 because Jetson Tegra drivers are missing:
-# - cuEventElapsedTime_v2 (required by cuda-12080+)
-# - cusolverDnXgeev (required by cuda-12060+)
+#
+# The version feature selects which symbols cudarc's generated bindings declare,
+# and with dynamic-loading it resolves all of them when the library is opened,
+# not when they are called. One symbol missing from the host's libcusolver is
+# therefore a panic on first use, however unrelated that symbol is to the calls
+# this crate makes:
+#
+#     Expected symbol in library: DlSym { desc:
+#     "libcusolver.so.11: undefined symbol: cusolverDnXlarft" }
+#
+# So the feature has to name the OLDEST CUDA this crate must run against, not
+# the newest available. Two constraints set that floor:
+#
+# - Jetson AGX Orin ships CUDA 12.6, but the Tegra driver omits
+#   cuEventElapsedTime_v2 (needed by cuda-12080+) and cusolverDnXgeev
+#   (needed by cuda-12060+).
+# - The x86 development host builds against CUDA 12.3, which lacks
+#   cusolverDnXlarft (needed by cuda-12050+).
+#
+# cuda-12030 satisfies both. This crate only calls potrf/potrs/getrf from the
+# legacy dense API, present since CUDA 11, so nothing here needs a later
+# binding set.
 cudarc = { version = "0.18", default-features = false, features = [
     "std",
     "driver",
     "cusolver",
     "dynamic-loading",
-    "cuda-12050",
+    "cuda-12030",
 ] }
 
 # CUB radix sort via FFI

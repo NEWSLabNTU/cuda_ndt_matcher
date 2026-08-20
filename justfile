@@ -168,6 +168,7 @@ lint-cuda-ndt-matcher:
 test-rust:
     #!/usr/bin/env bash
     source {{local_setup}}
+    source scripts/select_cuda.sh
     cargo nextest run \
         --manifest-path {{manifest}} \
         --workspace
@@ -176,6 +177,7 @@ test-rust:
 test-ndt-cuda:
     #!/usr/bin/env bash
     source {{local_setup}}
+    source scripts/select_cuda.sh
     cargo nextest run \
         --manifest-path {{manifest}} \
         -p ndt_cuda
@@ -184,12 +186,14 @@ test-ndt-cuda:
 test-cuda-ffi:
     #!/usr/bin/env bash
     source {{local_setup}}
+    source scripts/select_cuda.sh
     cargo nextest run --manifest-path {{manifest}} -p cuda_ffi
 
 # Test cuda_ndt_matcher crate only
 test-cuda-ndt-matcher:
     #!/usr/bin/env bash
     source {{local_setup}}
+    source scripts/select_cuda.sh
     cargo nextest run --manifest-path {{manifest}} -p cuda_ndt_matcher
 
 # Run Rust unit tests only (fast)
