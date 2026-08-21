@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "action_msgs"
-version = "0.0.0"
+version = "1.2.3"
 dependencies = [
  "builtin_interfaces",
  "rosidl_runtime_rs",
@@ -230,14 +230,14 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "autoware_common_msgs"
-version = "0.0.0"
+version = "1.11.0"
 dependencies = [
  "rosidl_runtime_rs",
 ]
 
 [[package]]
 name = "autoware_internal_debug_msgs"
-version = "0.0.0"
+version = "1.12.0"
 dependencies = [
  "builtin_interfaces",
  "rosidl_runtime_rs",
@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "autoware_internal_localization_msgs"
-version = "0.0.0"
+version = "1.12.0"
 dependencies = [
  "autoware_common_msgs",
  "geometry_msgs",
@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "autoware_map_msgs"
-version = "0.0.0"
+version = "1.11.0"
 dependencies = [
  "geographic_msgs",
  "rosidl_runtime_rs",
@@ -358,7 +358,7 @@ dependencies = [
 
 [[package]]
 name = "builtin_interfaces"
-version = "0.0.0"
+version = "1.2.3"
 dependencies = [
  "rosidl_runtime_rs",
 ]
@@ -1107,7 +1107,7 @@ checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 
 [[package]]
 name = "diagnostic_msgs"
-version = "0.0.0"
+version = "4.9.2"
 dependencies = [
  "rosidl_runtime_rs",
  "std_msgs",
@@ -1573,7 +1573,7 @@ dependencies = [
 
 [[package]]
 name = "geographic_msgs"
-version = "0.0.0"
+version = "1.0.6"
 dependencies = [
  "geometry_msgs",
  "rosidl_runtime_rs",
@@ -1583,7 +1583,7 @@ dependencies = [
 
 [[package]]
 name = "geometry_msgs"
-version = "0.0.0"
+version = "4.9.2"
 dependencies = [
  "rosidl_runtime_rs",
  "std_msgs",
@@ -3219,7 +3219,7 @@ checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
 
 [[package]]
 name = "sensor_msgs"
-version = "0.0.0"
+version = "4.9.2"
 dependencies = [
  "builtin_interfaces",
  "geometry_msgs",
@@ -3429,7 +3429,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "std_msgs"
-version = "0.0.0"
+version = "4.9.2"
 dependencies = [
  "builtin_interfaces",
  "rosidl_runtime_rs",
@@ -3437,7 +3437,7 @@ dependencies = [
 
 [[package]]
 name = "std_srvs"
-version = "0.0.0"
+version = "4.9.2"
 dependencies = [
  "rosidl_runtime_rs",
 ]
@@ -3521,7 +3521,7 @@ dependencies = [
 
 [[package]]
 name = "tf2_msgs"
-version = "0.0.0"
+version = "0.25.22"
 dependencies = [
  "action_msgs",
  "builtin_interfaces",
@@ -3581,7 +3581,7 @@ dependencies = [
 
 [[package]]
 name = "tier4_localization_msgs"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "autoware_common_msgs",
  "geometry_msgs",
@@ -3961,7 +3961,7 @@ checksum = "7264e107f553ccae879d21fbea1d6724ac785e8c3bfc762137959b5802826ef3"
 
 [[package]]
 name = "unique_identifier_msgs"
-version = "0.0.0"
+version = "2.2.1"
 dependencies = [
  "rosidl_runtime_rs",
 ]
@@ -4032,7 +4032,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "visualization_msgs"
-version = "0.0.0"
+version = "4.9.2"
 dependencies = [
  "builtin_interfaces",
  "geometry_msgs",
@@ -4840,4 +4840,4 @@ dependencies = [
 
 [[patch.unused]]
 name = "test_msgs"
-version = "0.0.0"
+version = "1.2.3"
