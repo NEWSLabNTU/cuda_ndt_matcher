@@ -2380,6 +2380,7 @@ dependencies = [
  "approx",
  "cubecl",
  "cuda_ffi",
+ "cudarc 0.17.8",
  "cudarc 0.18.2",
  "kiddo",
  "nalgebra",

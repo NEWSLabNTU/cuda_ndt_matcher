@@ -49,6 +49,11 @@ macro_rules! test_println {
     };
 }
 
+// Not used directly: exists so Cargo keeps the cudarc017 dependency (and the
+// explicit cuda-12030 feature it forces onto cubecl-cuda's cudarc copy) alive.
+// See Cargo.toml for the full story.
+use cudarc017 as _;
+
 pub mod derivatives;
 pub mod filtering;
 pub mod multi_grid;

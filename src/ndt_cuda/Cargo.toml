@@ -34,6 +34,26 @@ cubecl = { version = "0.8", features = ["cuda"] }
 # cuda-12030 satisfies both. This crate only calls potrf/potrs/getrf from the
 # legacy dense API, present since CUDA 11, so nothing here needs a later
 # binding set.
+# cubecl-cuda pulls its OWN cudarc (0.17.x) with cuda-version-from-build-system
+# and fallback-latest. When nvcc is off PATH at build time (CI, bare shells),
+# that fallback silently assumes CUDA 13.0 -- and with dynamic-loading, the
+# resulting binary demands driver symbols the Tegra driver does not export
+# (cuCtxGetDevice_v2 is gated on cuda-13000) and panics at startup. And the
+# wrong answer is cached: PATH is not in cargo's fingerprint.
+#
+# cudarc's build script checks explicit cuda-* features BEFORE build-system
+# detection, so this renamed dep exists solely to force the 0.17 copy onto an
+# explicit floor. Same floor and same reasoning as the 0.18 entry below:
+# 12030 is the oldest CUDA this crate must run against, and everything cubecl
+# uses (driver, nvrtc) predates it by years.
+cudarc017 = { package = "cudarc", version = "0.17", default-features = false, features = [
+    "std",
+    "driver",
+    "nvrtc",
+    "dynamic-loading",
+    "cuda-12030",
+] }
+
 cudarc = { version = "0.18", default-features = false, features = [
     "std",
     "driver",
