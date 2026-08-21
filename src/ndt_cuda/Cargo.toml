@@ -8,7 +8,22 @@ description = "CubeCL-based CUDA NDT scan matching"
 [dependencies]
 # CubeCL for GPU compute
 # Note: Version 0.9.0-pre has significant API changes requiring major refactoring.
-# Staying on 0.8.x until 0.9.0 stable is released with migration guide.
+# Staying on 0.8.x until the migration is scheduled work.
+#
+# Checked 2026-08-22 whether newer dependencies gained a proper CUDA version
+# check, hoping to retire the cudarc017 pin below: they have not. cudarc
+# 0.19.9 (latest) still detects by running `nvcc --version` and still assumes
+# the newest supported CUDA under fallback-latest when that fails; cubecl 0.9
+# and 0.10 both still request cuda-version-from-build-system + fallback-latest.
+# Explicit cuda-* features still take precedence over detection in every
+# cudarc from 0.17 through 0.19 (verified in each build.rs), so the pin
+# strategy keeps working across upgrades.
+#
+# Worth knowing for the eventual migration: cubecl 0.9 moves to cudarc 0.18 --
+# the SAME major this crate already pins -- so the two copies unify into one
+# crate node whose feature union includes our explicit cuda-12030, and the
+# renamed cudarc017 dependency can be deleted outright. cubecl 0.10 moves to
+# cudarc 0.19 and would need the pin re-declared at 0.19.
 cubecl = { version = "0.8", features = ["cuda"] }
 
 # cudarc for cuSOLVER (GPU Newton solve)
