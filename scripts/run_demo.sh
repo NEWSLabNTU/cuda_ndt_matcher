@@ -71,13 +71,27 @@ fi
 # Run simulation, bag play, and recording in parallel
 # --halt now,done=1: When any job finishes, kill all others immediately
 # This ensures cleanup when ros2 bag play completes (since -l flag removed)
-# Wait time before starting rosbag playback
-# play_launch uses a Rust parser so Autoware starts fast; 5s is sufficient
-STARTUP_DELAY="${NDT_STARTUP_DELAY:-5}"
+#
+# Both the player and the recorder wait on the scan matcher's own readiness
+# rather than on a clock. A fixed sleep here was tuned on an x86 desktop and is
+# 10x too short on an AGX Orin, where play_launch needs ~55 s before any node
+# exists; the bag then played into nothing and --halt tore the run down, which
+# presented as the matcher failing to converge rather than as a harness fault.
+# See scripts/wait_for_ndt.sh.
+#
+# The recorder is started BEFORE the player and given a moment to finish
+# subscribing. The previous ordering started it 5 s after playback began, which
+# silently dropped the opening of every run.
+SETTLE="${NDT_STARTUP_DELAY:-3}"
+
+# Clear any readiness flag left by a previous run, or both waiters return at once
+# against a stack that is not up yet.
+export NDT_READY_FILE="${NDT_READY_FILE:-/tmp/ndt_sim_ready}"
+rm -f "$NDT_READY_FILE"
 
 parallel --halt now,done=1 --line-buffer ::: \
     "$SCRIPT_DIR/run_ndt_simulation.sh $USE_CUDA $INIT_MODE '$MAP_DIR'" \
-    "sleep $STARTUP_DELAY && source '$AUTOWARE_ACTIVATE' && ros2 bag play '$ROSBAG'" \
-    "sleep $((STARTUP_DELAY + 5)) && source '$AUTOWARE_ACTIVATE' && ros2 bag record -o '$BAG_NAME' ${NDT_TOPICS[*]}"
+    "$SCRIPT_DIR/wait_for_ndt.sh && sleep $((SETTLE + 2)) && source '$AUTOWARE_ACTIVATE' && ros2 bag play ${BAG_PLAY_ARGS:-} '$ROSBAG'" \
+    "$SCRIPT_DIR/wait_for_ndt.sh && sleep $SETTLE && source '$AUTOWARE_ACTIVATE' && ros2 bag record -o '$BAG_NAME' ${NDT_TOPICS[*]}"
 
 echo "Demo finished. Recording saved to: $BAG_NAME"

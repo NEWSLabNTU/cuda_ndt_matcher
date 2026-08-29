@@ -94,6 +94,22 @@ if [[ "$USE_CUDA" == "false" && -z "${NDT_AUTOWARE_DEBUG:-}" ]]; then
     echo "Autoware NDT debug enabled: $NDT_AUTOWARE_DEBUG_FILE"
 fi
 
+# Announce readiness on a file rather than over DDS, so the jobs run_demo.sh
+# starts alongside this one can wait on the stack instead of on a clock.
+# play_launch prints "Startup complete" once every node, container and
+# composable node is up; that line is the only signal here that means the
+# matcher can actually receive a scan. A DDS probe is not usable for this:
+# `ros2 topic list` answers from the ROS 2 daemon, which in this harness is
+# started under a different environment than the nodes and reports nothing.
+#
+# The redirection is applied to the shell before the exec below, so play_launch
+# still replaces this process and still receives signals directly.
+READY_FILE="${NDT_READY_FILE:-/tmp/ndt_sim_ready}"
+exec > >(while IFS= read -r line; do
+    printf '%s\n' "$line"
+    [[ "$line" == *"Startup complete"* ]] && touch "$READY_FILE"
+done)
+
 exec \
     play_launch launch \
     --web-addr 0.0.0.0:8888 \
