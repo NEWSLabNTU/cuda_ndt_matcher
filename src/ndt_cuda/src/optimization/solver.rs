@@ -27,6 +27,61 @@ use crate::{
     voxel_grid::VoxelGrid,
 };
 
+/// Per-phase timing for `align_full_gpu`, printed when `NDT_PROFILE=1`.
+///
+/// The phases are separated because they have very different lifetimes: only
+/// `optimize` depends on the scan, while pipeline construction, voxel packing
+/// and the upload all depend on the target grid, which changes only when the
+/// map is reloaded. Knowing the split is what says whether the per-frame cost
+/// is optimisation work or setup being redone.
+mod profile {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::time::Instant;
+
+    static ENABLED: AtomicBool = AtomicBool::new(false);
+    static INIT: std::sync::Once = std::sync::Once::new();
+    static FRAME: AtomicU64 = AtomicU64::new(0);
+
+    pub fn enabled() -> bool {
+        INIT.call_once(|| {
+            let on = std::env::var("NDT_PROFILE").is_ok_and(|v| v != "0" && !v.is_empty());
+            ENABLED.store(on, Ordering::Relaxed);
+        });
+        ENABLED.load(Ordering::Relaxed)
+    }
+
+    pub fn now() -> Option<Instant> {
+        enabled().then(Instant::now)
+    }
+
+    pub fn ms(t: Option<Instant>) -> f64 {
+        t.map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn emit(
+        points: usize,
+        voxels: usize,
+        pipeline_new_ms: f64,
+        voxel_pack_ms: f64,
+        upload_ms: f64,
+        optimize_ms: f64,
+        nvtl_ms: f64,
+        total_ms: f64,
+        iterations: usize,
+    ) {
+        if !enabled() {
+            return;
+        }
+        let n = FRAME.fetch_add(1, Ordering::Relaxed);
+        eprintln!(
+            "[ndt_profile] frame={n} pts={points} voxels={voxels} iters={iterations} \
+total={total_ms:.1}ms pipeline_new={pipeline_new_ms:.1} voxel_pack={voxel_pack_ms:.1} \
+upload={upload_ms:.1} optimize={optimize_ms:.1} nvtl={nvtl_ms:.1}"
+        );
+    }
+}
+
 /// Count oscillations from a pose history.
 fn oscillation_count(pose_history: &[Isometry3<f64>]) -> usize {
     super::oscillation::count_oscillation(
@@ -85,6 +140,20 @@ pub struct NdtOptimizer {
 
     /// GNSS regularization term.
     regularization: RegularizationTerm,
+
+    /// Leave NVTL to the caller instead of computing it on the CPU.
+    ///
+    /// `align_full_gpu` finishes with a CPU NVTL pass, and on an AGX Orin that
+    /// one call is 393 ms of a 416 ms alignment -- 94% of it, against 12 ms for
+    /// the GPU optimisation it follows. It is a serial loop over every source
+    /// point doing a KD-tree radius search in f64, and it is redundant:
+    /// `NdtScanMatcher` already holds a GPU scoring runtime and an uploaded
+    /// copy of the voxel grid, and already scores NVTL on the GPU in
+    /// `evaluate_nvtl`.
+    ///
+    /// Off by default, so a bare `NdtOptimizer` still returns a complete
+    /// result. `NdtScanMatcher` turns it on and fills NVTL itself.
+    defer_nvtl: bool,
 }
 
 impl NdtOptimizer {
@@ -96,7 +165,16 @@ impl NdtOptimizer {
             config,
             gauss,
             regularization,
+            defer_nvtl: false,
         }
+    }
+
+    /// Stop computing NVTL on the CPU inside `align_full_gpu`.
+    ///
+    /// The caller becomes responsible for filling `NdtResult::nvtl`, which will
+    /// otherwise be 0.0. See the field docs for why this exists.
+    pub fn set_defer_nvtl(&mut self, defer: bool) {
+        self.defer_nvtl = defer;
     }
 
     /// Create a new NDT optimizer with default configuration.
@@ -368,16 +446,23 @@ impl NdtOptimizer {
             ..PipelineV2Config::default()
         };
 
+        let t_total = profile::now();
+
+        let t = profile::now();
         let mut pipeline = FullGpuPipelineV2::with_config(max_points, max_voxels, config)?;
+        let pipeline_new_ms = profile::ms(t);
 
         // Upload alignment data once
+        let t = profile::now();
         let voxel_data = GpuVoxelData::from_voxel_grid(target_grid);
+        let voxel_pack_ms = profile::ms(t);
         debug!(
             "voxel_data: {} voxels, {} means, {} inv_covs",
             voxel_data.num_voxels,
             voxel_data.means.len(),
             voxel_data.inv_covariances.len()
         );
+        let t = profile::now();
         pipeline.upload_alignment_data(
             source_points,
             &voxel_data,
@@ -385,6 +470,7 @@ impl NdtOptimizer {
             self.gauss.d2 as f32,
             self.config.ndt.resolution as f32,
         )?;
+        let upload_ms = profile::ms(t);
 
         // Set regularization pose if enabled and available
         if self.config.regularization.enabled && self.regularization.has_reference_pose() {
@@ -397,6 +483,7 @@ impl NdtOptimizer {
         let initial_pose = isometry_to_pose_vector(&initial_guess);
 
         // Run full GPU optimization (persistent kernel)
+        let t = profile::now();
         let gpu_result = match pipeline.optimize(
             &initial_pose,
             self.config.ndt.max_iterations as u32,
@@ -423,8 +510,29 @@ impl NdtOptimizer {
         // Convert result
         let final_pose = pose_vector_to_isometry(&gpu_result.pose);
 
-        // Compute NVTL on CPU (requires final pose)
-        let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
+        let optimize_ms = profile::ms(t);
+
+        // Compute NVTL on CPU (requires final pose), unless the caller has a
+        // GPU path for it and has asked us not to.
+        let t = profile::now();
+        let nvtl = if self.defer_nvtl {
+            0.0
+        } else {
+            self.compute_nvtl(source_points, target_grid, &final_pose)
+        };
+        let nvtl_ms = profile::ms(t);
+
+        profile::emit(
+            max_points,
+            voxel_data.num_voxels,
+            pipeline_new_ms,
+            voxel_pack_ms,
+            upload_ms,
+            optimize_ms,
+            nvtl_ms,
+            profile::ms(t_total),
+            gpu_result.iterations as usize,
+        );
 
         // Convert Hessian to nalgebra
         let hessian = Matrix6::from_fn(|i, j| gpu_result.hessian[i][j]);

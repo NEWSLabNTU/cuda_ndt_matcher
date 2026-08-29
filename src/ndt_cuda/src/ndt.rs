@@ -292,7 +292,15 @@ impl NdtScanMatcher {
 
         // Build optimizer configuration including regularization settings
         let opt_config = Self::build_optimizer_config_from(&config);
-        let optimizer = NdtOptimizer::new(opt_config);
+        let mut optimizer = NdtOptimizer::new(opt_config);
+
+        // NVTL is scored here, not in the optimizer. align_full_gpu otherwise
+        // ends with a serial CPU pass over every source point, which measured
+        // 393 ms of a 416 ms alignment on an AGX Orin against 12 ms for the GPU
+        // optimisation itself. This type already owns a GPU scoring runtime and
+        // an uploaded voxel grid for evaluate_nvtl, so align_gpu reuses those
+        // and falls back to the same CPU routine only when the GPU has none.
+        optimizer.set_defer_nvtl(true);
 
         // Initialize GPU runtime if enabled and available
         let gpu_runtime = if config.use_gpu && is_cuda_available() {
@@ -496,12 +504,27 @@ impl NdtScanMatcher {
             .optimizer
             .align_full_gpu(source_points, grid, initial_guess)?;
 
+        // The optimizer defers NVTL to us (see set_defer_nvtl in with_config).
+        // Score it on the GPU against the final pose, and fall back to the same
+        // CPU routine the optimizer would have used if the GPU has no runtime
+        // or no uploaded grid.
+        let nvtl = self
+            .evaluate_nvtl_gpu(source_points, &result.pose)
+            .unwrap_or_else(|| {
+                crate::scoring::nvtl::compute_nvtl_simple(
+                    source_points,
+                    grid,
+                    &result.pose,
+                    &self.gauss_params,
+                )
+            });
+
         Ok(AlignResult {
             pose: result.pose,
             converged: result.status.is_converged(),
             score: result.score,
             transform_probability: result.transform_probability,
-            nvtl: result.nvtl,
+            nvtl,
             iterations: result.iterations,
             hessian: result.hessian,
             num_correspondences: result.num_correspondences,
