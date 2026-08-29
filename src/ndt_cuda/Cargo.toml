@@ -58,15 +58,47 @@ cubecl = { version = "0.8", features = ["cuda"] }
 #
 # cudarc's build script checks explicit cuda-* features BEFORE build-system
 # detection, so this renamed dep exists solely to force the 0.17 copy onto an
-# explicit floor. Same floor and same reasoning as the 0.18 entry below:
-# 12030 is the oldest CUDA this crate must run against, and everything cubecl
-# uses (driver, nvrtc) predates it by years.
+# explicit floor.
+#
+# ── 2026-08-30: this floor is 12080, NOT 12030, and that is a compromise ─────
+#
+# cubecl-cuda 0.8.1 references cuTensorMapEncodeIm2colWide,
+# CUtensorMapIm2ColWideMode and CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN8B
+# unconditionally (7 sites in src/compute/server.rs). cudarc 0.17.8 gates all
+# three on cuda-12080 / cuda-12090 / cuda-13000. At 12030 they do not exist and
+# the crate does not compile:
+#
+#     error[E0432]: unresolved imports `cudarc::driver::sys::CUtensorMapIm2ColWideMode`,
+#                   `cudarc::driver::sys::cuTensorMapEncodeIm2colWide`
+#     error[E0425]: cannot find value `CU_TENSOR_MAP_DATA_TYPE_16U4_ALIGN8B`
+#
+# That broke the build on EVERY host, Orin included, because an explicit
+# cuda-* feature wins over build-system detection everywhere. cuda_ndt_matcher
+# has not built since the 12030 pin landed.
+#
+# THE RISK THIS TAKES ON. cuda-12080 also declares cuEventElapsedTime_v2, and
+# the note above records that the Tegra driver does not export it. cudarc's
+# dynamic-loading resolves EVERY declared symbol in Lib::from_library() when the
+# library is opened, not lazily on call, so one missing export fails the whole
+# load. If that note is still true of the current JetPack, this pin trades a
+# build failure everywhere for a load failure on the Orin.
+#
+# It is committed this way because the alternative is a package that compiles
+# nowhere, and because the claim is worth re-testing rather than assuming:
+# check `nm -D` on the Orin's libcuda for cuEventElapsedTime_v2 before trusting
+# it. If it is absent, the fix is to hold cubecl-cuda at a version that does not
+# reference the 12.8 tensormap API, which means pinning cubecl itself, since
+# cubecl 0.8.1 requires cubecl-cuda ^0.8.1.
+#
+# Downgrading to cubecl 0.8.0 was tried and does not work as-is: it resolves
+# cudarc 0.17.8 with TWO cuda-* features enabled at once and fails with ~106
+# "defined multiple times" errors.
 cudarc017 = { package = "cudarc", version = "0.17", default-features = false, features = [
     "std",
     "driver",
     "nvrtc",
     "dynamic-loading",
-    "cuda-12030",
+    "cuda-12080",
 ] }
 
 cudarc = { version = "0.18", default-features = false, features = [

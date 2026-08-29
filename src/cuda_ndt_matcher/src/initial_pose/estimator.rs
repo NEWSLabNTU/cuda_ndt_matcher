@@ -22,10 +22,11 @@ use crate::io::debug_writer;
 use crate::{alignment::NdtManager, io::params::InitialPoseParams};
 use geometry_msgs::msg::{Point, Pose, PoseWithCovariance, PoseWithCovarianceStamped, Quaternion};
 use nalgebra::UnitQuaternion;
-use rclrs::log_debug;
+use rclrs::{log_debug, log_info};
 #[cfg(feature = "debug-output")]
 use serde::Serialize;
-#[cfg(feature = "debug-output")]
+// Not debug-gated: the phase timings below are logged on every run, because
+// the align service missing its caller deadline is the failure they explain.
 use std::time::Instant;
 
 const LOGGER_NAME: &str = "ndt_scan_matcher.initial_pose";
@@ -191,6 +192,11 @@ pub(crate) fn estimate_initial_pose(
     let startup_count = (params.n_startup_trials as usize).min(params.particles_num as usize);
     #[cfg(feature = "debug-output")]
     let startup_start = Instant::now();
+    // Phase timing is logged unconditionally. The align service has a caller
+    // deadline and these three phases are what spends it, so "which phase" has
+    // to be answerable from an ordinary run rather than a debug build.
+    let phase_batch_start = Instant::now();
+    let mut nvtl_time_ms = 0.0f64;
 
     if startup_count > 0 {
         log_debug!(
@@ -229,7 +235,10 @@ pub(crate) fn estimate_initial_pose(
             let fitness_score = align_result.score;
             let transform_probability = (-fitness_score / 10.0).exp();
 
-            // Also compute NVTL for final particle selection
+            // Also compute NVTL for final particle selection.
+            // Serial, one GPU pass per particle, and there are n_startup_trials
+            // of them right after a single batched align.
+            let nvtl_start = Instant::now();
             let nvtl_score = ndt_manager
                 .evaluate_nvtl(
                     source_points,
@@ -238,6 +247,7 @@ pub(crate) fn estimate_initial_pose(
                     outlier_ratio,
                 )
                 .unwrap_or(0.0);
+            nvtl_time_ms += nvtl_start.elapsed().as_secs_f64() * 1000.0;
 
             // For final particle selection, prefer NVTL when available
             let selection_score = if nvtl_score > 0.0 {
@@ -277,6 +287,15 @@ pub(crate) fn estimate_initial_pose(
     let startup_time_ms = startup_start.elapsed().as_secs_f64() * 1000.0;
 
     // ========================================================================
+    log_info!(
+        LOGGER_NAME,
+        "align phase startup: {} particles in {:.0}ms (of which NVTL {:.0}ms)",
+        startup_count,
+        phase_batch_start.elapsed().as_secs_f64() * 1000.0,
+        nvtl_time_ms
+    );
+    let phase_tpe_start = Instant::now();
+
     // Guided Phase: Sequential evaluation for remaining particles
     // ========================================================================
     let remaining = params.particles_num as usize - particles.len();
@@ -381,6 +400,13 @@ pub(crate) fn estimate_initial_pose(
     }
     #[cfg(feature = "debug-output")]
     let guided_time_ms = guided_start.elapsed().as_secs_f64() * 1000.0;
+
+    log_info!(
+        LOGGER_NAME,
+        "align phase tpe: {} particles in {:.0}ms",
+        remaining,
+        phase_tpe_start.elapsed().as_secs_f64() * 1000.0
+    );
 
     // Select best particle (highest score)
     let best_particle = select_best_particle(&particles)

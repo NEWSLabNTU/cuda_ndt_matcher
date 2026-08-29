@@ -70,6 +70,41 @@ pub(crate) struct DualNdtManager {
 
     /// Update statistics
     status: Arc<RwLock<UpdateStatus>>,
+
+    /// Fingerprint of the points the active (or in-flight) target was built
+    /// from, so an update that would rebuild the SAME grid can be skipped.
+    ///
+    /// Rebuilding is not cheap: 6.6M points takes ~9.9s to voxelise. The align
+    /// service asks for a map update before estimating a pose, matching
+    /// upstream's service_ndt_align_main() ordering, and on the first call
+    /// MapUpdateModule reports `updated` simply because it has no previous
+    /// position. Acting on that re-voxelises the map the map callback already
+    /// installed at startup, and the rebuild competes with the alignment for
+    /// the same GPU, so /localization/initialize times out and the node never
+    /// activates.
+    target_fingerprint: Arc<Mutex<Option<PointsFingerprint>>>,
+}
+
+/// Cheap identity for a point cloud used as an NDT target.
+///
+/// Length plus the first and last point. Deliberately not a hash of all
+/// 6.6M points: this runs on the align path, and the case it must catch is
+/// "the very same Vec we already built from", not an adversarial collision.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) struct PointsFingerprint {
+    len: usize,
+    first: [f32; 3],
+    last: [f32; 3],
+}
+
+impl PointsFingerprint {
+    fn of(points: &[[f32; 3]]) -> Option<Self> {
+        Some(Self {
+            len: points.len(),
+            first: *points.first()?,
+            last: *points.last()?,
+        })
+    }
 }
 
 #[allow(dead_code)]
@@ -86,6 +121,7 @@ impl DualNdtManager {
             pending_points: Arc::new(Mutex::new(None)),
             params,
             status: Arc::new(RwLock::new(UpdateStatus::default())),
+            target_fingerprint: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -114,6 +150,19 @@ impl DualNdtManager {
     /// * `true` if background update was started
     /// * `false` if an update is already in progress (points queued for next update)
     pub(crate) fn start_background_update(&self, points: Vec<[f32; 3]>) -> bool {
+        // Already built from exactly these points: rebuilding would burn ~9.9s
+        // of GPU on 6.6M points to arrive at the grid we are already using.
+        // See the target_fingerprint field for why the align path asks for this.
+        let fingerprint = PointsFingerprint::of(&points);
+        if fingerprint.is_some() && *self.target_fingerprint.lock() == fingerprint {
+            log_info!(
+                LOGGER_NAME,
+                "Map update skipped: target already built from these {} points",
+                points.len()
+            );
+            return false;
+        }
+
         // If update already in progress, queue the points for next update
         if self.update_in_progress.swap(true, Ordering::SeqCst) {
             log_debug!(
@@ -126,6 +175,7 @@ impl DualNdtManager {
         }
 
         let num_points = points.len();
+        *self.target_fingerprint.lock() = fingerprint;
         log_info!(
             LOGGER_NAME,
             "Starting background map update with {num_points} points"
@@ -248,6 +298,10 @@ impl DualNdtManager {
     /// This is a blocking operation that sets the target on the active manager.
     /// Use `start_background_update()` for non-blocking updates during operation.
     pub(crate) fn set_target(&self, points: &[[f32; 3]]) -> Result<()> {
+        // Recorded here too, so the startup path through the map callback makes
+        // the align path's redundant update detectable rather than only the
+        // background path knowing what it built.
+        *self.target_fingerprint.lock() = PointsFingerprint::of(points);
         let mut active = self.active.write();
         active.set_target(points)
     }
