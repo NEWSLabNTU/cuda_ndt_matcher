@@ -40,9 +40,33 @@
       # Higher values give better coverage but take longer
       particles_num: 200
 
-      # Number of random trials before TPE-guided search begins
-      # First n_startup_trials use random sampling from prior distributions
-      # Remaining (particles_num - n_startup_trials) use TPE guidance
+      # Number of random trials before TPE-guided search begins.
+      # First n_startup_trials use random sampling from prior distributions;
+      # the remaining (particles_num - n_startup_trials) use TPE guidance.
+      #
+      # Both values are Autoware's defaults and have never been tuned for this
+      # matcher. Measured on an AGX Orin, 2026-08-30, Autoware's sample map and
+      # bag, align time and final score, repeated runs:
+      #
+      #   particles/startup   align time            score
+      #   200/100 (this)      9.34, 9.55, 9.91 s    3.203, 2.933, 3.212
+      #   200/150             7.70, 7.61 s          3.183, 3.197
+      #   200/200             6.05, 5.83, 6.18 s    3.215, 3.206, 3.203
+      #   100/100             3.64 s                2.785
+      #
+      # Raising n_startup_trials to particles_num makes the search 1.6x faster
+      # AND tightens the score spread (0.012 against 0.279). The mechanism is
+      # not subtle: a startup particle is batched and costs ~30 ms, a TPE
+      # particle is serial and costs ~60 ms (44 ms align + 16 ms sampling), so
+      # the guided half is twice the price per particle. On this fixture it buys
+      # nothing for it.
+      #
+      # NOT changed here, because the case TPE exists for is the one this bag
+      # does not exercise: the prior is a good GNSS fix and the search space is
+      # small, so there is little for guidance to find. Confirm on data with a
+      # poor initial guess before raising it. Note also that cutting particles
+      # outright is a different trade and a worse one -- 100/100 is fastest and
+      # is the only setting whose score dropped materially.
       n_startup_trials: 100
 
       # Yaw weight sigma for biasing toward initial yaw (degrees)
