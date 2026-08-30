@@ -690,8 +690,14 @@ impl NdtOptimizer {
             // Convert result
             let final_pose = pose_vector_to_isometry(&gpu_result.pose);
 
-            // Compute NVTL on CPU
-            let nvtl = self.compute_nvtl(source_points, target_grid, &final_pose);
+            // Compute NVTL on CPU, unless the caller scores it itself. This is
+            // per particle inside the batch loop, so on the initial-pose path
+            // it ran 100 times: 42.2 s of a 49.1 s align on an AGX Orin.
+            let nvtl = if self.defer_nvtl {
+                0.0
+            } else {
+                self.compute_nvtl(source_points, target_grid, &final_pose)
+            };
 
             // Convert Hessian to nalgebra
             let hessian = Matrix6::from_fn(|i, j| gpu_result.hessian[i][j]);

@@ -999,26 +999,39 @@ impl NdtScanMatcher {
             return Ok(vec![]);
         }
 
-        // Create optimizer with current config
+        // Create optimizer with current config. NVTL is scored here, not in the
+        // batch loop: the optimizer's CPU pass runs once per particle, and with
+        // n_startup_trials of them it dominated the initial-pose align.
         let opt_config = self.build_optimizer_config();
-        let optimizer = NdtOptimizer::new(opt_config);
+        let mut optimizer = NdtOptimizer::new(opt_config);
+        optimizer.set_defer_nvtl(true);
 
         // Use GPU batch alignment with shared voxel data
         let ndt_results = optimizer.align_batch_gpu(source_points, grid, initial_poses)?;
 
-        // Convert NdtResult to AlignResult
+        // Convert NdtResult to AlignResult, scoring NVTL on the GPU against each
+        // aligned pose. The optimizer was told to skip it; filling it here keeps
+        // AlignResult::nvtl meaningful for every caller while costing one GPU
+        // pass per particle instead of one CPU pass.
         let results = ndt_results
             .into_iter()
-            .map(|result| AlignResult {
-                pose: result.pose,
-                converged: result.status.is_converged(),
-                score: result.score,
-                transform_probability: result.transform_probability,
-                nvtl: result.nvtl,
-                iterations: result.iterations,
-                hessian: result.hessian,
-                num_correspondences: result.num_correspondences,
-                oscillation_count: result.oscillation_count,
+            .map(|result| {
+                let nvtl = self
+                    .evaluate_nvtl_gpu(source_points, &result.pose)
+                    .unwrap_or_else(|| {
+                        compute_nvtl_simple(source_points, grid, &result.pose, &self.gauss_params)
+                    });
+                AlignResult {
+                    pose: result.pose,
+                    converged: result.status.is_converged(),
+                    score: result.score,
+                    transform_probability: result.transform_probability,
+                    nvtl,
+                    iterations: result.iterations,
+                    hessian: result.hessian,
+                    num_correspondences: result.num_correspondences,
+                    oscillation_count: result.oscillation_count,
+                }
             })
             .collect();
 
