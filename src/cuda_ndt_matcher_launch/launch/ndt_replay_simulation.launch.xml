@@ -37,6 +37,17 @@
   <!-- CUDA NDT parameter file -->
   <arg name="ndt_param_file" default="$(find-pkg-share cuda_ndt_matcher_launch)/config/cuda_scan_matcher.param.yaml"/>
 
+  <!--
+    What localization scan-matches against. The default is the concatenator's
+    own output, which is what the vehicle uses. It is exposed so a study can
+    interpose a node between the two: the restricted-field-of-view work feeds a
+    filtered copy here, because a narrower sensor cannot be emulated at the
+    decoder on this bag. Both localization arms take it, so the argument means
+    the same thing with or without use_cuda.
+  -->
+  <arg name="input_pointcloud" default="/sensing/lidar/concatenated/pointcloud"
+       description="Pointcloud localization consumes"/>
+
   <!-- Common disabled components -->
   <let name="disabled_components" value="true"/>
 
@@ -71,6 +82,7 @@
 
     <!-- Custom Autoware localization stack with controlled preprocessor config -->
     <include file="$(find-pkg-share cuda_ndt_matcher_launch)/launch/autoware_localization.launch.xml">
+      <arg name="input_pointcloud" value="$(var input_pointcloud)"/>
       <arg name="user_defined_initial_pose_enable" value="$(var user_defined_initial_pose_enable)"/>
       <arg name="user_defined_initial_pose" value="$(var user_defined_initial_pose)"/>
       <!-- gnss_enabled defaults to true, enabling automatic_pose_initializer -->
@@ -108,6 +120,7 @@
     <!-- CUDA NDT localization stack -->
     <include file="$(find-pkg-share cuda_ndt_matcher_launch)/launch/cuda_localization.launch.xml">
       <arg name="ndt_param_file" value="$(var ndt_param_file)"/>
+      <arg name="input_pointcloud" value="$(var input_pointcloud)"/>
       <arg name="user_defined_initial_pose_enable" value="$(var user_defined_initial_pose_enable)"/>
       <arg name="user_defined_initial_pose" value="$(var user_defined_initial_pose)"/>
       <!-- gnss_enabled defaults to true, enabling automatic_pose_initializer -->

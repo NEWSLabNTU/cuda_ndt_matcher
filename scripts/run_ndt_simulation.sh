@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Run NDT replay simulation
-# Usage: run_ndt_simulation.sh [--cuda] [--no-rviz] <map_path>
+# Usage: run_ndt_simulation.sh [--cuda] [--no-rviz] [key:=value ...] <map_path>
+#
+# Any bare key:=value is forwarded to the launch file untouched, so a caller can
+# reach arguments this script has no opinion about -- sensor_model, vehicle_model,
+# or the restricted-FOV knobs in the rosbag sensor kit -- without a fork of it.
 
 set -eo pipefail
 
@@ -13,6 +17,7 @@ USE_CUDA="false"
 RVIZ="true"
 INIT_MODE="false"
 MAP_PATH=""
+EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -26,6 +31,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --init-mode)
             INIT_MODE="true"
+            shift
+            ;;
+        *:=*)
+            EXTRA_ARGS+=("$1")
             shift
             ;;
         *)
@@ -117,4 +126,5 @@ exec \
     use_cuda:="$USE_CUDA" \
     map_path:="$MAP_PATH" \
     rviz:="$RVIZ" \
-    user_defined_initial_pose_enable:="$USE_INITIAL_POSE"
+    user_defined_initial_pose_enable:="$USE_INITIAL_POSE" \
+    "${EXTRA_ARGS[@]}"

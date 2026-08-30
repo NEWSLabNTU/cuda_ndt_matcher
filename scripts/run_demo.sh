@@ -36,6 +36,12 @@ done
 MAP_DIR="$1"
 ROSBAG="$2"
 OUTPUT_DIR="$3"
+shift 3 || true
+
+# Anything left is a launch argument for run_ndt_simulation.sh to forward. Used
+# by the restricted-FOV study to point localization at a filtered cloud without
+# needing a second copy of this orchestration.
+EXTRA_ARGS=("$@")
 
 # Create output directory and generate bag name
 mkdir -p "$OUTPUT_DIR"
@@ -90,7 +96,7 @@ export NDT_READY_FILE="${NDT_READY_FILE:-/tmp/ndt_sim_ready}"
 rm -f "$NDT_READY_FILE"
 
 parallel --halt now,done=1 --line-buffer ::: \
-    "$SCRIPT_DIR/run_ndt_simulation.sh $USE_CUDA $INIT_MODE '$MAP_DIR'" \
+    "$SCRIPT_DIR/run_ndt_simulation.sh $USE_CUDA $INIT_MODE '$MAP_DIR' ${EXTRA_ARGS[*]}" \
     "$SCRIPT_DIR/wait_for_ndt.sh && sleep $((SETTLE + 2)) && source '$AUTOWARE_ACTIVATE' && ros2 bag play ${BAG_PLAY_ARGS:-} '$ROSBAG'" \
     "$SCRIPT_DIR/wait_for_ndt.sh && sleep $SETTLE && source '$AUTOWARE_ACTIVATE' && ros2 bag record -o '$BAG_NAME' ${NDT_TOPICS[*]}"
 
