@@ -8,31 +8,81 @@
   <!-- whether use intra-process -->
   <arg name="use_intra_process" default="true" description="use ROS 2 component container communication"/>
 
-  <load_composable_node target="$(var localization_pointcloud_container_name)">
-    <composable_node pkg="autoware_pointcloud_preprocessor" plugin="autoware::pointcloud_preprocessor::CropBoxFilterComponent" name="crop_box_filter_measurement_range">
-      <param from="$(var ndt_scan_matcher/pointcloud_preprocessor/crop_box_filter_measurement_range_param_path)"/>
-      <remap from="input" to="$(var input_pointcloud)"/>
-      <remap from="output" to="measurement_range/pointcloud"/>
-      <extra_arg name="use_intra_process_comms" value="$(var use_intra_process)"/>
-    </composable_node>
+  <!-- Which hardware runs this stage, whole-stage, the same shape as
+       pointcloud_backend does for the sensing chain. The two halves are
+       alternatives and cannot be mixed: the CUDA nodes exchange
+       cuda_blackboard::CudaPointCloud2 and the CPU ones exchange PointCloud2.
 
-    <!-- localization_ prefix is load-bearing: see the note in
-         tier4_localization_launch/launch/util/util.launch.xml. A component
-         container silently drops a composable node whose base name is already
-         registered, so perception's voxel_grid_downsample_filter would take
-         this one's place and leave NDT with no points. -->
-    <composable_node pkg="autoware_pointcloud_preprocessor" plugin="autoware::pointcloud_preprocessor::VoxelGridDownsampleFilterComponent" name="localization_voxel_grid_downsample_filter">
-      <param from="$(var ndt_scan_matcher/pointcloud_preprocessor/voxel_grid_downsample_filter_param_path)"/>
-      <remap from="input" to="measurement_range/pointcloud"/>
-      <remap from="output" to="voxel_grid_downsample/pointcloud"/>
-      <extra_arg name="use_intra_process_comms" value="$(var use_intra_process)"/>
-    </composable_node>
+       Note this only becomes GPU-resident end to end when the SENSING chain is
+       also on CUDA (pointcloud_backend:=cuda), because that is what makes the
+       concatenated cloud arrive on the blackboard. With a CPU sensing chain the
+       nodes below still work — CudaBlackboardSubscriber falls back to a plain
+       PointCloud2 subscription — but pay a host-to-device copy at the first
+       stage.
 
-    <composable_node pkg="autoware_pointcloud_preprocessor" plugin="autoware::pointcloud_preprocessor::RandomDownsampleFilterComponent" name="random_downsample_filter">
-      <param from="$(var ndt_scan_matcher/pointcloud_preprocessor/random_downsample_filter_param_path)"/>
-      <remap from="input" to="voxel_grid_downsample/pointcloud"/>
-      <remap from="output" to="$(var output/pointcloud)"/>
-      <extra_arg name="use_intra_process_comms" value="$(var use_intra_process)"/>
-    </composable_node>
-  </load_composable_node>
+       And they must live in the SAME container as the producer. cuda_blackboard
+       is a process-local map keyed by an instance id published over ROS; a
+       different process would receive the id and find nothing. -->
+  <arg name="localization_pointcloud_backend" default="cpu" description="cpu or cuda"/>
+
+  <arg name="cuda_crop_box_param_path" default="$(find-pkg-share golfcart_cuda_preprocessor)/config/cuda_crop_box_filter.param.yaml"/>
+  <arg name="cuda_random_downsample_param_path" default="$(find-pkg-share golfcart_cuda_preprocessor)/config/cuda_random_downsample_filter.param.yaml"/>
+
+  <group if="$(eval '\'$(var localization_pointcloud_backend)\' == \'cpu\'')">
+    <load_composable_node target="$(var localization_pointcloud_container_name)">
+      <composable_node pkg="autoware_pointcloud_preprocessor" plugin="autoware::pointcloud_preprocessor::CropBoxFilterComponent" name="crop_box_filter_measurement_range">
+        <param from="$(var ndt_scan_matcher/pointcloud_preprocessor/crop_box_filter_measurement_range_param_path)"/>
+        <remap from="input" to="$(var input_pointcloud)"/>
+        <remap from="output" to="measurement_range/pointcloud"/>
+        <extra_arg name="use_intra_process_comms" value="$(var use_intra_process)"/>
+      </composable_node>
+
+      <!-- localization_ prefix is load-bearing: see the note in
+           tier4_localization_launch/launch/util/util.launch.xml. A component
+           container silently drops a composable node whose base name is already
+           registered, so perception's voxel_grid_downsample_filter would take
+           this one's place and leave NDT with no points. -->
+      <composable_node pkg="autoware_pointcloud_preprocessor" plugin="autoware::pointcloud_preprocessor::VoxelGridDownsampleFilterComponent" name="localization_voxel_grid_downsample_filter">
+        <param from="$(var ndt_scan_matcher/pointcloud_preprocessor/voxel_grid_downsample_filter_param_path)"/>
+        <remap from="input" to="measurement_range/pointcloud"/>
+        <remap from="output" to="voxel_grid_downsample/pointcloud"/>
+        <extra_arg name="use_intra_process_comms" value="$(var use_intra_process)"/>
+      </composable_node>
+
+      <composable_node pkg="autoware_pointcloud_preprocessor" plugin="autoware::pointcloud_preprocessor::RandomDownsampleFilterComponent" name="random_downsample_filter">
+        <param from="$(var ndt_scan_matcher/pointcloud_preprocessor/random_downsample_filter_param_path)"/>
+        <remap from="input" to="voxel_grid_downsample/pointcloud"/>
+        <remap from="output" to="$(var output/pointcloud)"/>
+        <extra_arg name="use_intra_process_comms" value="$(var use_intra_process)"/>
+      </composable_node>
+    </load_composable_node>
+  </group>
+
+  <group if="$(eval '\'$(var localization_pointcloud_backend)\' == \'cuda\'')">
+    <load_composable_node target="$(var localization_pointcloud_container_name)">
+      <!-- The CUDA nodes take their topics on private names, unlike the CPU
+           components which use bare input/output. -->
+      <composable_node pkg="golfcart_cuda_preprocessor" plugin="golfcart::cuda_preprocessor::CudaCropBoxFilterNode" name="crop_box_filter_measurement_range">
+        <param from="$(var cuda_crop_box_param_path)"/>
+        <remap from="~/input/pointcloud" to="$(var input_pointcloud)"/>
+        <remap from="~/output/pointcloud" to="measurement_range/pointcloud"/>
+        <extra_arg name="use_intra_process_comms" value="$(var use_intra_process)"/>
+      </composable_node>
+
+      <!-- Same name collision hazard as the CPU branch above, same prefix. -->
+      <composable_node pkg="autoware_cuda_pointcloud_preprocessor" plugin="autoware::cuda_pointcloud_preprocessor::CudaVoxelGridDownsampleFilterNode" name="localization_voxel_grid_downsample_filter">
+        <param from="$(var ndt_scan_matcher/pointcloud_preprocessor/voxel_grid_downsample_filter_param_path)"/>
+        <remap from="~/input/pointcloud" to="measurement_range/pointcloud"/>
+        <remap from="~/output/pointcloud" to="voxel_grid_downsample/pointcloud"/>
+        <extra_arg name="use_intra_process_comms" value="$(var use_intra_process)"/>
+      </composable_node>
+
+      <composable_node pkg="golfcart_cuda_preprocessor" plugin="golfcart::cuda_preprocessor::CudaRandomDownsampleFilterNode" name="random_downsample_filter">
+        <param from="$(var cuda_random_downsample_param_path)"/>
+        <remap from="~/input/pointcloud" to="voxel_grid_downsample/pointcloud"/>
+        <remap from="~/output/pointcloud" to="$(var output/pointcloud)"/>
+        <extra_arg name="use_intra_process_comms" value="$(var use_intra_process)"/>
+      </composable_node>
+    </load_composable_node>
+  </group>
 </launch>

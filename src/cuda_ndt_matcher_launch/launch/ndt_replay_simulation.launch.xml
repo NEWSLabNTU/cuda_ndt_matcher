@@ -15,6 +15,7 @@
 
   <!-- Implementation Selection -->
   <arg name="use_cuda" default="false" description="Use CUDA NDT matcher (true) or Autoware original (false)"/>
+  <arg name="localization_pointcloud_backend" default="cpu" description="cpu or cuda: which hardware runs the NDT input preprocessing chain"/>
 
   <!-- Map and data paths -->
   <arg name="map_path" description="Directory containing pointcloud_map.pcd and lanelet2_map.osm"/>
@@ -82,6 +83,7 @@
 
     <!-- Custom Autoware localization stack with controlled preprocessor config -->
     <include file="$(find-pkg-share cuda_ndt_matcher_launch)/launch/autoware_localization.launch.xml">
+      <arg name="localization_pointcloud_backend" value="$(var localization_pointcloud_backend)"/>
       <arg name="input_pointcloud" value="$(var input_pointcloud)"/>
       <arg name="user_defined_initial_pose_enable" value="$(var user_defined_initial_pose_enable)"/>
       <arg name="user_defined_initial_pose" value="$(var user_defined_initial_pose)"/>
@@ -119,6 +121,7 @@
 
     <!-- CUDA NDT localization stack -->
     <include file="$(find-pkg-share cuda_ndt_matcher_launch)/launch/cuda_localization.launch.xml">
+      <arg name="localization_pointcloud_backend" value="$(var localization_pointcloud_backend)"/>
       <arg name="ndt_param_file" value="$(var ndt_param_file)"/>
       <arg name="input_pointcloud" value="$(var input_pointcloud)"/>
       <arg name="user_defined_initial_pose_enable" value="$(var user_defined_initial_pose_enable)"/>
