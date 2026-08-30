@@ -139,9 +139,6 @@ pub(crate) fn estimate_initial_pose(
         stddev_yaw.to_degrees()
     );
 
-    // Use GPU NVTL scoring via fast_gicp
-    let outlier_ratio = 0.55; // Autoware default
-
     // Create mean and stddev for TPE
     let mean = pose_components_to_input(
         initial_pose.position.x,
@@ -196,7 +193,6 @@ pub(crate) fn estimate_initial_pose(
     // deadline and these three phases are what spends it, so "which phase" has
     // to be answerable from an ordinary run rather than a debug build.
     let phase_batch_start = Instant::now();
-    let mut nvtl_time_ms = 0.0f64;
 
     if startup_count > 0 {
         log_debug!(
@@ -235,19 +231,11 @@ pub(crate) fn estimate_initial_pose(
             let fitness_score = align_result.score;
             let transform_probability = (-fitness_score / 10.0).exp();
 
-            // Also compute NVTL for final particle selection.
-            // Serial, one GPU pass per particle, and there are n_startup_trials
-            // of them right after a single batched align.
-            let nvtl_start = Instant::now();
-            let nvtl_score = ndt_manager
-                .evaluate_nvtl(
-                    source_points,
-                    target_points,
-                    &align_result.pose,
-                    outlier_ratio,
-                )
-                .unwrap_or(0.0);
-            nvtl_time_ms += nvtl_start.elapsed().as_secs_f64() * 1000.0;
+            // NVTL for final particle selection. Take it from the align result
+            // rather than scoring the same pose again: align_batch already
+            // evaluates NVTL at exactly this pose, on the GPU, and re-running it
+            // here cost another pass per particle.
+            let nvtl_score = align_result.nvtl;
 
             // For final particle selection, prefer NVTL when available
             let selection_score = if nvtl_score > 0.0 {
@@ -289,10 +277,9 @@ pub(crate) fn estimate_initial_pose(
     // ========================================================================
     log_info!(
         LOGGER_NAME,
-        "align phase startup: {} particles in {:.0}ms (of which NVTL {:.0}ms)",
+        "align phase startup: {} particles in {:.0}ms",
         startup_count,
-        phase_batch_start.elapsed().as_secs_f64() * 1000.0,
-        nvtl_time_ms
+        phase_batch_start.elapsed().as_secs_f64() * 1000.0
     );
     let phase_tpe_start = Instant::now();
 
@@ -308,18 +295,31 @@ pub(crate) fn estimate_initial_pose(
         );
     }
 
+    // Phase timing for the guided loop, always on: it is 100 iterations, not a
+    // per-scan path, and knowing the split is what says whether the cost is the
+    // alignment, the scoring or the TPE sampler itself.
+    let mut tpe_sample_ms = 0.0f64;
+    let mut tpe_align_ms = 0.0f64;
+    let mut tpe_nvtl_ms = 0.0f64;
+    let mut tpe_bookkeeping_ms = 0.0f64;
+
     for _ in 0..remaining {
         #[cfg(feature = "debug-output")]
         let particle_start = Instant::now();
 
         // Get next candidate pose from TPE
+        let sample_start = Instant::now();
         let input = tpe.get_next_input();
+        tpe_sample_ms += sample_start.elapsed().as_secs_f64() * 1000.0;
 
         // Convert to geometry_msgs::Pose
         let candidate_pose = input_to_pose(&input);
 
         // Perform NDT alignment from this candidate pose
-        let align_result = match ndt_manager.align(source_points, target_points, &candidate_pose) {
+        let align_start = Instant::now();
+        let align_outcome = ndt_manager.align(source_points, target_points, &candidate_pose);
+        tpe_align_ms += align_start.elapsed().as_secs_f64() * 1000.0;
+        let align_result = match align_outcome {
             Ok(result) => result,
             Err(e) => {
                 // Skip failed alignments
@@ -336,15 +336,10 @@ pub(crate) fn estimate_initial_pose(
         // Use exp(-score/scale) to map to (0, 1] range - higher is better
         let transform_probability = (-fitness_score / 10.0).exp();
 
-        // Also compute NVTL for final particle selection (not TPE guidance)
-        let nvtl_score = ndt_manager
-            .evaluate_nvtl(
-                source_points,
-                target_points,
-                &align_result.pose,
-                outlier_ratio,
-            )
-            .unwrap_or(0.0);
+        // NVTL for final particle selection (not TPE guidance). Same as the
+        // startup phase: align already scored it at this pose.
+        let nvtl_score = align_result.nvtl;
+        let bookkeeping_start = Instant::now();
 
         // Get yaw values for debugging
         let candidate_yaw = quaternion_to_rpy(&candidate_pose.orientation).2;
@@ -386,6 +381,7 @@ pub(crate) fn estimate_initial_pose(
             input: result_input,
             score: transform_probability,
         });
+        tpe_bookkeeping_ms += bookkeeping_start.elapsed().as_secs_f64() * 1000.0;
 
         // Debug tracking (only with debug-output feature)
         #[cfg(feature = "debug-output")]
@@ -403,9 +399,14 @@ pub(crate) fn estimate_initial_pose(
 
     log_info!(
         LOGGER_NAME,
-        "align phase tpe: {} particles in {:.0}ms",
+        "align phase tpe: {} particles in {:.0}ms \
+         (sample {:.0}ms, align {:.0}ms, nvtl {:.0}ms, bookkeeping {:.0}ms)",
         remaining,
-        phase_tpe_start.elapsed().as_secs_f64() * 1000.0
+        phase_tpe_start.elapsed().as_secs_f64() * 1000.0,
+        tpe_sample_ms,
+        tpe_align_ms,
+        tpe_nvtl_ms,
+        tpe_bookkeeping_ms
     );
 
     // Select best particle (highest score)
