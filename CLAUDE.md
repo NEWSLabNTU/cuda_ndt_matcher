@@ -179,6 +179,69 @@ ros2 topic hz /localization/util/downsample/pointcloud
 - **Transforms**: Use nalgebra for all rotation/quaternion math
 - **Format strings**: Use named parameters: `println!("{e}")` not `println!("{}", e)`
 
+### Euler angles: nalgebra and Autoware compose them in opposite orders
+
+**Never call nalgebra's `euler_angles()` or `UnitQuaternion::from_euler_angles()`
+to produce or consume a pose vector.** This crate's `[x, y, z, roll, pitch, yaw]`
+is Autoware's convention and nalgebra's is the reverse. This has now caused the
+same bug three times.
+
+| | composition |
+|---|---|
+| a pose vector here, and everything that reads one | **R = Rx(roll) · Ry(pitch) · Rz(yaw)** |
+| nalgebra `from_euler_angles` / `euler_angles` | **R = Rz(yaw) · Ry(pitch) · Rx(roll)** |
+
+The consumers that assume XYZ are `pose_to_transform_matrix`, the GPU kernels'
+angular derivatives (`j_ang`, `h_ang`), and `derivatives/cpu.rs`.
+
+Use these instead, in `optimization::types`:
+
+| need | use |
+|---|---|
+| isometry → pose vector | `isometry_to_pose_vector` |
+| pose vector → isometry | `pose_vector_to_isometry` |
+| angles → rotation | `rotation_from_pose_angles` |
+| rotation → angles | `pose_angles_from_rotation` |
+| **isometry → 4x4 for a kernel** | `isometry_to_transform_matrix` — best when you already hold an isometry; no angle extraction, so no gimbal-lock case |
+
+**Why it keeps getting through.** The two conventions agree whenever at most one
+angle is non-zero, and nothing in the type system separates them — both are
+`(f64, f64, f64)`. Any fixture with yaw-only motion passes either way. So a test
+for this must use roll, pitch **and** yaw all non-zero; `(0.05, -0.04, 3.06)` is
+the COSS heading as actually driven and is the case the existing tests use.
+
+**Two ways such a test passes while proving nothing**, both hit while writing the
+current one:
+
+- With the default config (`use_gpu: false`) the GPU and CPU scorers both fall
+  back to the same CPU routine and agree for the wrong reason. Force `use_gpu`
+  and assert `is_gpu_active()`.
+- If the pose carries the source cloud off the map, both sides return 0 for lack
+  of correspondences and agree again. Build the source by pulling the target back
+  through the pose, and assert the fixture actually scores before comparing.
+
+**Existing guards**, worth extending rather than duplicating:
+
+- `derivatives/gpu.rs::transform_roundtrip_tests` — asserts
+  `pose_to_transform_matrix ∘ isometry_to_pose_vector` reproduces
+  `isometry_to_transform_matrix`.
+- `ndt.rs::test_batch_and_single_nvtl_agree_at_nonzero_rpy` — asserts the batch
+  GPU scorer agrees with the single-pose scorer.
+
+**The three occurrences**, all found by a number being wrong rather than by a
+test failing:
+
+1. 2026-08-03/04 — GPU NVTL read ~1.45x high (2.79 where the truth was 1.92).
+   The publish gate was recalibrated against the wrong number instead of the
+   number being fixed. Recorded at the `converged_param_nearest_voxel_transformation_likelihood`
+   comment in `cuda_ndt_matcher_launch/config/cuda_scan_matcher.param.yaml`.
+2. Same period — the pose vector carried nalgebra's convention at the optimizer
+   boundary while every consumer assumed Autoware's. Fixing it lifted NVTL from
+   2.00 to 2.80 and cut per-frame correction from 0.070 m to 0.025 m.
+3. 2026-08-30 — `evaluate_nvtl_batch` and
+   `compute_per_point_scores_for_visualization` fed `euler_angles()` to
+   `GpuScoringPipeline`. NVTL 2.821 against a true 3.138 over 294 frames.
+
 ## CubeCL Limitations
 
 1. **No dynamic array indexing**: Use fully unrolled loops instead of `arr[i as usize]`
@@ -194,12 +257,36 @@ ros2 topic hz /localization/util/downsample/pointcloud
 | `cuEventElapsedTime_v2` | `cuda-12080`+ | ❌ No |
 | `cusolverDnXgeev` | `cuda-12060`+ | ❌ No |
 
-**Solution**: Use `cuda-12050` feature for cudarc to avoid missing symbol panics:
-```toml
-cudarc = { version = "0.18", features = ["cuda-12050", ...] }
+A third symbol matters on the x86 side: `cusolverDnXlarft`, required by
+`cuda-12050`+ and absent from the CUDA 12.3 the development host builds against.
+
+**Solution**: both `cudarc` copies are pinned to `cuda-12030`, the floor that
+satisfies every host. Verified on JetPack 6.2 (R36.4.4) with `nm -D`.
+
+**Pinning the normal dependency is not enough, and this is the part that bites.**
+`cubecl-cuda` gates its CUDA 12.8 tensormap use on `#[cfg(cuda_12080)]`, which
+its *own build script* sets from `CUDA_VERSION` as read from its
+**build-dependency** copy of `cudarc` — a different copy, carrying
+`cuda-version-from-build-system` + `fallback-latest`. That copy runs
+`nvcc --version` and **assumes CUDA 13.0 when nvcc is off PATH**, after which
+`cubecl-cuda` compiles its 12.8 branch against a `cudarc` that does not declare
+those symbols:
+
+```
+error[E0432]: unresolved imports `cudarc::driver::sys::CUtensorMapIm2ColWideMode`,
+              `cudarc::driver::sys::cuTensorMapEncodeIm2colWide`
 ```
 
-Despite Jetson having CUDA 12.6 installed, `cuda-12050` is the highest compatible feature because Tegra drivers have a limited API surface.
+Cargo's v2 resolver keeps build-dependency features separate from normal ones, so
+`src/ndt_cuda/Cargo.toml` declares `cudarc` in `[build-dependencies]` at the same
+floor, with a `build.rs` that exists only to make cargo resolve it. Do not remove
+either; without them the build depends on whether nvcc happens to be on PATH, and
+that answer is cached because PATH is not in cargo's fingerprint.
+
+Raising the pin to `cuda-12080` "fixes" the build and is wrong: it declares
+`cuEventElapsedTime_v2`, and `dynamic-loading` resolves every declared symbol in
+`Lib::from_library()` with `.expect()`, so the node panics at startup on the Orin
+instead of failing to compile.
 
 ## Key Files
 
