@@ -43,3 +43,12 @@ pub(crate) fn profile_emit_scores(tp_before_ms: f64, nvtl_before_ms: f64, align_
         "[ndt_scores] tp_before={tp_before_ms:.2}ms nvtl_before={nvtl_before_ms:.2}ms align={align_ms:.2}ms"
     );
 }
+
+pub(crate) fn profile_emit_aligned(transform_ms: f64, serialize_ms: f64, publish_ms: f64) {
+    if !profile_enabled() {
+        return;
+    }
+    eprintln!(
+        "[ndt_aligned] transform={transform_ms:.2}ms serialize={serialize_ms:.2}ms publish={publish_ms:.2}ms"
+    );
+}
