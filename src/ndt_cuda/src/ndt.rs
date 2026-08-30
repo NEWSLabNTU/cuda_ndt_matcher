@@ -28,7 +28,7 @@ use tracing::{debug, warn};
 
 use crate::{
     derivatives::{DistanceMetric, GaussianParams, gpu::GpuVoxelData},
-    optimization::{NdtOptimizer, OptimizationConfig},
+    optimization::{NdtOptimizer, OptimizationConfig, types::isometry_to_pose_vector},
     runtime::{GpuRuntime, is_cuda_available},
     scoring::{
         GpuScoringPipeline, NvtlConfig, compute_nvtl, compute_transform_probability,
@@ -881,21 +881,12 @@ impl NdtScanMatcher {
         // Try GPU scoring pipeline first
         if let Some(ref mut pipeline) = self.gpu_scoring_pipeline {
             // Convert Isometry3 poses to [x, y, z, roll, pitch, yaw] format
-            let poses_6dof: Vec<[f64; 6]> = poses
-                .iter()
-                .map(|iso| {
-                    let translation = iso.translation;
-                    let euler = iso.rotation.euler_angles();
-                    [
-                        translation.x,
-                        translation.y,
-                        translation.z,
-                        euler.0, // roll
-                        euler.1, // pitch
-                        euler.2, // yaw
-                    ]
-                })
-                .collect();
+            // isometry_to_pose_vector, not nalgebra's euler_angles(): the
+            // pipeline builds its matrix with pose_to_transform_matrix, which
+            // composes R = Rx*Ry*Rz, and nalgebra's angles describe the
+            // opposite order. They agree only when at most one angle is
+            // non-zero. See rotation_from_pose_angles in optimization::types.
+            let poses_6dof: Vec<[f64; 6]> = poses.iter().map(isometry_to_pose_vector).collect();
 
             // Use GPU reduction path: downloads M×4 floats vs M×N×4 floats
             match pipeline.compute_scores_batch_gpu_reduce(source_points, &poses_6dof) {
@@ -1065,17 +1056,11 @@ impl NdtScanMatcher {
 
         // Try GPU scoring pipeline
         if let Some(ref mut pipeline) = self.gpu_scoring_pipeline {
-            // Convert Isometry3 to [x, y, z, roll, pitch, yaw]
-            let translation = pose.translation;
-            let euler = pose.rotation.euler_angles();
-            let pose_6dof = [
-                translation.x,
-                translation.y,
-                translation.z,
-                euler.0, // roll
-                euler.1, // pitch
-                euler.2, // yaw
-            ];
+            // isometry_to_pose_vector, not nalgebra's euler_angles() -- see the
+            // note in evaluate_nvtl_batch. Getting this wrong here mis-colours
+            // the per-point score overlay rather than moving a pose, but it is
+            // the same conversion and it was the same mistake.
+            let pose_6dof = isometry_to_pose_vector(pose);
 
             return pipeline.compute_per_point_scores(source_points, &pose_6dof);
         }
@@ -1585,6 +1570,82 @@ mod tests {
         // Most points should have positive scores
         let positive_count = scores.iter().filter(|&&s| s > 0.0).count();
         assert!(positive_count > 0);
+    }
+
+    /// The batch scorer and the single-pose scorer must agree at a real
+    /// orientation, not just near identity.
+    ///
+    /// They reach the GPU by different routes: `evaluate_nvtl` converts the
+    /// isometry straight to a matrix, while `evaluate_nvtl_batch` goes through
+    /// a `[x, y, z, roll, pitch, yaw]` pose vector that
+    /// `pose_to_transform_matrix` rebuilds as R = Rx*Ry*Rz. Feeding that
+    /// builder nalgebra's `euler_angles()`, which describes the opposite
+    /// composition order, scored a different rotation -- measured at NVTL 2.821
+    /// against 3.138 on a 294-frame replay, against a convergence gate of 2.0.
+    ///
+    /// The angles must all be non-zero for this to bite: the two conventions
+    /// agree whenever at most one is, which is why yaw-only fixtures never
+    /// caught it.
+    #[test]
+    fn test_batch_and_single_nvtl_agree_at_nonzero_rpy() {
+        if !crate::runtime::is_cuda_available() {
+            eprintln!("SKIP: CUDA not available");
+            return;
+        }
+
+        // use_gpu must be on: with the default CPU config both scorers fall
+        // back to the same routine and agree for the wrong reason.
+        let mut matcher = NdtScanMatcher::with_config(NdtScanMatcherConfig {
+            resolution: 2.0,
+            use_gpu: true,
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(matcher.is_gpu_active(), "expected the GPU path under test");
+
+        let target = generate_test_cloud([5.0, 5.0, 5.0], 1.0, 400);
+        matcher.set_target(&target).unwrap();
+
+        // Roll, pitch and yaw all non-zero, and yaw large enough that the two
+        // conventions cannot coincide. These are the COSS heading as actually
+        // driven, the orientation that exposed this the first time.
+        let pose = Isometry3::from_parts(
+            nalgebra::Translation3::new(0.1, -0.2, 0.05),
+            nalgebra::UnitQuaternion::from_euler_angles(0.05, -0.04, 3.06),
+        );
+
+        // The source has to land on the map once transformed, or both scorers
+        // return 0 for lack of correspondences and agree for the wrong reason.
+        // Build it by pulling the target back through the pose.
+        let inverse = pose.inverse();
+        let source: Vec<[f32; 3]> = target
+            .iter()
+            .map(|p| {
+                let q = inverse
+                    * nalgebra::Point3::new(p[0] as f64, p[1] as f64, p[2] as f64);
+                [q.x as f32, q.y as f32, q.z as f32]
+            })
+            .collect();
+
+        let single = matcher.evaluate_nvtl(&source, &pose).unwrap();
+        assert!(
+            single > 1.0,
+            "fixture is not scoring: single-pose NVTL {single}, so this test \
+             would pass whatever the batch path did"
+        );
+        let batch = matcher
+            .evaluate_nvtl_batch(&source, std::slice::from_ref(&pose))
+            .unwrap();
+
+        assert_eq!(batch.len(), 1);
+        let diff = (batch[0] - single).abs();
+        assert!(
+            diff < 1e-3,
+            "batch NVTL {} disagrees with single-pose NVTL {} by {diff}; \
+             the euler conventions have diverged again",
+            batch[0],
+            single
+        );
     }
 
     // ========================================================================
