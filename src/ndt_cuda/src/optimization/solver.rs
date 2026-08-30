@@ -34,7 +34,7 @@ use crate::{
 /// and the upload all depend on the target grid, which changes only when the
 /// map is reloaded. Knowing the split is what says whether the per-frame cost
 /// is optimisation work or setup being redone.
-mod profile {
+pub(crate) mod profile {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::time::Instant;
 
@@ -56,6 +56,17 @@ mod profile {
 
     pub fn ms(t: Option<Instant>) -> f64 {
         t.map_or(0.0, |t| t.elapsed().as_secs_f64() * 1000.0)
+    }
+
+    /// Emit the NVTL cost paid outside `align_full_gpu`.
+    ///
+    /// `NdtScanMatcher::align_gpu` scores NVTL on the GPU after the optimizer
+    /// returns, so it does not appear in the line below.
+    pub fn emit_nvtl(gpu_nvtl_ms: f64) {
+        if !enabled() {
+            return;
+        }
+        eprintln!("[ndt_profile] gpu_nvtl={gpu_nvtl_ms:.1}ms");
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -423,6 +434,32 @@ impl NdtOptimizer {
         target_grid: &VoxelGrid,
         initial_guess: Isometry3<f64>,
     ) -> Result<NdtResult, anyhow::Error> {
+        self.align_full_gpu_with_voxel_data(source_points, target_grid, initial_guess, None)
+    }
+
+    /// Same as [`Self::align_full_gpu`], but reusing a caller-owned packing of
+    /// the target grid.
+    ///
+    /// `GpuVoxelData::from_voxel_grid` flattens every voxel's mean, inverse
+    /// covariance and principal axis into fresh `Vec<f32>`s -- 16 floats per
+    /// voxel, allocated and written on every call. It measured 18.1 ms of a
+    /// 34.5 ms alignment on an AGX Orin, the single largest remaining cost
+    /// after NVTL moved to the GPU.
+    ///
+    /// It is also invariant between frames: the packing depends only on the
+    /// target grid, which changes when the map is reloaded, not when a scan
+    /// arrives. `NdtScanMatcher` already builds and keeps exactly this in
+    /// `set_target`, so it passes its copy in rather than making another.
+    ///
+    /// Passing `None` packs the grid here, which is what the bare
+    /// `align_full_gpu` and the tests do.
+    pub fn align_full_gpu_with_voxel_data(
+        &self,
+        source_points: &[[f32; 3]],
+        target_grid: &VoxelGrid,
+        initial_guess: Isometry3<f64>,
+        cached_voxel_data: Option<&GpuVoxelData>,
+    ) -> Result<NdtResult, anyhow::Error> {
         // Create full GPU pipeline V2 with line search
         let max_points = source_points.len().max(1);
         let max_voxels = target_grid.len().max(1);
@@ -454,7 +491,14 @@ impl NdtOptimizer {
 
         // Upload alignment data once
         let t = profile::now();
-        let voxel_data = GpuVoxelData::from_voxel_grid(target_grid);
+        let owned_voxel_data;
+        let voxel_data = match cached_voxel_data {
+            Some(v) => v,
+            None => {
+                owned_voxel_data = GpuVoxelData::from_voxel_grid(target_grid);
+                &owned_voxel_data
+            }
+        };
         let voxel_pack_ms = profile::ms(t);
         debug!(
             "voxel_data: {} voxels, {} means, {} inv_covs",
@@ -465,7 +509,7 @@ impl NdtOptimizer {
         let t = profile::now();
         pipeline.upload_alignment_data(
             source_points,
-            &voxel_data,
+            voxel_data,
             self.gauss.d1 as f32,
             self.gauss.d2 as f32,
             self.config.ndt.resolution as f32,

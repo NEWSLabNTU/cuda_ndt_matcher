@@ -499,15 +499,22 @@ impl NdtScanMatcher {
             bail!("Source point cloud is empty");
         }
 
-        // Use full GPU path via optimizer
-        let result = self
-            .optimizer
-            .align_full_gpu(source_points, grid, initial_guess)?;
+        // Use full GPU path via optimizer, handing it the packing of the target
+        // grid built in set_target. Letting it pack the grid itself repeats 16
+        // floats per voxel of allocation and copying on every scan, for a value
+        // that only changes when the map is reloaded.
+        let result = self.optimizer.align_full_gpu_with_voxel_data(
+            source_points,
+            grid,
+            initial_guess,
+            self.gpu_voxel_data.as_ref(),
+        )?;
 
         // The optimizer defers NVTL to us (see set_defer_nvtl in with_config).
         // Score it on the GPU against the final pose, and fall back to the same
         // CPU routine the optimizer would have used if the GPU has no runtime
         // or no uploaded grid.
+        let t_nvtl = crate::optimization::solver::profile::now();
         let nvtl = self
             .evaluate_nvtl_gpu(source_points, &result.pose)
             .unwrap_or_else(|| {
@@ -518,6 +525,9 @@ impl NdtScanMatcher {
                     &self.gauss_params,
                 )
             });
+        crate::optimization::solver::profile::emit_nvtl(
+            crate::optimization::solver::profile::ms(t_nvtl),
+        );
 
         Ok(AlignResult {
             pose: result.pose,
