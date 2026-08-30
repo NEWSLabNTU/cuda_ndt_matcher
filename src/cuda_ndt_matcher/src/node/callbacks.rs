@@ -29,11 +29,13 @@ impl NdtScanMatcherNode {
         let timestamp_ns = pose_utils::stamp_to_ns_u64(&msg.header.stamp);
         let sensor_time_ns = pose_utils::stamp_to_ns(&msg.header.stamp);
 
+        let _pf = cbprof::Frame::start();
         // Stage 1: Convert and filter sensor points
         let sensor_points = match convert_and_filter_points(&msg) {
             Some(pts) => pts,
             None => return,
         };
+        _pf.mark("parse");
 
         // Stage 2: Transform from sensor frame to base_link
         // Split into lookup + apply so TF lookup can potentially overlap with
@@ -45,10 +47,12 @@ impl NdtScanMatcherNode {
             &ctx.tf_handler,
         );
         let sensor_points = apply_base_transform(sensor_points, base_tf.as_ref());
+        _pf.mark("tf");
 
         // Store sensor points for ndt_align service (before any early returns)
         ctx.latest_sensor_points
             .store(Arc::new(Some(sensor_points.clone())));
+        _pf.mark("clone_store");
 
         if !ctx.enabled.load(Ordering::SeqCst) {
             return;
@@ -81,6 +85,7 @@ impl NdtScanMatcherNode {
             .iter()
             .map(|p| (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt())
             .fold(0.0f32, f32::max);
+        _pf.mark("max_dist");
         if max_dist < ctx.params.sensor_points.required_distance {
             log_warn!(
                 NODE_NAME,
@@ -128,6 +133,7 @@ impl NdtScanMatcherNode {
             None => return,
         };
 
+        _pf.mark("run_alignment");
         let header = Header {
             stamp: msg.header.stamp.clone(),
             frame_id: ctx.params.frame.map_frame.clone(),
@@ -138,6 +144,7 @@ impl NdtScanMatcherNode {
             publish_converged_pose(ctx, &header, &output, &mut manager, &sensor_points, map);
         }
 
+        _pf.mark("publish_pose");
         // Stage 8: Debug publishers and diagnostics
         publish_debug_and_diagnostics(
             ctx,
@@ -150,6 +157,80 @@ impl NdtScanMatcherNode {
             &mut manager,
             max_dist,
         );
+        _pf.mark("publish_debug");
+        _pf.finish(sensor_points.len());
+    }
+}
+
+/// Per-callback stage timing, printed when `NDT_PROFILE=1`.
+///
+/// The alignment itself is GPU work and already has its own breakdown; this
+/// measures everything around it, which is where the node's remaining CPU time
+/// lives. Wall time is the right unit here because every stage except
+/// `run_alignment` is CPU-bound, so wall and CPU coincide for them.
+mod cbprof {
+    use std::cell::RefCell;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::time::Instant;
+
+    static ENABLED: AtomicBool = AtomicBool::new(false);
+    static INIT: std::sync::Once = std::sync::Once::new();
+    static N: AtomicU64 = AtomicU64::new(0);
+
+    thread_local! {
+        static ACC: RefCell<Vec<(&'static str, f64)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub fn enabled() -> bool {
+        INIT.call_once(|| {
+            let on = std::env::var("NDT_PROFILE").is_ok_and(|v| v != "0" && !v.is_empty());
+            ENABLED.store(on, Ordering::Relaxed);
+        });
+        ENABLED.load(Ordering::Relaxed)
+    }
+
+    pub struct Frame {
+        last: RefCell<Option<Instant>>,
+    }
+
+    impl Frame {
+        pub fn start() -> Self {
+            if enabled() {
+                ACC.with(|a| a.borrow_mut().clear());
+            }
+            Self {
+                last: RefCell::new(enabled().then(Instant::now)),
+            }
+        }
+
+        pub fn mark(&self, name: &'static str) {
+            if !enabled() {
+                return;
+            }
+            let mut last = self.last.borrow_mut();
+            if let Some(t) = *last {
+                let ms = t.elapsed().as_secs_f64() * 1000.0;
+                ACC.with(|a| a.borrow_mut().push((name, ms)));
+            }
+            *last = Some(Instant::now());
+        }
+
+        pub fn finish(&self, n_points: usize) {
+            if !enabled() {
+                return;
+            }
+            let i = N.fetch_add(1, Ordering::Relaxed);
+            ACC.with(|a| {
+                let v = a.borrow();
+                let total: f64 = v.iter().map(|(_, ms)| ms).sum();
+                let parts: Vec<String> =
+                    v.iter().map(|(k, ms)| format!("{k}={ms:.2}")).collect();
+                eprintln!(
+                    "[ndt_cbprof] frame={i} pts={n_points} total={total:.2}ms {}",
+                    parts.join(" ")
+                );
+            });
+        }
     }
 }
 

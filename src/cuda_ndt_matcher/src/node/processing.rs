@@ -70,13 +70,27 @@ pub(crate) fn run_alignment(
         );
     }
 
-    // Compute "before" scores at initial pose (for diagnostics comparison)
-    let transform_prob_before = manager
-        .evaluate_transform_probability(sensor_points, &initial_pose.pose.pose)
-        .unwrap_or(0.0);
-    let nvtl_before = manager
-        .evaluate_nvtl(sensor_points, map, &initial_pose.pose.pose, 0.55)
-        .unwrap_or(0.0);
+    // Compute "before" scores at initial pose (for diagnostics comparison).
+    //
+    // Diagnostics only -- these two reach ScanMatchingDiagnostics and nothing
+    // else. Each is a full scoring pass over every source point, so on the CUDA
+    // path they are two extra GPU round trips per scan for a number nothing
+    // downstream reads.
+    let (transform_prob_before, nvtl_before, ms_tpb, ms_nb) =
+        if params.score.compute_before_scores {
+            let t_tpb = crate::node::profile_stage();
+            let tpb = manager
+                .evaluate_transform_probability(sensor_points, &initial_pose.pose.pose)
+                .unwrap_or(0.0);
+            let ms_tpb = crate::node::profile_ms(t_tpb);
+            let t_nb = crate::node::profile_stage();
+            let nb = manager
+                .evaluate_nvtl(sensor_points, map, &initial_pose.pose.pose, 0.55)
+                .unwrap_or(0.0);
+            (tpb, nb, ms_tpb, crate::node::profile_ms(t_nb))
+        } else {
+            (f64::NAN, f64::NAN, 0.0, 0.0)
+        };
 
     // Start execution timer here to measure only NDT alignment (matches Autoware's scope)
     let align_start_time = Instant::now();
@@ -155,10 +169,12 @@ pub(crate) fn run_alignment(
     // publishing), but with converged_param_type 0 it rejected every frame.
     let transform_prob = result.transform_probability;
 
-    // Compute NVTL score
-    let nvtl_score = manager
-        .evaluate_nvtl(sensor_points, map, &result.pose, 0.55)
-        .unwrap_or(0.0);
+    // NVTL at the aligned pose. Take it from the align result rather than
+    // scoring the same pose again: align already evaluates NVTL at exactly this
+    // pose, on the GPU, and returns it. Re-running it here was a second full
+    // scoring pass per scan for a value already in hand -- the same duplicate
+    // that was removed from both initial-pose particle loops.
+    let nvtl_score = result.nvtl;
 
     // ---- Convergence gating (matching Autoware's behavior) ----
     // Autoware gates pose publishing on three conditions:
@@ -225,6 +241,8 @@ pub(crate) fn run_alignment(
         skip_counter.store(0, Ordering::SeqCst);
         0
     };
+
+    crate::node::profile_emit_scores(ms_tpb, ms_nb, exe_time_ms as f64);
 
     Some(AlignmentOutput {
         result,

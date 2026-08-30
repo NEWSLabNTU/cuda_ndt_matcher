@@ -84,6 +84,24 @@
 
     score_estimation:
       converged_param_type: 1
+
+      # Score the scan at the INITIAL pose too, to fill the *_before diagnostic
+      # fields. Off by default: those two numbers reach ScanMatchingDiagnostics
+      # and nothing else -- no topic, no gate, no pose depends on them -- and on
+      # the CUDA path each is a full scoring pass over every source point.
+      #
+      # Measured on an AGX Orin, Autoware's sample bag, per scan:
+      #   transform_probability at initial pose   14.8 ms
+      #   NVTL at initial pose                    13.6 ms
+      #   the alignment itself                    32.0 ms
+      #
+      # So the pair costs 28.3 ms against a 32.0 ms alignment, and turning them
+      # off takes the whole callback from 81.6 ms to about 53 ms. With them off,
+      # both diagnostic fields report NaN rather than 0.0, so a disabled score
+      # cannot be misread as a genuinely zero one.
+      #
+      # Set true when tuning, to see how far NDT moved the pose.
+      compute_before_scores: false
       converged_param_transform_probability: 3.0
       # Set from the score distribution of a healthy run, not inherited: on the
       # COSS bag a good run sits at mean 2.80, p50 2.81, min 2.29 over 1422

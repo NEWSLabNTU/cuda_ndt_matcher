@@ -72,6 +72,9 @@ pub(crate) struct ScoreParams {
     pub(crate) converged_param_type: i32,
     pub(crate) converged_param_transform_probability: f64,
     pub(crate) converged_param_nearest_voxel_transformation_likelihood: f64,
+    /// Score the scan at the *initial* pose as well, for the `*_before`
+    /// diagnostic fields. Costs two extra full scoring passes per scan.
+    pub(crate) compute_before_scores: bool,
     /// No-ground scoring parameters
     pub(crate) no_ground_points: NoGroundPointsParams,
 }
@@ -318,6 +321,11 @@ impl NdtParams {
                 converged_param_transform_probability: node
                     .declare_parameter("score_estimation.converged_param_transform_probability")
                     .default(3.0)
+                    .mandatory()?
+                    .get(),
+                compute_before_scores: node
+                    .declare_parameter("score_estimation.compute_before_scores")
+                    .default(false)
                     .mandatory()?
                     .get(),
                 converged_param_nearest_voxel_transformation_likelihood: node

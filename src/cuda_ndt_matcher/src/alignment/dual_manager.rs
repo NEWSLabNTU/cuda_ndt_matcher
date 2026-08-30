@@ -449,6 +449,7 @@ mod tests {
                 converged_param_type: 1,
                 converged_param_transform_probability: 3.0,
                 converged_param_nearest_voxel_transformation_likelihood: 2.3,
+                compute_before_scores: false,
                 no_ground_points: crate::io::params::NoGroundPointsParams {
                     enable: false,
                     z_margin_for_ground_removal: 0.8,
