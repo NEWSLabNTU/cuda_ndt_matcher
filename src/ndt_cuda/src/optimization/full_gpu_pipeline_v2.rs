@@ -294,20 +294,25 @@ impl FullGpuPipelineV2 {
         self.gauss_d1 = gauss_d1;
         self.gauss_d2 = gauss_d2;
 
+        let t_src = crate::optimization::solver::profile::now();
         // Flatten source points
         let points_flat: Vec<f32> = source_points
             .iter()
             .flat_map(|p| p.iter().copied())
             .collect();
         self.source_points = self.client.create(f32::as_bytes(&points_flat));
+        let src_ms = crate::optimization::solver::profile::ms(t_src);
 
+        let t_vox = crate::optimization::solver::profile::now();
         // Upload voxel data
         self.voxel_means = self.client.create(f32::as_bytes(&voxel_data.means));
         self.voxel_inv_covs = self
             .client
             .create(f32::as_bytes(&voxel_data.inv_covariances));
         self.voxel_valid = self.client.create(u32::as_bytes(&voxel_data.valid));
+        let vox_ms = crate::optimization::solver::profile::ms(t_vox);
 
+        let t_hash = crate::optimization::solver::profile::now();
         // Build spatial hash table for O(27) voxel lookup
         self.resolution = search_radius; // Resolution = search_radius in NDT
 
@@ -334,6 +339,11 @@ impl FullGpuPipelineV2 {
         // Ensure hash table build is complete before any subsequent GPU operations
         // This is critical for persistent kernel which reads the hash table
         cuda_ffi::cuda_device_synchronize()?;
+        crate::optimization::solver::profile::emit_upload(
+            src_ms,
+            vox_ms,
+            crate::optimization::solver::profile::ms(t_hash),
+        );
 
         // Debug: count hash entries to verify table is populated
         #[cfg(feature = "profiling")]

@@ -69,6 +69,17 @@ pub(crate) mod profile {
         eprintln!("[ndt_profile] gpu_nvtl={gpu_nvtl_ms:.1}ms");
     }
 
+    /// Split the upload phase into the part that changes every scan and the
+    /// parts that only change when the map does.
+    pub fn emit_upload(source_ms: f64, voxel_ms: f64, hash_ms: f64) {
+        if !enabled() {
+            return;
+        }
+        eprintln!(
+            "[ndt_profile] upload_split source={source_ms:.2}ms voxel={voxel_ms:.2}ms hash={hash_ms:.2}ms"
+        );
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn emit(
         points: usize,
