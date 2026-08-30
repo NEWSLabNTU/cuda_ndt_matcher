@@ -62,6 +62,31 @@ pub(crate) fn from_pointcloud2(msg: &PointCloud2) -> Result<Vec<[f32; 3]>> {
 
     let mut points = Vec::with_capacity(num_points);
 
+    // Fast path for the layout every cloud on this stack actually uses: x, y, z
+    // as the first three f32s of each point. `chunks_exact` gives the compiler a
+    // known chunk length, so the twelve bounds checks per point that the general
+    // path pays -- `read_f32` indexes four single bytes, three times -- collapse
+    // to one slice of known size. Measured at 1.56 ms per ~4900-point scan
+    // before, which is 318 ns a point for three loads.
+    let contiguous_xyz =
+        offsets.x == 0 && offsets.y == 4 && offsets.z == 8 && offsets.point_step >= 12;
+
+    if contiguous_xyz {
+        let usable = num_points * offsets.point_step;
+        for chunk in msg.data[..usable].chunks_exact(offsets.point_step) {
+            let head: &[u8; 12] = chunk[..12].try_into().expect("chunk is at least 12 bytes");
+            let x = f32::from_le_bytes([head[0], head[1], head[2], head[3]]);
+            let y = f32::from_le_bytes([head[4], head[5], head[6], head[7]]);
+            let z = f32::from_le_bytes([head[8], head[9], head[10], head[11]]);
+
+            // Skip NaN points
+            if x.is_finite() && y.is_finite() && z.is_finite() {
+                points.push([x, y, z]);
+            }
+        }
+        return Ok(points);
+    }
+
     for i in 0..num_points {
         let base = i * offsets.point_step;
 
@@ -214,5 +239,74 @@ mod tests {
         let msg = make_test_pointcloud(&[]);
         let result = from_pointcloud2(&msg).unwrap();
         assert!(result.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod decode_bench {
+    use super::*;
+
+    /// Compare the contiguous fast path against the general indexed loop.
+    ///
+    /// Not an assertion of speed -- it prints, so a human can see whether the
+    /// fast path earns the branch. Run with:
+    ///   cargo test --release decode_bench -- --nocapture
+    #[test]
+    fn bench_decode_paths() {
+        const N: usize = 5000;
+        const STEP: usize = 32;
+        let mut data = vec![0u8; N * STEP];
+        for i in 0..N {
+            let b = i * STEP;
+            data[b..b + 4].copy_from_slice(&(i as f32).to_le_bytes());
+            data[b + 4..b + 8].copy_from_slice(&((i as f32) * 2.0).to_le_bytes());
+            data[b + 8..b + 12].copy_from_slice(&((i as f32) * 3.0).to_le_bytes());
+        }
+
+        let general = |data: &[u8]| -> Vec<[f32; 3]> {
+            let mut pts = Vec::with_capacity(N);
+            for i in 0..N {
+                let base = i * STEP;
+                let x = read_f32(data, base);
+                let y = read_f32(data, base + 4);
+                let z = read_f32(data, base + 8);
+                if x.is_finite() && y.is_finite() && z.is_finite() {
+                    pts.push([x, y, z]);
+                }
+            }
+            pts
+        };
+        let fast = |data: &[u8]| -> Vec<[f32; 3]> {
+            let mut pts = Vec::with_capacity(N);
+            for chunk in data.chunks_exact(STEP) {
+                let h: &[u8; 12] = chunk[..12].try_into().unwrap();
+                let x = f32::from_le_bytes([h[0], h[1], h[2], h[3]]);
+                let y = f32::from_le_bytes([h[4], h[5], h[6], h[7]]);
+                let z = f32::from_le_bytes([h[8], h[9], h[10], h[11]]);
+                if x.is_finite() && y.is_finite() && z.is_finite() {
+                    pts.push([x, y, z]);
+                }
+            }
+            pts
+        };
+
+        assert_eq!(general(&data), fast(&data), "paths must agree");
+
+        let iters = 2000;
+        for (name, f) in [
+            ("general", &general as &dyn Fn(&[u8]) -> Vec<[f32; 3]>),
+            ("fast", &fast as &dyn Fn(&[u8]) -> Vec<[f32; 3]>),
+        ] {
+            // warm up
+            for _ in 0..100 {
+                std::hint::black_box(f(&data));
+            }
+            let t = std::time::Instant::now();
+            for _ in 0..iters {
+                std::hint::black_box(f(&data));
+            }
+            let per = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+            println!("  {:8} {:.4} ms per {}-point cloud", name, per, N);
+        }
     }
 }

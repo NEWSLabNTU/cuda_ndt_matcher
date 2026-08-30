@@ -300,7 +300,7 @@ pub(crate) fn estimate_initial_pose(
     // alignment, the scoring or the TPE sampler itself.
     let mut tpe_sample_ms = 0.0f64;
     let mut tpe_align_ms = 0.0f64;
-    let mut tpe_nvtl_ms = 0.0f64;
+    let tpe_nvtl_ms = 0.0f64; // NVTL now comes from the align result; kept for the log line
     let mut tpe_bookkeeping_ms = 0.0f64;
 
     for _ in 0..remaining {

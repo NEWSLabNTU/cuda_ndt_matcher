@@ -58,6 +58,7 @@ impl NdtScanMatcherNode {
             return;
         }
 
+        let _t_interp = crate::node::profile_stage();
         // Stage 3: Interpolate initial pose to sensor timestamp
         let interpolate_result = match interpolate_initial_pose(&ctx.pose_buffer, sensor_time_ns) {
             Some(r) => r,
@@ -67,8 +68,12 @@ impl NdtScanMatcherNode {
         ctx.pose_buffer.pop_old(sensor_time_ns);
 
         // Stage 4: Update map if needed
+        let ms_interp = crate::node::profile_ms(_t_interp);
+        let _t_map = crate::node::profile_stage();
         let current_position = pose_utils::position_from_pose_cov(initial_pose);
         update_map_if_needed(ctx, &current_position, &msg.header.stamp);
+        let ms_map = crate::node::profile_ms(_t_map);
+        let _t_md = crate::node::profile_stage();
 
         // Get map points
         let map = ctx.map_points.load();
@@ -85,6 +90,7 @@ impl NdtScanMatcherNode {
             .iter()
             .map(|p| (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt())
             .fold(0.0f32, f32::max);
+        crate::node::profile_emit_prealign(ms_interp, ms_map, crate::node::profile_ms(_t_md));
         _pf.mark("max_dist");
         if max_dist < ctx.params.sensor_points.required_distance {
             log_warn!(
@@ -236,6 +242,7 @@ mod cbprof {
 
 /// Parse PointCloud2 message and apply sensor point filters.
 fn convert_and_filter_points(msg: &PointCloud2) -> Option<Vec<[f32; 3]>> {
+    let t_dec = crate::node::profile_stage();
     let raw_points = match pointcloud::from_pointcloud2(msg) {
         Ok(pts) => pts,
         Err(e) => {
@@ -243,24 +250,43 @@ fn convert_and_filter_points(msg: &PointCloud2) -> Option<Vec<[f32; 3]>> {
             return None;
         }
     };
+    let ms_dec = crate::node::profile_ms(t_dec);
 
+    let t_flt = crate::node::profile_stage();
     let filter_params = pointcloud::PointFilterParams::default();
-    let filter_result = pointcloud::filter_sensor_points(&raw_points, &filter_params);
-    let sensor_points = filter_result.points;
 
-    if sensor_points.len() < raw_points.len() {
-        let gpu_str = if filter_result.used_gpu { "GPU" } else { "CPU" };
-        log_debug!(
-            NODE_NAME,
-            "Filtered sensor points: {} -> {} (dist:{}, z:{}, downsample:{}) [{}]",
-            raw_points.len(),
-            sensor_points.len(),
-            filter_result.removed_by_distance,
-            filter_result.removed_by_z,
-            filter_result.removed_by_downsampling,
-            gpu_str
-        );
-    }
+    // Skip the filter when it cannot remove anything. It would otherwise walk
+    // and copy every point to arrive at the same vector -- and with the
+    // defaults used here, every bound is wide open, so that was the outcome on
+    // every frame.
+    let (sensor_points, raw_len) = if filter_params.is_noop() {
+        let n = raw_points.len();
+        (raw_points, n)
+    } else {
+        let raw_len = raw_points.len();
+        let filter_result = pointcloud::filter_sensor_points(&raw_points, &filter_params);
+        let sensor_points = filter_result.points;
+        if sensor_points.len() < raw_len {
+            let gpu_str = if filter_result.used_gpu { "GPU" } else { "CPU" };
+            log_debug!(
+                NODE_NAME,
+                "Filtered sensor points: {} -> {} (dist:{}, z:{}, downsample:{}) [{}]",
+                raw_len,
+                sensor_points.len(),
+                filter_result.removed_by_distance,
+                filter_result.removed_by_z,
+                filter_result.removed_by_downsampling,
+                gpu_str
+            );
+        }
+        (sensor_points, raw_len)
+    };
+    crate::node::profile_emit_decode(
+        ms_dec,
+        crate::node::profile_ms(t_flt),
+        raw_len,
+        sensor_points.len(),
+    );
 
     Some(sensor_points)
 }

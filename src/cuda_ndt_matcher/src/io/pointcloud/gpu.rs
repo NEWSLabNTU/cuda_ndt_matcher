@@ -21,6 +21,24 @@ pub(crate) struct PointFilterParams {
     pub(crate) downsample_resolution: Option<f32>,
 }
 
+impl PointFilterParams {
+    /// True when every bound is wide open and no downsampling is asked for, so
+    /// filtering would return its input unchanged.
+    ///
+    /// Worth checking before filtering rather than after: the CPU filter still
+    /// walks and copies every point to discover it removed none, which measured
+    /// 2.5 ms per scan on an AGX Orin against a ~4800-point cloud. The node
+    /// builds these params with `default()`, which is exactly this case, so
+    /// that cost was paid on every frame and could never remove anything.
+    pub(crate) fn is_noop(&self) -> bool {
+        self.min_distance <= 0.0
+            && self.max_distance == f32::MAX
+            && self.min_z == f32::MIN
+            && self.max_z == f32::MAX
+            && self.downsample_resolution.is_none()
+    }
+}
+
 impl Default for PointFilterParams {
     fn default() -> Self {
         Self {

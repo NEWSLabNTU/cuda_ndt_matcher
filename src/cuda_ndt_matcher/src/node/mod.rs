@@ -52,3 +52,19 @@ pub(crate) fn profile_emit_aligned(transform_ms: f64, serialize_ms: f64, publish
         "[ndt_aligned] transform={transform_ms:.2}ms serialize={serialize_ms:.2}ms publish={publish_ms:.2}ms"
     );
 }
+
+pub(crate) fn profile_emit_decode(decode_ms: f64, filter_ms: f64, raw: usize, kept: usize) {
+    if !profile_enabled() {
+        return;
+    }
+    eprintln!("[ndt_decode] decode={decode_ms:.2}ms filter={filter_ms:.2}ms raw={raw} kept={kept}");
+}
+
+pub(crate) fn profile_emit_prealign(interp_ms: f64, map_ms: f64, maxdist_ms: f64) {
+    if !profile_enabled() {
+        return;
+    }
+    eprintln!(
+        "[ndt_prealign] interp={interp_ms:.2}ms map={map_ms:.2}ms maxdist={maxdist_ms:.2}ms"
+    );
+}
