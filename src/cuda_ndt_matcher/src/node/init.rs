@@ -167,6 +167,14 @@ fn create_publishers(
         iteration_num_pub: node.create_publisher("iteration_num")?,
         exe_time_pub: node.create_publisher("exe_time_ms")?,
         oscillation_count_pub: node.create_publisher("local_optimal_solution_oscillation_num")?,
+        degeneracy_translation_anisotropy_pub: node
+            .create_publisher("degeneracy/translation_anisotropy")?,
+        degeneracy_rotation_anisotropy_pub: node
+            .create_publisher("degeneracy/rotation_anisotropy")?,
+        degeneracy_translation_min_eigenvalue_pub: node
+            .create_publisher("degeneracy/translation_min_eigenvalue")?,
+        degeneracy_rotation_min_eigenvalue_pub: node
+            .create_publisher("degeneracy/rotation_min_eigenvalue")?,
         initial_pose_cov_pub: node.create_publisher("initial_pose_with_covariance")?,
         initial_to_result_distance_pub: node.create_publisher("initial_to_result_distance")?,
         initial_to_result_distance_old_pub: node

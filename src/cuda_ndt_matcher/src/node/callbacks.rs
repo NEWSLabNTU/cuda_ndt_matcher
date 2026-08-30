@@ -427,6 +427,59 @@ fn publish_debug_and_diagnostics(
         stamp: msg.header.stamp.clone(),
         data: output.result.oscillation_count as i32,
     });
+
+    // Degeneracy: did this scan's geometry actually constrain all six degrees
+    // of freedom? Converged and well-scored does not imply well-constrained, and
+    // a narrow field of view meets under-constraining geometry far more often
+    // than the spinning sensors this was tuned on.
+    let degeneracy = super::degeneracy::analyze(&output.result.hessian);
+    for (publisher, value) in [
+        (
+            &ctx.debug_pubs.degeneracy_translation_anisotropy_pub,
+            degeneracy.translation.anisotropy,
+        ),
+        (
+            &ctx.debug_pubs.degeneracy_rotation_anisotropy_pub,
+            degeneracy.rotation.anisotropy,
+        ),
+        (
+            &ctx.debug_pubs.degeneracy_translation_min_eigenvalue_pub,
+            degeneracy.translation.min_eigenvalue,
+        ),
+        (
+            &ctx.debug_pubs.degeneracy_rotation_min_eigenvalue_pub,
+            degeneracy.rotation.min_eigenvalue,
+        ),
+    ] {
+        let _ = publisher.publish(&Float32Stamped {
+            stamp: msg.header.stamp.clone(),
+            data: value as f32,
+        });
+    }
+
+    // Logged, not gated. What a usable threshold is depends on the site and the
+    // sensor, and nobody has measured one yet; refusing to publish a pose on a
+    // guessed number would be a worse failure than publishing a weakly
+    // constrained one. Rate-limited to the same cadence as the callback stats,
+    // because a genuinely degenerate stretch lasts many frames and would
+    // otherwise bury the log.
+    if align_num % 50 == 0 {
+        let t_axis = super::degeneracy::dominant_axis(
+            &degeneracy.translation.weakest_axis,
+            ["x", "y", "z"],
+        );
+        let r_axis = super::degeneracy::dominant_axis(
+            &degeneracy.rotation.weakest_axis,
+            ["roll", "pitch", "yaw"],
+        );
+        let t_agg = degeneracy.translation.anisotropy;
+        let r_agg = degeneracy.rotation.anisotropy;
+        log_info!(
+            NODE_NAME,
+            "Degeneracy: translation anisotropy {t_agg:.1} (weakest {t_axis}), \
+             rotation anisotropy {r_agg:.1} (weakest {r_axis})"
+        );
+    }
     let _ = ctx
         .debug_pubs
         .transform_probability_pub

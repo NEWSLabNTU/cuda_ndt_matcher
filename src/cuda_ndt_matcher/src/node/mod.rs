@@ -1,4 +1,5 @@
 mod callbacks;
+mod degeneracy;
 mod init;
 mod processing;
 mod publishers;

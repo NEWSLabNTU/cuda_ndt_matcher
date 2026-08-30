@@ -50,6 +50,14 @@ pub(crate) struct DebugPublishers {
     pub(crate) exe_time_pub: Publisher<Float32Stamped>,
     pub(crate) oscillation_count_pub: Publisher<Int32Stamped>,
 
+    // Degeneracy: how well the current scan constrains each degree of freedom.
+    // Anisotropy is the one to watch; the minima scale with correspondence
+    // count. See node/degeneracy.rs for why the two blocks are never combined.
+    pub(crate) degeneracy_translation_anisotropy_pub: Publisher<Float32Stamped>,
+    pub(crate) degeneracy_rotation_anisotropy_pub: Publisher<Float32Stamped>,
+    pub(crate) degeneracy_translation_min_eigenvalue_pub: Publisher<Float32Stamped>,
+    pub(crate) degeneracy_rotation_min_eigenvalue_pub: Publisher<Float32Stamped>,
+
     // Pose tracking
     pub(crate) initial_pose_cov_pub: Publisher<PoseWithCovarianceStamped>,
     pub(crate) initial_to_result_distance_pub: Publisher<Float32Stamped>,
