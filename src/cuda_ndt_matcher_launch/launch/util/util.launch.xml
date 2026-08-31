@@ -25,8 +25,14 @@
        different process would receive the id and find nothing. -->
   <arg name="localization_pointcloud_backend" default="cpu" description="cpu or cuda"/>
 
-  <arg name="cuda_crop_box_param_path" default="$(find-pkg-share golfcart_cuda_preprocessor)/config/cuda_crop_box_filter.param.yaml"/>
-  <arg name="cuda_random_downsample_param_path" default="$(find-pkg-share golfcart_cuda_preprocessor)/config/cuda_random_downsample_filter.param.yaml"/>
+  <!-- Both branches read the SAME parameter files, so the switch changes which
+       hardware runs the stage and nothing else. The CUDA crop box declares the
+       two extra keys the CPU component's file carries (output_frame, which it
+       asserts rather than honours since it does not transform, and
+       processing_time_threshold_sec, which it ignores) precisely so this is
+       possible. Without that the switch would silently move the crop bounds and
+       the point budget, which is how the first full-pipeline comparison came
+       out meaningless. -->
 
   <group if="$(eval '\'$(var localization_pointcloud_backend)\' == \'cpu\'')">
     <load_composable_node target="$(var localization_pointcloud_container_name)">
@@ -63,7 +69,7 @@
       <!-- The CUDA nodes take their topics on private names, unlike the CPU
            components which use bare input/output. -->
       <composable_node pkg="golfcart_cuda_preprocessor" plugin="golfcart::cuda_preprocessor::CudaCropBoxFilterNode" name="crop_box_filter_measurement_range">
-        <param from="$(var cuda_crop_box_param_path)"/>
+        <param from="$(var ndt_scan_matcher/pointcloud_preprocessor/crop_box_filter_measurement_range_param_path)"/>
         <remap from="~/input/pointcloud" to="$(var input_pointcloud)"/>
         <remap from="~/output/pointcloud" to="measurement_range/pointcloud"/>
         <extra_arg name="use_intra_process_comms" value="$(var use_intra_process)"/>
@@ -78,7 +84,7 @@
       </composable_node>
 
       <composable_node pkg="golfcart_cuda_preprocessor" plugin="golfcart::cuda_preprocessor::CudaRandomDownsampleFilterNode" name="random_downsample_filter">
-        <param from="$(var cuda_random_downsample_param_path)"/>
+        <param from="$(var ndt_scan_matcher/pointcloud_preprocessor/random_downsample_filter_param_path)"/>
         <remap from="~/input/pointcloud" to="voxel_grid_downsample/pointcloud"/>
         <remap from="~/output/pointcloud" to="$(var output/pointcloud)"/>
         <extra_arg name="use_intra_process_comms" value="$(var use_intra_process)"/>
