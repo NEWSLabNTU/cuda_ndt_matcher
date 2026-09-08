@@ -114,11 +114,26 @@ fn main() {
     for source in &cuda_sources {
         println!("cargo:rerun-if-changed={source}");
     }
-    // Also watch header files
+    // Also watch header files.
+    //
+    // Every path here must EXIST. A `rerun-if-changed` naming a file that is
+    // not there makes cargo treat this build script as permanently stale, and
+    // it never says so: `csrc/batch_persistent_ndt_device.cuh` was listed here
+    // and never written, so every `cargo build` reran nvcc and then recompiled
+    // cuda_ffi, ndt_cuda and cuda_ndt_matcher behind it. A no-op rebuild of
+    // this workspace cost 70 s on an AGX Orin, on both machines, for months.
+    //
+    // Cargo will tell you if it happens again:
+    //
+    //   CARGO_LOG=cargo::core::compiler::fingerprint=info cargo build --release
+    //
+    // and look for `StaleItem(MissingFile { .. })`.
+    //
+    // The .cu sources are already covered by the cuda_sources loop above; only
+    // headers, which nothing else watches, belong in this list.
     println!("cargo:rerun-if-changed=csrc/persistent_ndt_device.cuh");
     println!("cargo:rerun-if-changed=csrc/cholesky_6x6.cuh");
     println!("cargo:rerun-if-changed=csrc/jacobi_svd_6x6.cuh");
-    println!("cargo:rerun-if-changed=csrc/batch_persistent_ndt_device.cuh");
     println!("cargo:rerun-if-changed=csrc/warp_reduce.cuh");
     println!("cargo:rerun-if-changed=csrc/warp_cholesky.cuh");
     println!("cargo:rerun-if-changed=csrc/ndt_graph_common.cuh");
