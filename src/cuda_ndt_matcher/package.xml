@@ -5,7 +5,13 @@
   <maintainer email="jerry73204@gmail.com">Hsiang-Jui Lin</maintainer>
   <license>Apache-2.0</license>
 
-  <depend>rclrs</depend>
+  <!--
+    rclrs is not declared here. It is a crates.io crate (Cargo.toml pins it),
+    not a ROS package: nothing named rclrs is installed under /opt/ros or
+    /opt/autoware and rosdep has no rule for it, so the tag only ever produced
+    an unresolvable key. The message packages below are different:
+    colcon-cargo-ros2 generates their bindings from these tags.
+  -->
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
