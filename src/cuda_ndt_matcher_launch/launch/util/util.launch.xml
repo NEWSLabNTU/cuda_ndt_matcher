@@ -25,6 +25,21 @@
        different process would receive the id and find nothing. -->
   <arg name="localization_pointcloud_backend" default="cpu" description="cpu or cuda"/>
 
+  <!-- Which build of the CUDA crop box and random downsample to load. Autoware
+       ships neither, so they come from cuda_pointcloud_filters
+       (github.com/NEWSLabNTU/cuda_pointcloud_filters), which is what these
+       default to.
+
+       They are arguments rather than fixed names because this launch file is
+       shared between projects, and a project that carries its own build of the
+       same two filters must be able to point at it without editing a file it
+       does not own. Naming one project's package here was exactly that mistake.
+
+       The plugin namespace is separate from the package name because a fork is
+       free to keep one and change the other. -->
+  <arg name="cuda_filters_package" default="cuda_pointcloud_filters" description="package providing the CUDA crop box and random downsample"/>
+  <arg name="cuda_filters_namespace" default="cuda_pointcloud_filters" description="C++ namespace of the plugins in cuda_filters_package"/>
+
   <!-- Both branches read the SAME parameter files, so the switch changes which
        hardware runs the stage and nothing else. The CUDA crop box declares the
        two extra keys the CPU component's file carries (output_frame, which it
@@ -68,7 +83,7 @@
     <load_composable_node target="$(var localization_pointcloud_container_name)">
       <!-- The CUDA nodes take their topics on private names, unlike the CPU
            components which use bare input/output. -->
-      <composable_node pkg="golfcart_cuda_preprocessor" plugin="golfcart::cuda_preprocessor::CudaCropBoxFilterNode" name="crop_box_filter_measurement_range">
+      <composable_node pkg="$(var cuda_filters_package)" plugin="$(var cuda_filters_namespace)::CudaCropBoxFilterNode" name="crop_box_filter_measurement_range">
         <param from="$(var ndt_scan_matcher/pointcloud_preprocessor/crop_box_filter_measurement_range_param_path)"/>
         <remap from="~/input/pointcloud" to="$(var input_pointcloud)"/>
         <remap from="~/output/pointcloud" to="measurement_range/pointcloud"/>
@@ -83,7 +98,7 @@
         <extra_arg name="use_intra_process_comms" value="$(var use_intra_process)"/>
       </composable_node>
 
-      <composable_node pkg="golfcart_cuda_preprocessor" plugin="golfcart::cuda_preprocessor::CudaRandomDownsampleFilterNode" name="random_downsample_filter">
+      <composable_node pkg="$(var cuda_filters_package)" plugin="$(var cuda_filters_namespace)::CudaRandomDownsampleFilterNode" name="random_downsample_filter">
         <param from="$(var ndt_scan_matcher/pointcloud_preprocessor/random_downsample_filter_param_path)"/>
         <remap from="~/input/pointcloud" to="voxel_grid_downsample/pointcloud"/>
         <remap from="~/output/pointcloud" to="$(var output/pointcloud)"/>
