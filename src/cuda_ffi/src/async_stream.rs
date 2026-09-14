@@ -34,8 +34,14 @@
 //! event.synchronize()?;
 //! ```
 
-use crate::radix_sort::{CudaError, check_cuda};
-use std::{ffi::c_int, marker::PhantomData, ptr};
+use crate::radix_sort::CudaError;
+#[cfg(not(cuda_ffi_stub))]
+use crate::radix_sort::check_cuda;
+#[cfg(not(cuda_ffi_stub))]
+use std::ffi::c_int;
+#[cfg(not(cuda_ffi_stub))]
+use std::ptr;
+use std::marker::PhantomData;
 
 // ============================================================================
 // FFI Declarations
@@ -45,6 +51,7 @@ use std::{ffi::c_int, marker::PhantomData, ptr};
 pub type RawCudaStream = *mut std::ffi::c_void;
 pub type RawCudaEvent = *mut std::ffi::c_void;
 
+#[cfg(not(cuda_ffi_stub))]
 unsafe extern "C" {
     // Pinned memory
     fn cuda_malloc_host(ptr: *mut *mut std::ffi::c_void, size: usize) -> c_int;
@@ -115,6 +122,7 @@ pub struct CudaStream {
     handle: RawCudaStream,
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl CudaStream {
     /// Create a new CUDA stream.
     pub fn new() -> Result<Self, CudaError> {
@@ -218,6 +226,7 @@ impl CudaStream {
     }
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl Drop for CudaStream {
     fn drop(&mut self) {
         if !self.handle.is_null() {
@@ -226,6 +235,67 @@ impl Drop for CudaStream {
             }
         }
     }
+}
+
+/// Stub: no CUDA toolkit on this build. `new`/`new_non_blocking` always fail,
+/// so no instance of this type is ever actually constructed here.
+#[cfg(cuda_ffi_stub)]
+impl CudaStream {
+    pub fn new() -> Result<Self, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn new_non_blocking() -> Result<Self, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn synchronize(&self) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn is_complete(&self) -> bool {
+        false
+    }
+    pub fn as_raw(&self) -> RawCudaStream {
+        self.handle
+    }
+    pub unsafe fn memcpy_h2d_async(
+        &self,
+        _dst: *mut std::ffi::c_void,
+        _src: *const std::ffi::c_void,
+        _count: usize,
+    ) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub unsafe fn memcpy_d2h_async(
+        &self,
+        _dst: *mut std::ffi::c_void,
+        _src: *const std::ffi::c_void,
+        _count: usize,
+    ) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub unsafe fn memcpy_d2d_async(
+        &self,
+        _dst: *mut std::ffi::c_void,
+        _src: *const std::ffi::c_void,
+        _count: usize,
+    ) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub unsafe fn memset_async(
+        &self,
+        _dst: *mut std::ffi::c_void,
+        _value: i32,
+        _count: usize,
+    ) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn wait_event(&self, _event: &CudaEvent) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+}
+
+#[cfg(cuda_ffi_stub)]
+impl Drop for CudaStream {
+    fn drop(&mut self) {}
 }
 
 // CudaStream is Send but not Sync (can move between threads but not share)
@@ -243,6 +313,7 @@ pub struct CudaEvent {
     handle: RawCudaEvent,
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl CudaEvent {
     /// Create a new CUDA event.
     pub fn new() -> Result<Self, CudaError> {
@@ -307,6 +378,7 @@ impl CudaEvent {
     }
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl Drop for CudaEvent {
     fn drop(&mut self) {
         if !self.handle.is_null() {
@@ -315,6 +387,41 @@ impl Drop for CudaEvent {
             }
         }
     }
+}
+
+/// Stub: no CUDA toolkit on this build. `new`/`new_disable_timing` always
+/// fail, so no instance of this type is ever actually constructed here.
+#[cfg(cuda_ffi_stub)]
+impl CudaEvent {
+    pub fn new() -> Result<Self, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn new_disable_timing() -> Result<Self, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn record(&self, _stream: &CudaStream) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn record_default(&self) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn is_complete(&self) -> bool {
+        false
+    }
+    pub fn synchronize(&self) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn elapsed_time(&self, _start: &CudaEvent) -> Result<f32, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn as_raw(&self) -> RawCudaEvent {
+        self.handle
+    }
+}
+
+#[cfg(cuda_ffi_stub)]
+impl Drop for CudaEvent {
+    fn drop(&mut self) {}
 }
 
 unsafe impl Send for CudaEvent {}
@@ -338,6 +445,7 @@ pub struct PinnedBuffer<T> {
     _marker: PhantomData<T>,
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl<T> PinnedBuffer<T> {
     /// Allocate pinned host memory for `len` elements of type T.
     pub fn new(len: usize) -> Result<Self, CudaError> {
@@ -424,6 +532,7 @@ impl<T> PinnedBuffer<T> {
     }
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl<T> Drop for PinnedBuffer<T> {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
@@ -432,6 +541,52 @@ impl<T> Drop for PinnedBuffer<T> {
             }
         }
     }
+}
+
+/// Stub: no CUDA toolkit on this build. `new` always fails, so no instance
+/// of this type is ever actually constructed here.
+#[cfg(cuda_ffi_stub)]
+impl<T> PinnedBuffer<T> {
+    pub fn new(_len: usize) -> Result<Self, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn len(&self) -> usize {
+        self.len
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    pub fn size_bytes(&self) -> usize {
+        self.len * std::mem::size_of::<T>()
+    }
+    pub fn as_ptr(&self) -> *const T {
+        self.ptr
+    }
+    pub fn as_mut_ptr(&mut self) -> *mut T {
+        self.ptr
+    }
+    pub fn as_void_ptr(&self) -> *const std::ffi::c_void {
+        self.ptr as *const std::ffi::c_void
+    }
+    pub fn as_mut_void_ptr(&mut self) -> *mut std::ffi::c_void {
+        self.ptr as *mut std::ffi::c_void
+    }
+    pub fn as_slice(&self) -> &[T] {
+        &[]
+    }
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        &mut []
+    }
+    pub fn copy_from_slice(&mut self, _data: &[T])
+    where
+        T: Copy,
+    {
+    }
+}
+
+#[cfg(cuda_ffi_stub)]
+impl<T> Drop for PinnedBuffer<T> {
+    fn drop(&mut self) {}
 }
 
 // PinnedBuffer is Send (can transfer ownership between threads)
@@ -449,6 +604,7 @@ pub struct AsyncDeviceBuffer {
     size: usize,
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl AsyncDeviceBuffer {
     /// Allocate device memory.
     pub fn new(size: usize) -> Result<Self, CudaError> {
@@ -487,6 +643,7 @@ impl AsyncDeviceBuffer {
     }
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl Drop for AsyncDeviceBuffer {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
@@ -497,6 +654,32 @@ impl Drop for AsyncDeviceBuffer {
     }
 }
 
+/// Stub: no CUDA toolkit on this build. `new` always fails, so no instance
+/// of this type is ever actually constructed here.
+#[cfg(cuda_ffi_stub)]
+impl AsyncDeviceBuffer {
+    pub fn new(_size: usize) -> Result<Self, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn size(&self) -> usize {
+        self.size
+    }
+    pub fn as_ptr(&self) -> *const std::ffi::c_void {
+        self.ptr
+    }
+    pub fn as_mut_ptr(&mut self) -> *mut std::ffi::c_void {
+        self.ptr
+    }
+    pub fn as_u64(&self) -> u64 {
+        self.ptr as u64
+    }
+}
+
+#[cfg(cuda_ffi_stub)]
+impl Drop for AsyncDeviceBuffer {
+    fn drop(&mut self) {}
+}
+
 unsafe impl Send for AsyncDeviceBuffer {}
 
 // ============================================================================
@@ -504,15 +687,22 @@ unsafe impl Send for AsyncDeviceBuffer {}
 // ============================================================================
 
 /// Get the CUDA error code for "not ready" (used for query functions).
+#[cfg(not(cuda_ffi_stub))]
 pub fn cuda_error_not_ready_code() -> i32 {
     unsafe { cuda_error_not_ready() }
+}
+
+/// Stub: no CUDA toolkit on this build.
+#[cfg(cuda_ffi_stub)]
+pub fn cuda_error_not_ready_code() -> i32 {
+    -1
 }
 
 // ============================================================================
 // Tests
 // ============================================================================
 
-#[cfg(test)]
+#[cfg(all(test, not(cuda_ffi_stub)))]
 mod tests {
 
     use super::*;

@@ -3,16 +3,21 @@
 //! Provides GPU-accelerated segmented reduction for summing data in segments,
 //! used for reducing per-point gradients and Hessians to totals in NDT.
 
+#[cfg(not(cuda_ffi_stub))]
 use std::{ffi::c_int, ptr};
 
-use crate::radix_sort::{CudaError, DeviceBuffer, check_cuda};
+use crate::radix_sort::CudaError;
+#[cfg(not(cuda_ffi_stub))]
+use crate::radix_sort::{DeviceBuffer, check_cuda};
 
 // ============================================================================
 // FFI Declarations
 // ============================================================================
 
+#[cfg(not(cuda_ffi_stub))]
 type CudaStream = *mut std::ffi::c_void;
 
+#[cfg(not(cuda_ffi_stub))]
 unsafe extern "C" {
     fn cub_segmented_reduce_sum_f32_temp_size(
         temp_storage_bytes: *mut usize,
@@ -73,6 +78,7 @@ pub struct SegmentedReducer {
     // No state needed; each call allocates temporary storage
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl SegmentedReducer {
     /// Create a new segmented reducer.
     pub fn new() -> Result<Self, CudaError> {
@@ -196,9 +202,32 @@ impl SegmentedReducer {
     }
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl Default for SegmentedReducer {
     fn default() -> Self {
         Self::new().expect("Failed to create SegmentedReducer")
+    }
+}
+
+/// Stub: no CUDA toolkit on this build. `new` always fails, so no instance
+/// of this type is ever actually constructed here.
+#[cfg(cuda_ffi_stub)]
+impl SegmentedReducer {
+    pub fn new() -> Result<Self, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn sum_f32(&self, _data: &[f32], _offsets: &[i32]) -> Result<Vec<f32>, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn sum_f64(&self, _data: &[f64], _offsets: &[i32]) -> Result<Vec<f64>, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+}
+
+#[cfg(cuda_ffi_stub)]
+impl Default for SegmentedReducer {
+    fn default() -> Self {
+        Self::new().expect("Failed to create SegmentedReducer: no CUDA toolkit on this build")
     }
 }
 
@@ -214,6 +243,7 @@ impl Default for SegmentedReducer {
 ///
 /// # Returns
 /// Required temporary storage size in bytes.
+#[cfg(not(cuda_ffi_stub))]
 pub fn segmented_reduce_sum_f32_temp_size(
     num_items: usize,
     num_segments: usize,
@@ -244,6 +274,7 @@ pub fn segmented_reduce_sum_f32_temp_size(
 ///
 /// # Safety
 /// All device pointers must be valid and have sufficient allocated size.
+#[cfg(not(cuda_ffi_stub))]
 pub unsafe fn segmented_reduce_sum_f32_inplace(
     d_temp: u64,
     temp_bytes: usize,
@@ -272,6 +303,7 @@ pub unsafe fn segmented_reduce_sum_f32_inplace(
 }
 
 /// Query temporary storage size for segmented reduce sum (f64).
+#[cfg(not(cuda_ffi_stub))]
 pub fn segmented_reduce_sum_f64_temp_size(
     num_items: usize,
     num_segments: usize,
@@ -291,6 +323,7 @@ pub fn segmented_reduce_sum_f64_temp_size(
 ///
 /// # Safety
 /// All device pointers must be valid and have sufficient allocated size.
+#[cfg(not(cuda_ffi_stub))]
 pub unsafe fn segmented_reduce_sum_f64_inplace(
     d_temp: u64,
     temp_bytes: usize,
@@ -318,11 +351,61 @@ pub unsafe fn segmented_reduce_sum_f64_inplace(
     }
 }
 
+/// Stub: no CUDA toolkit on this build.
+#[cfg(cuda_ffi_stub)]
+pub fn segmented_reduce_sum_f32_temp_size(
+    _num_items: usize,
+    _num_segments: usize,
+) -> Result<usize, CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+pub unsafe fn segmented_reduce_sum_f32_inplace(
+    _d_temp: u64,
+    _temp_bytes: usize,
+    _d_in: u64,
+    _d_out: u64,
+    _num_segments: usize,
+    _d_offsets: u64,
+) -> Result<(), CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
+/// Stub: no CUDA toolkit on this build.
+#[cfg(cuda_ffi_stub)]
+pub fn segmented_reduce_sum_f64_temp_size(
+    _num_items: usize,
+    _num_segments: usize,
+) -> Result<usize, CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+pub unsafe fn segmented_reduce_sum_f64_inplace(
+    _d_temp: u64,
+    _temp_bytes: usize,
+    _d_in: u64,
+    _d_out: u64,
+    _num_segments: usize,
+    _d_offsets: u64,
+) -> Result<(), CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
 
-#[cfg(test)]
+#[cfg(all(test, not(cuda_ffi_stub)))]
 mod tests {
 
     use super::*;

@@ -19,17 +19,22 @@
 //!                  &hash_table, capacity, &neighbor_indices, &neighbor_counts)?;
 //! ```
 
-#[cfg(test)]
+#[cfg(all(test, not(cuda_ffi_stub)))]
 use crate::radix_sort::DeviceBuffer;
-use crate::radix_sort::{CudaError, check_cuda};
+use crate::radix_sort::CudaError;
+#[cfg(not(cuda_ffi_stub))]
+use crate::radix_sort::check_cuda;
+#[cfg(not(cuda_ffi_stub))]
 use std::ffi::c_int;
 
 // ============================================================================
 // FFI Declarations
 // ============================================================================
 
+#[cfg(not(cuda_ffi_stub))]
 type CudaStream = *mut std::ffi::c_void;
 
+#[cfg(not(cuda_ffi_stub))]
 unsafe extern "C" {
     fn voxel_hash_get_capacity(num_voxels: u32, capacity: *mut u32) -> c_int;
 
@@ -82,8 +87,17 @@ unsafe extern "C" {
 // ============================================================================
 
 /// Maximum number of neighbors returned per query point.
+#[cfg(not(cuda_ffi_stub))]
 pub fn max_neighbors() -> u32 {
     unsafe { voxel_hash_max_neighbors() }
+}
+
+/// Stub: no CUDA toolkit on this build. Matches the real MAX_NEIGHBORS (8),
+/// since callers use this to size host-side buffers before ever reaching a
+/// CUDA call, and those buffers should still be sized consistently.
+#[cfg(cuda_ffi_stub)]
+pub fn max_neighbors() -> u32 {
+    8
 }
 
 /// Spatial hash table for voxel neighbor lookup.
@@ -92,6 +106,7 @@ pub fn max_neighbors() -> u32 {
 /// Call methods in order: `get_capacity` → `get_table_size` → `init` → `build` → `query`.
 pub struct VoxelHash;
 
+#[cfg(not(cuda_ffi_stub))]
 impl VoxelHash {
     /// Get recommended hash table capacity for the given number of voxels.
     ///
@@ -232,6 +247,55 @@ impl VoxelHash {
     }
 }
 
+/// Stub: no CUDA toolkit on this build. Static methods only (no constructor),
+/// so these run whenever called -- unlike the constructor-gated types, there
+/// is no earlier point where a caller would already have hit an error.
+#[cfg(cuda_ffi_stub)]
+impl VoxelHash {
+    pub fn get_capacity(_num_voxels: u32) -> Result<u32, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn get_table_size(_capacity: u32) -> Result<usize, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub unsafe fn init(
+        _d_hash_table: *mut std::ffi::c_void,
+        _capacity: u32,
+    ) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub unsafe fn build(
+        _d_voxel_means: *const f32,
+        _d_voxel_valid: *const u32,
+        _num_voxels: u32,
+        _resolution: f32,
+        _d_hash_table: *mut std::ffi::c_void,
+        _capacity: u32,
+    ) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn query(
+        _d_query_points: *const f32,
+        _d_voxel_means: *const f32,
+        _num_queries: u32,
+        _resolution: f32,
+        _search_radius: f32,
+        _d_hash_table: *const std::ffi::c_void,
+        _capacity: u32,
+        _d_neighbor_indices: *mut i32,
+        _d_neighbor_counts: *mut u32,
+    ) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub unsafe fn count_entries(
+        _d_hash_table: *const std::ffi::c_void,
+        _capacity: u32,
+    ) -> Result<u32, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+}
+
 // ============================================================================
 // In-Place API (for zero-copy pipeline with CubeCL handles)
 // ============================================================================
@@ -321,7 +385,7 @@ pub unsafe fn hash_table_count_entries(d_hash_table: u64, capacity: u32) -> Resu
 // Tests
 // ============================================================================
 
-#[cfg(test)]
+#[cfg(all(test, not(cuda_ffi_stub)))]
 mod tests {
 
     use super::*;

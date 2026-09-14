@@ -5,11 +5,14 @@
 
 #![allow(non_snake_case)] // Follow CUDA naming conventions
 
-use std::{ffi::c_int, ptr};
+use std::ffi::c_int;
+#[cfg(not(cuda_ffi_stub))]
+use std::ptr;
 
 /// cuSOLVER dense handle (opaque pointer).
 pub type CusolverDnHandle = *mut std::ffi::c_void;
 
+#[cfg(not(cuda_ffi_stub))]
 unsafe extern "C" {
     fn cusolver_create_handle(handle: *mut CusolverDnHandle) -> c_int;
     fn cusolver_destroy_handle(handle: CusolverDnHandle) -> c_int;
@@ -103,6 +106,7 @@ pub struct BatchedCholeskySolver {
     handle: CusolverDnHandle,
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl BatchedCholeskySolver {
     /// Create a new batched Cholesky solver.
     pub fn new() -> Result<Self, CusolverError> {
@@ -288,6 +292,7 @@ impl BatchedCholeskySolver {
     }
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl Drop for BatchedCholeskySolver {
     fn drop(&mut self) {
         if !self.handle.is_null() {
@@ -298,10 +303,73 @@ impl Drop for BatchedCholeskySolver {
     }
 }
 
+/// Stub: no CUDA toolkit on this build. `new` always fails, so no instance
+/// of this type is ever actually constructed here.
+#[cfg(cuda_ffi_stub)]
+impl BatchedCholeskySolver {
+    pub fn new() -> Result<Self, CusolverError> {
+        Err(CusolverError(-1))
+    }
+    pub fn handle(&self) -> CusolverDnHandle {
+        self.handle
+    }
+    pub unsafe fn factorize_batch(
+        &self,
+        _d_A_array: u64,
+        _batch_size: usize,
+        _d_info: u64,
+    ) -> Result<(), CusolverError> {
+        Err(CusolverError(-1))
+    }
+    pub unsafe fn solve_batch(
+        &self,
+        _d_A_array: u64,
+        _d_B_array: u64,
+        _batch_size: usize,
+        _d_info: u64,
+    ) -> Result<(), CusolverError> {
+        Err(CusolverError(-1))
+    }
+    pub unsafe fn solve_batch_inplace(
+        &self,
+        _d_A_array: u64,
+        _d_B_array: u64,
+        _batch_size: usize,
+        _d_info: u64,
+    ) -> Result<(), CusolverError> {
+        Err(CusolverError(-1))
+    }
+    pub unsafe fn factorize_single(
+        &self,
+        _d_A: u64,
+        _d_workspace: u64,
+        _workspace_size: usize,
+        _d_info: u64,
+    ) -> Result<(), CusolverError> {
+        Err(CusolverError(-1))
+    }
+    pub fn factorize_workspace_size(&self) -> Result<usize, CusolverError> {
+        Err(CusolverError(-1))
+    }
+    pub unsafe fn solve_single(
+        &self,
+        _d_A: u64,
+        _d_B: u64,
+        _d_info: u64,
+    ) -> Result<(), CusolverError> {
+        Err(CusolverError(-1))
+    }
+}
+
+#[cfg(cuda_ffi_stub)]
+impl Drop for BatchedCholeskySolver {
+    fn drop(&mut self) {}
+}
+
 // Safety: cuSOLVER handle is thread-safe when not being actively used
 unsafe impl Send for BatchedCholeskySolver {}
 
-#[cfg(test)]
+#[cfg(all(test, not(cuda_ffi_stub)))]
 mod tests {
 
     use super::*;

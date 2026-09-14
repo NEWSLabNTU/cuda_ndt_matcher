@@ -3,16 +3,21 @@
 //! Detects segment boundaries in sorted Morton codes using CUB primitives.
 //! A segment is a contiguous run of identical Morton codes (same voxel).
 
+#[cfg(not(cuda_ffi_stub))]
 use std::{ffi::c_int, ptr};
 
-use crate::radix_sort::{CudaError, DeviceBuffer, check_cuda};
+use crate::radix_sort::CudaError;
+#[cfg(not(cuda_ffi_stub))]
+use crate::radix_sort::{DeviceBuffer, check_cuda};
 
 // ============================================================================
 // FFI Declarations
 // ============================================================================
 
+#[cfg(not(cuda_ffi_stub))]
 type CudaStream = *mut std::ffi::c_void;
 
+#[cfg(not(cuda_ffi_stub))]
 unsafe extern "C" {
     // Boundary detection
     fn cub_detect_boundaries(
@@ -63,6 +68,7 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
+#[cfg(not(cuda_ffi_stub))]
 const CUDA_MEMCPY_DEVICE_TO_HOST: c_int = 2;
 
 // ============================================================================
@@ -87,6 +93,7 @@ pub struct SegmentResult {
 /// GPU segment detector.
 pub struct SegmentDetector;
 
+#[cfg(not(cuda_ffi_stub))]
 impl SegmentDetector {
     /// Create a new segment detector.
     pub fn new() -> Result<Self, CudaError> {
@@ -264,9 +271,29 @@ impl SegmentDetector {
     }
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl Default for SegmentDetector {
     fn default() -> Self {
         Self::new().expect("Failed to create SegmentDetector")
+    }
+}
+
+/// Stub: no CUDA toolkit on this build. `new` always fails, so no instance
+/// of this type is ever actually constructed here.
+#[cfg(cuda_ffi_stub)]
+impl SegmentDetector {
+    pub fn new() -> Result<Self, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn detect_segments(&self, _sorted_codes: &[u64]) -> Result<SegmentResult, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+}
+
+#[cfg(cuda_ffi_stub)]
+impl Default for SegmentDetector {
+    fn default() -> Self {
+        Self::new().expect("Failed to create SegmentDetector: no CUDA toolkit on this build")
     }
 }
 
@@ -281,6 +308,7 @@ impl Default for SegmentDetector {
 ///
 /// # Returns
 /// Tuple of (inclusive_sum_temp_bytes, select_temp_bytes)
+#[cfg(not(cuda_ffi_stub))]
 pub fn segment_detect_temp_sizes(num_items: usize) -> Result<(usize, usize), CudaError> {
     let mut sum_temp: usize = 0;
     let mut select_temp: usize = 0;
@@ -330,6 +358,7 @@ pub struct SegmentCounts {
 ///
 /// # Safety
 /// All device pointers must be valid and have sufficient allocated size.
+#[cfg(not(cuda_ffi_stub))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn detect_segments_inplace(
     d_sorted_codes: u64,
@@ -401,11 +430,39 @@ pub unsafe fn detect_segments_inplace(
     }
 }
 
+/// Stub: no CUDA toolkit on this build.
+#[cfg(cuda_ffi_stub)]
+pub fn segment_detect_temp_sizes(_num_items: usize) -> Result<(usize, usize), CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn detect_segments_inplace(
+    _d_sorted_codes: u64,
+    _d_boundaries: u64,
+    _d_segment_ids: u64,
+    _d_indices: u64,
+    _d_segment_starts: u64,
+    _d_num_selected: u64,
+    _d_sum_temp: u64,
+    _sum_temp_bytes: usize,
+    _d_select_temp: u64,
+    _select_temp_bytes: usize,
+    _num_items: usize,
+) -> Result<SegmentCounts, CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
 
-#[cfg(test)]
+#[cfg(all(test, not(cuda_ffi_stub)))]
 mod tests {
 
     use super::*;

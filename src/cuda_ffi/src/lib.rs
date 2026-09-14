@@ -84,6 +84,7 @@ pub use graph_ndt::{
 ///
 /// # Safety
 /// Both `dst` and `src` must be valid device pointers with at least `size` bytes.
+#[cfg(not(cuda_ffi_stub))]
 pub unsafe fn cuda_memcpy_dtod(dst: u64, src: u64, size: usize) -> Result<(), CudaError> {
     unsafe {
         use std::ffi::c_int;
@@ -113,10 +114,20 @@ pub unsafe fn cuda_memcpy_dtod(dst: u64, src: u64, size: usize) -> Result<(), Cu
     }
 }
 
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+pub unsafe fn cuda_memcpy_dtod(_dst: u64, _src: u64, _size: usize) -> Result<(), CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
 /// Synchronize the CUDA device - wait for all pending operations to complete.
 ///
 /// This is a blocking call that ensures all previous CUDA operations
 /// (kernel launches, memory copies, etc.) have completed.
+#[cfg(not(cuda_ffi_stub))]
 pub fn cuda_device_synchronize() -> Result<(), CudaError> {
     use std::ffi::c_int;
 
@@ -132,11 +143,18 @@ pub fn cuda_device_synchronize() -> Result<(), CudaError> {
     }
 }
 
+/// Stub: no CUDA toolkit on this build.
+#[cfg(cuda_ffi_stub)]
+pub fn cuda_device_synchronize() -> Result<(), CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
 /// Host-to-device memory copy using CUDA.
 ///
 /// # Safety
 /// `dst` must be a valid device pointer with at least `size` bytes.
 /// `src` must be a valid host pointer with at least `size` bytes.
+#[cfg(not(cuda_ffi_stub))]
 pub unsafe fn cuda_memcpy_htod(dst: u64, src: *const u8, size: usize) -> Result<(), CudaError> {
     unsafe {
         use std::ffi::c_int;
@@ -164,4 +182,13 @@ pub unsafe fn cuda_memcpy_htod(dst: u64, src: *const u8, size: usize) -> Result<
             Ok(())
         }
     }
+}
+
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+pub unsafe fn cuda_memcpy_htod(_dst: u64, _src: *const u8, _size: usize) -> Result<(), CudaError> {
+    Err(CudaError::NoToolkit)
 }

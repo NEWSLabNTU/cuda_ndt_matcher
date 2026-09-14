@@ -30,6 +30,26 @@ use std::{
 const DEPLOY_ARCHES: &[u32] = &[86, 87, 89, 90, 120];
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(cuda_ffi_stub)");
+    for var in ["CUDA_ARCH", "CUDA_ARCHS", "CUDA_PATH", "CUDA_HOME"] {
+        println!("cargo:rerun-if-env-changed={var}");
+    }
+
+    // No CUDA toolkit is a real, supported build target -- the workshop
+    // desktop container (arm64, plain ubuntu:22.04, no toolkit by design) is
+    // exactly this case. cuda_ffi then builds as an inert stub: no kernels
+    // compiled, nothing CUDA-linked, every public function returns
+    // CudaError::NoToolkit / a CusolverError sentinel. See the `cuda_ffi_stub`
+    // cfg used throughout src/*.rs.
+    if discover_toolkits().is_empty() {
+        println!(
+            "cargo:warning=no CUDA toolkit found; cuda_ffi builds as an inert stub -- \
+             GPU-accelerated NDT is unavailable on this build"
+        );
+        println!("cargo:rustc-cfg=cuda_ffi_stub");
+        return;
+    }
+
     // Which architectures to build for, and which toolkit can do it. Order
     // matters: the requested set picks the toolkit, not the other way round,
     // because a host may have several toolkits installed and only the newest
@@ -58,9 +78,6 @@ fn main() {
     // Output directory
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    for var in ["CUDA_ARCH", "CUDA_ARCHS", "CUDA_PATH", "CUDA_HOME"] {
-        println!("cargo:rerun-if-env-changed={var}");
-    }
     println!(
         "cargo:warning=building CUDA kernels with {} for sm_{}",
         toolkit.root.display(),

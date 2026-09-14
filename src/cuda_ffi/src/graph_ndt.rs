@@ -35,10 +35,11 @@
 //! )?;
 //! ```
 
-use crate::{
-    async_stream::CudaStream,
-    radix_sort::{CudaError, check_cuda},
-};
+use crate::async_stream::CudaStream;
+use crate::radix_sort::CudaError;
+#[cfg(not(cuda_ffi_stub))]
+use crate::radix_sort::check_cuda;
+#[cfg(not(cuda_ffi_stub))]
 use std::ffi::c_int;
 
 // ============================================================================
@@ -215,6 +216,7 @@ pub struct GraphNdtOutput {
 // FFI declarations
 // ============================================================================
 
+#[cfg(not(cuda_ffi_stub))]
 unsafe extern "C" {
     fn ndt_graph_get_buffer_sizes(
         state_size: *mut u32,
@@ -290,6 +292,7 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
+#[cfg(not(cuda_ffi_stub))]
 const CUDA_MEMCPY_DEVICE_TO_HOST: c_int = 2;
 
 // ============================================================================
@@ -297,6 +300,7 @@ const CUDA_MEMCPY_DEVICE_TO_HOST: c_int = 2;
 // ============================================================================
 
 /// Get required buffer sizes in bytes.
+#[cfg(not(cuda_ffi_stub))]
 pub fn get_buffer_sizes() -> Result<(usize, usize, usize, usize), CudaError> {
     let mut state_size: u32 = 0;
     let mut reduce_size: u32 = 0;
@@ -321,13 +325,34 @@ pub fn get_buffer_sizes() -> Result<(usize, usize, usize, usize), CudaError> {
 }
 
 /// Get shared memory size for compute kernel.
+#[cfg(not(cuda_ffi_stub))]
 pub fn compute_shared_mem_size() -> usize {
     unsafe { ndt_graph_compute_shared_mem_size() as usize }
 }
 
 /// Get shared memory size for line search kernel.
+#[cfg(not(cuda_ffi_stub))]
 pub fn linesearch_shared_mem_size() -> usize {
     unsafe { ndt_graph_linesearch_shared_mem_size() as usize }
+}
+
+/// Stub: no CUDA toolkit on this build.
+#[cfg(cuda_ffi_stub)]
+pub fn get_buffer_sizes() -> Result<(usize, usize, usize, usize), CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
+/// Stub: no CUDA toolkit on this build. Callers use this to size host-side
+/// buffers, so it stays a plausible positive number rather than 0.
+#[cfg(cuda_ffi_stub)]
+pub fn compute_shared_mem_size() -> usize {
+    BLOCK_SIZE * REDUCE_BUFFER_SIZE * 4
+}
+
+/// Stub: no CUDA toolkit on this build.
+#[cfg(cuda_ffi_stub)]
+pub fn linesearch_shared_mem_size() -> usize {
+    BLOCK_SIZE * LS_BUFFER_SIZE * 4
 }
 
 /// Calculate number of blocks needed for given point count.
@@ -343,6 +368,7 @@ pub fn num_blocks(num_points: usize) -> usize {
 ///
 /// # Safety
 /// All device pointers must be valid CUDA device pointers with appropriate sizes.
+#[cfg(not(cuda_ffi_stub))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn graph_ndt_launch_init_raw(
     d_initial_pose: u64,
@@ -367,6 +393,7 @@ pub unsafe fn graph_ndt_launch_init_raw(
 ///
 /// # Safety
 /// All device pointers must be valid CUDA device pointers with appropriate sizes.
+#[cfg(not(cuda_ffi_stub))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn graph_ndt_launch_compute_raw(
     d_source_points: u64,
@@ -398,6 +425,7 @@ pub unsafe fn graph_ndt_launch_compute_raw(
 ///
 /// # Safety
 /// All device pointers must be valid CUDA device pointers with appropriate sizes.
+#[cfg(not(cuda_ffi_stub))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn graph_ndt_launch_solve_raw(
     config: &GraphNdtConfig,
@@ -424,6 +452,7 @@ pub unsafe fn graph_ndt_launch_solve_raw(
 ///
 /// # Safety
 /// All device pointers must be valid CUDA device pointers with appropriate sizes.
+#[cfg(not(cuda_ffi_stub))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn graph_ndt_launch_linesearch_raw(
     d_source_points: u64,
@@ -455,6 +484,7 @@ pub unsafe fn graph_ndt_launch_linesearch_raw(
 ///
 /// # Safety
 /// All device pointers must be valid CUDA device pointers with appropriate sizes.
+#[cfg(not(cuda_ffi_stub))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn graph_ndt_launch_update_raw(
     config: &GraphNdtConfig,
@@ -488,6 +518,7 @@ pub unsafe fn graph_ndt_launch_update_raw(
 ///
 /// # Safety
 /// `d_state_buffer` must be a valid device pointer.
+#[cfg(not(cuda_ffi_stub))]
 pub unsafe fn graph_ndt_check_converged(d_state_buffer: u64) -> Result<bool, CudaError> {
     unsafe {
         let mut converged = false;
@@ -503,6 +534,7 @@ pub unsafe fn graph_ndt_check_converged(d_state_buffer: u64) -> Result<bool, Cud
 ///
 /// # Safety
 /// `d_state_buffer` must be a valid device pointer.
+#[cfg(not(cuda_ffi_stub))]
 pub unsafe fn graph_ndt_get_iterations(d_state_buffer: u64) -> Result<i32, CudaError> {
     unsafe {
         let mut iterations: i32 = 0;
@@ -512,6 +544,113 @@ pub unsafe fn graph_ndt_get_iterations(d_state_buffer: u64) -> Result<i32, CudaE
         ))?;
         Ok(iterations)
     }
+}
+
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn graph_ndt_launch_init_raw(
+    _d_initial_pose: u64,
+    _d_state_buffer: u64,
+    _d_reduce_buffer: u64,
+    _d_ls_buffer: u64,
+    _stream: Option<&CudaStream>,
+) -> Result<(), CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn graph_ndt_launch_compute_raw(
+    _d_source_points: u64,
+    _d_voxel_means: u64,
+    _d_voxel_inv_covs: u64,
+    _d_hash_table: u64,
+    _config: &GraphNdtConfig,
+    _d_state_buffer: u64,
+    _d_reduce_buffer: u64,
+    _stream: Option<&CudaStream>,
+) -> Result<(), CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn graph_ndt_launch_solve_raw(
+    _config: &GraphNdtConfig,
+    _d_state_buffer: u64,
+    _d_reduce_buffer: u64,
+    _d_ls_buffer: u64,
+    _d_output_buffer: u64,
+    _stream: Option<&CudaStream>,
+) -> Result<(), CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn graph_ndt_launch_linesearch_raw(
+    _d_source_points: u64,
+    _d_voxel_means: u64,
+    _d_voxel_inv_covs: u64,
+    _d_hash_table: u64,
+    _config: &GraphNdtConfig,
+    _d_state_buffer: u64,
+    _d_ls_buffer: u64,
+    _stream: Option<&CudaStream>,
+) -> Result<(), CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn graph_ndt_launch_update_raw(
+    _config: &GraphNdtConfig,
+    _d_state_buffer: u64,
+    _d_reduce_buffer: u64,
+    _d_ls_buffer: u64,
+    _d_output_buffer: u64,
+    _d_debug_buffer: u64,
+    _stream: Option<&CudaStream>,
+) -> Result<(), CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+pub unsafe fn graph_ndt_check_converged(_d_state_buffer: u64) -> Result<bool, CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+pub unsafe fn graph_ndt_get_iterations(_d_state_buffer: u64) -> Result<i32, CudaError> {
+    Err(CudaError::NoToolkit)
 }
 
 /// Run a single iteration (compute + solve + [linesearch] + update).
@@ -775,6 +914,7 @@ pub unsafe fn graph_ndt_run_iterations_batched_raw(
 ///
 /// # Safety
 /// All device pointers must be valid CUDA device pointers with appropriate sizes.
+#[cfg(not(cuda_ffi_stub))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn graph_ndt_align_raw(
     d_source_points: u64,
@@ -858,6 +998,7 @@ pub unsafe fn graph_ndt_align_raw(
 ///
 /// # Safety
 /// All device pointers must be valid CUDA device pointers with appropriate sizes.
+#[cfg(not(cuda_ffi_stub))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn graph_ndt_align_profiled_raw(
     d_source_points: u64,
@@ -1009,11 +1150,55 @@ pub unsafe fn graph_ndt_align_profiled_raw(
     }
 }
 
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn graph_ndt_align_raw(
+    _d_source_points: u64,
+    _d_voxel_means: u64,
+    _d_voxel_inv_covs: u64,
+    _d_hash_table: u64,
+    _config: &GraphNdtConfig,
+    _d_initial_pose: u64,
+    _d_state_buffer: u64,
+    _d_reduce_buffer: u64,
+    _d_ls_buffer: u64,
+    _d_output_buffer: u64,
+    _d_debug_buffer: u64,
+) -> Result<GraphNdtOutput, CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn graph_ndt_align_profiled_raw(
+    _d_source_points: u64,
+    _d_voxel_means: u64,
+    _d_voxel_inv_covs: u64,
+    _d_hash_table: u64,
+    _config: &GraphNdtConfig,
+    _d_initial_pose: u64,
+    _d_state_buffer: u64,
+    _d_reduce_buffer: u64,
+    _d_ls_buffer: u64,
+    _d_output_buffer: u64,
+    _d_debug_buffer: u64,
+) -> Result<(GraphNdtOutput, GraphNdtProfile), CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
 
-#[cfg(test)]
+#[cfg(all(test, not(cuda_ffi_stub)))]
 mod tests {
 
     use super::*;

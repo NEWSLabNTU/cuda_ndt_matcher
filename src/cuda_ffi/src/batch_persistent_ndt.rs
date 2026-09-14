@@ -29,16 +29,18 @@
 //! )?;
 //! ```
 
-use crate::{
-    async_stream::RawCudaStream,
-    radix_sort::{CudaError, check_cuda},
-};
+use crate::async_stream::RawCudaStream;
+use crate::radix_sort::CudaError;
+#[cfg(not(cuda_ffi_stub))]
+use crate::radix_sort::check_cuda;
+#[cfg(not(cuda_ffi_stub))]
 use std::ffi::c_int;
 
 // ============================================================================
 // FFI Declarations
 // ============================================================================
 
+#[cfg(not(cuda_ffi_stub))]
 unsafe extern "C" {
     fn batch_persistent_ndt_blocks_per_slot(num_points: c_int) -> c_int;
 
@@ -227,18 +229,35 @@ unsafe extern "C" {
 // ============================================================================
 
 /// Get required reduce buffer size per slot in bytes.
+#[cfg(not(cuda_ffi_stub))]
 pub fn batch_reduce_buffer_size() -> usize {
     unsafe { batch_persistent_ndt_reduce_buffer_size() as usize }
 }
 
+/// Stub: no CUDA toolkit on this build. Matches the real value (160 floats *
+/// 4 bytes), since callers use this to size host-side buffers.
+#[cfg(cuda_ffi_stub)]
+pub fn batch_reduce_buffer_size() -> usize {
+    160 * 4
+}
+
 /// Get shared memory size per block in bytes.
+#[cfg(not(cuda_ffi_stub))]
 pub fn batch_shared_mem_size() -> usize {
     unsafe { batch_persistent_ndt_shared_mem_size() as usize }
+}
+
+/// Stub: no CUDA toolkit on this build. Matches the real value (256 threads *
+/// 29 values * 4 bytes), since callers use this to size host-side buffers.
+#[cfg(cuda_ffi_stub)]
+pub fn batch_shared_mem_size() -> usize {
+    256 * 29 * 4
 }
 
 /// Batch Persistent NDT kernel interface.
 pub struct BatchPersistentNdt;
 
+#[cfg(not(cuda_ffi_stub))]
 impl BatchPersistentNdt {
     /// Block size used by the batch kernel (256 threads per block).
     pub const BLOCK_SIZE: usize = 256;
@@ -563,6 +582,131 @@ impl BatchPersistentNdt {
     }
 }
 
+/// Stub: no CUDA toolkit on this build. Every method fails or is a pure
+/// host-side constant; nothing here touches CUDA.
+#[cfg(cuda_ffi_stub)]
+impl BatchPersistentNdt {
+    pub const BLOCK_SIZE: usize = 256;
+    pub const REDUCE_SIZE: usize = 29;
+    pub const REDUCE_BUFFER_FLOATS: usize = 160;
+    pub const MAX_LS_CANDIDATES: usize = 8;
+
+    pub fn blocks_per_slot(num_points: usize) -> usize {
+        num_points.div_ceil(Self::BLOCK_SIZE)
+    }
+    pub fn total_blocks(num_slots: usize, blocks_per_slot: usize) -> usize {
+        num_slots * blocks_per_slot
+    }
+    pub fn shared_mem_size() -> usize {
+        batch_shared_mem_size()
+    }
+    pub fn reduce_buffer_size() -> usize {
+        batch_reduce_buffer_size()
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn launch(
+        _voxel_means: *const f32,
+        _voxel_inv_covs: *const f32,
+        _hash_table: *const std::ffi::c_void,
+        _hash_capacity: u32,
+        _gauss_d1: f32,
+        _gauss_d2: f32,
+        _resolution: f32,
+        _all_source_points: *const f32,
+        _all_initial_poses: *const f32,
+        _points_per_slot: *const i32,
+        _all_reduce_buffers: *mut f32,
+        _barrier_counters: *mut i32,
+        _barrier_senses: *mut i32,
+        _all_out_poses: *mut f32,
+        _all_out_iterations: *mut i32,
+        _all_out_converged: *mut u32,
+        _all_out_scores: *mut f32,
+        _all_out_hessians: *mut f32,
+        _all_out_correspondences: *mut u32,
+        _all_out_oscillations: *mut u32,
+        _all_out_alpha_sums: *mut f32,
+        _num_slots: usize,
+        _blocks_per_slot: usize,
+        _max_points_per_slot: usize,
+        _max_iterations: i32,
+        _epsilon: f32,
+        _ls_enabled: bool,
+        _ls_num_candidates: i32,
+        _ls_mu: f32,
+        _ls_nu: f32,
+        _fixed_step_size: f32,
+        _reg_ref_x: *const f32,
+        _reg_ref_y: *const f32,
+        _reg_scale: f32,
+        _reg_enabled: bool,
+    ) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn sync() -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub unsafe fn stream_sync(_stream: RawCudaStream) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn launch_async(
+        _voxel_means: *const f32,
+        _voxel_inv_covs: *const f32,
+        _hash_table: *const std::ffi::c_void,
+        _hash_capacity: u32,
+        _gauss_d1: f32,
+        _gauss_d2: f32,
+        _resolution: f32,
+        _all_source_points: *const f32,
+        _all_initial_poses: *const f32,
+        _points_per_slot: *const i32,
+        _all_reduce_buffers: *mut f32,
+        _barrier_counters: *mut i32,
+        _barrier_senses: *mut i32,
+        _all_out_poses: *mut f32,
+        _all_out_iterations: *mut i32,
+        _all_out_converged: *mut u32,
+        _all_out_scores: *mut f32,
+        _all_out_hessians: *mut f32,
+        _all_out_correspondences: *mut u32,
+        _all_out_oscillations: *mut u32,
+        _all_out_alpha_sums: *mut f32,
+        _num_slots: usize,
+        _blocks_per_slot: usize,
+        _max_points_per_slot: usize,
+        _max_iterations: i32,
+        _epsilon: f32,
+        _ls_enabled: bool,
+        _ls_num_candidates: i32,
+        _ls_mu: f32,
+        _ls_nu: f32,
+        _fixed_step_size: f32,
+        _reg_ref_x: *const f32,
+        _reg_ref_y: *const f32,
+        _reg_scale: f32,
+        _reg_enabled: bool,
+        _stream: RawCudaStream,
+    ) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub unsafe fn init_barriers_async(
+        _barrier_counters: *mut i32,
+        _barrier_senses: *mut i32,
+        _num_slots: usize,
+        _stream: RawCudaStream,
+    ) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub unsafe fn init_barriers(
+        _barrier_counters: *mut i32,
+        _barrier_senses: *mut i32,
+        _num_slots: usize,
+    ) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+}
+
 // ============================================================================
 // Raw pointer API (for CubeCL handle interop)
 // ============================================================================
@@ -831,8 +975,16 @@ pub unsafe fn batch_persistent_ndt_init_barriers_async_raw(
 ///
 /// The warp-optimized kernel uses less shared memory because it uses
 /// warp-level reduction instead of full block-level reduction.
+#[cfg(not(cuda_ffi_stub))]
 pub fn batch_warp_shared_mem_size() -> usize {
     unsafe { batch_persistent_ndt_warp_shared_mem_size() as usize }
+}
+
+/// Stub: no CUDA toolkit on this build. Matches the real value (8 warps * 29
+/// values * 4 bytes), since callers use this to size host-side buffers.
+#[cfg(cuda_ffi_stub)]
+pub fn batch_warp_shared_mem_size() -> usize {
+    8 * 29 * 4
 }
 
 /// Launch warp-optimized batch NDT kernel using raw device pointers.
@@ -843,6 +995,7 @@ pub fn batch_warp_shared_mem_size() -> usize {
 /// # Safety
 ///
 /// All device pointers must be valid CUDA device pointers with appropriate sizes.
+#[cfg(not(cuda_ffi_stub))]
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn batch_persistent_ndt_launch_warp_optimized_raw(
     d_voxel_means: u64,
@@ -933,11 +1086,58 @@ pub unsafe fn batch_persistent_ndt_launch_warp_optimized_raw(
     }
 }
 
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn batch_persistent_ndt_launch_warp_optimized_raw(
+    _d_voxel_means: u64,
+    _d_voxel_inv_covs: u64,
+    _d_hash_table: u64,
+    _hash_capacity: u32,
+    _gauss_d1: f32,
+    _gauss_d2: f32,
+    _resolution: f32,
+    _d_all_source_points: u64,
+    _d_all_initial_poses: u64,
+    _d_points_per_slot: u64,
+    _d_all_reduce_buffers: u64,
+    _d_barrier_counters: u64,
+    _d_barrier_senses: u64,
+    _d_all_out_poses: u64,
+    _d_all_out_iterations: u64,
+    _d_all_out_converged: u64,
+    _d_all_out_scores: u64,
+    _d_all_out_hessians: u64,
+    _d_all_out_correspondences: u64,
+    _d_all_out_oscillations: u64,
+    _d_all_out_alpha_sums: u64,
+    _num_slots: usize,
+    _blocks_per_slot: usize,
+    _max_points_per_slot: usize,
+    _max_iterations: i32,
+    _epsilon: f32,
+    _ls_enabled: bool,
+    _ls_num_candidates: i32,
+    _ls_mu: f32,
+    _ls_nu: f32,
+    _fixed_step_size: f32,
+    _d_reg_ref_x: u64,
+    _d_reg_ref_y: u64,
+    _reg_scale: f32,
+    _reg_enabled: bool,
+    _stream: RawCudaStream,
+) -> Result<(), CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
 
-#[cfg(test)]
+#[cfg(all(test, not(cuda_ffi_stub)))]
 mod tests {
 
     use super::*;

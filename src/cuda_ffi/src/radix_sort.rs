@@ -3,15 +3,19 @@
 //! Provides GPU-accelerated radix sort for (u64, u32) key-value pairs,
 //! used for sorting points by Morton code in voxel grid construction.
 
-use std::{ffi::c_int, ptr};
+use std::ffi::c_int;
+#[cfg(not(cuda_ffi_stub))]
+use std::ptr;
 use thiserror::Error;
 
 // ============================================================================
 // FFI Declarations
 // ============================================================================
 
+#[cfg(not(cuda_ffi_stub))]
 type CudaStream = *mut std::ffi::c_void;
 
+#[cfg(not(cuda_ffi_stub))]
 unsafe extern "C" {
     fn cub_radix_sort_pairs_u64_u32_temp_size(
         temp_storage_bytes: *mut usize,
@@ -46,7 +50,9 @@ unsafe extern "C" {
 }
 
 // cudaMemcpyKind values
+#[cfg(not(cuda_ffi_stub))]
 const CUDA_MEMCPY_HOST_TO_DEVICE: c_int = 1;
+#[cfg(not(cuda_ffi_stub))]
 const CUDA_MEMCPY_DEVICE_TO_HOST: c_int = 2;
 
 // ============================================================================
@@ -68,6 +74,8 @@ pub enum CudaError {
     InvalidDevice,
     #[error("CUDA error code {0}")]
     Other(i32),
+    #[error("no CUDA toolkit on this build")]
+    NoToolkit,
 }
 
 impl From<c_int> for CudaError {
@@ -99,9 +107,11 @@ pub fn check_cuda(code: c_int) -> Result<(), CudaError> {
 /// RAII wrapper for CUDA device memory.
 pub struct DeviceBuffer {
     ptr: *mut std::ffi::c_void,
+    #[cfg_attr(cuda_ffi_stub, allow(dead_code))]
     size: usize,
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl DeviceBuffer {
     /// Allocate device memory.
     pub fn new(size: usize) -> Result<Self, CudaError> {
@@ -146,6 +156,7 @@ impl DeviceBuffer {
     }
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl Drop for DeviceBuffer {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
@@ -154,6 +165,29 @@ impl Drop for DeviceBuffer {
             }
         }
     }
+}
+
+/// Stub: no CUDA toolkit on this build. `new` always fails, so no instance
+/// of this type is ever actually constructed here.
+#[cfg(cuda_ffi_stub)]
+impl DeviceBuffer {
+    pub fn new(_size: usize) -> Result<Self, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn copy_from_host<T>(&mut self, _data: &[T]) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn copy_to_host<T>(&self, _data: &mut [T]) -> Result<(), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn as_ptr(&self) -> *mut std::ffi::c_void {
+        self.ptr
+    }
+}
+
+#[cfg(cuda_ffi_stub)]
+impl Drop for DeviceBuffer {
+    fn drop(&mut self) {}
 }
 
 // ============================================================================
@@ -174,6 +208,7 @@ pub struct RadixSorter {
     // No state needed; each call allocates temporary storage
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl RadixSorter {
     /// Create a new radix sorter.
     pub fn new() -> Result<Self, CudaError> {
@@ -294,9 +329,32 @@ impl RadixSorter {
     }
 }
 
+#[cfg(not(cuda_ffi_stub))]
 impl Default for RadixSorter {
     fn default() -> Self {
         Self::new().expect("Failed to create RadixSorter")
+    }
+}
+
+/// Stub: no CUDA toolkit on this build. `new` always fails, so no instance
+/// of this type is ever actually constructed here.
+#[cfg(cuda_ffi_stub)]
+impl RadixSorter {
+    pub fn new() -> Result<Self, CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn sort_pairs(&self, _keys: &[u64], _values: &[u32]) -> Result<(Vec<u64>, Vec<u32>), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+    pub fn sort_pairs_bytes(&self, _keys_bytes: &[u8], _values_bytes: &[u8]) -> Result<(Vec<u8>, Vec<u8>), CudaError> {
+        Err(CudaError::NoToolkit)
+    }
+}
+
+#[cfg(cuda_ffi_stub)]
+impl Default for RadixSorter {
+    fn default() -> Self {
+        Self::new().expect("Failed to create RadixSorter: no CUDA toolkit on this build")
     }
 }
 
@@ -311,6 +369,7 @@ impl Default for RadixSorter {
 ///
 /// # Returns
 /// Required temporary storage size in bytes.
+#[cfg(not(cuda_ffi_stub))]
 pub fn radix_sort_temp_size(num_items: usize) -> Result<usize, CudaError> {
     let mut temp_bytes: usize = 0;
     unsafe {
@@ -340,6 +399,7 @@ pub fn radix_sort_temp_size(num_items: usize) -> Result<usize, CudaError> {
 ///
 /// # Safety
 /// All device pointers must be valid and have sufficient allocated size.
+#[cfg(not(cuda_ffi_stub))]
 pub unsafe fn sort_pairs_inplace(
     d_temp: u64,
     temp_bytes: usize,
@@ -371,11 +431,34 @@ pub unsafe fn sort_pairs_inplace(
     }
 }
 
+/// Stub: no CUDA toolkit on this build.
+#[cfg(cuda_ffi_stub)]
+pub fn radix_sort_temp_size(_num_items: usize) -> Result<usize, CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
+/// Stub: no CUDA toolkit on this build.
+///
+/// # Safety
+/// No device access happens; kept `unsafe` to match the real signature.
+#[cfg(cuda_ffi_stub)]
+pub unsafe fn sort_pairs_inplace(
+    _d_temp: u64,
+    _temp_bytes: usize,
+    _d_keys_in: u64,
+    _d_keys_out: u64,
+    _d_values_in: u64,
+    _d_values_out: u64,
+    _num_items: usize,
+) -> Result<(), CudaError> {
+    Err(CudaError::NoToolkit)
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
 
-#[cfg(test)]
+#[cfg(all(test, not(cuda_ffi_stub)))]
 mod tests {
 
     use super::*;
