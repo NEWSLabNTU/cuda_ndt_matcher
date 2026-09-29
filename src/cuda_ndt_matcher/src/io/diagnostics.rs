@@ -36,7 +36,19 @@ pub(crate) struct DiagnosticCategory {
 }
 
 impl DiagnosticCategory {
-    /// Create a new diagnostic category.
+    /// Create a category named the way Autoware's `DiagnosticsInterface` names
+    /// it: `"<node>: <diagnostic>"`, with the node name as `hardware_id`.
+    ///
+    /// This is the constructor to publish with. The diagnostic graph matches a
+    /// `diag` unit on exactly that string (autoware_diagnostic_graph_aggregator,
+    /// `config/loader.cpp`), so a bare `scan_matching_status` leaves
+    /// `/autoware/localization/scan_matching_status` stale and autonomous mode
+    /// unavailable.
+    pub(crate) fn for_node(node_name: &str, diagnostic_name: &str) -> Self {
+        Self::new(&format!("{node_name}: {diagnostic_name}"), node_name)
+    }
+
+    /// Create a new diagnostic category with a literal name.
     pub(crate) fn new(name: &str, hardware_id: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -110,19 +122,32 @@ impl DiagnosticsInterface {
     /// Create diagnostics interface with publisher.
     pub(crate) fn new(node: &Node) -> Result<Self, rclrs::RclrsError> {
         let publisher = node.create_publisher("/diagnostics")?;
-        let hardware_id = "ndt_scan_matcher";
+        // The node's actual name, not a constant: the launch file's `node_name`
+        // argument renames it, and Autoware's interface uses get_name() too.
+        let [scan_matching, initial_pose, regularization_pose, map_update, trigger_node] =
+            Self::categories_for(&node.name());
 
         Ok(Self {
             publisher,
-            scan_matching: DiagnosticCategory::new("scan_matching_status", hardware_id),
-            initial_pose: DiagnosticCategory::new("initial_pose_subscriber_status", hardware_id),
-            regularization_pose: DiagnosticCategory::new(
-                "regularization_pose_subscriber_status",
-                hardware_id,
-            ),
-            map_update: DiagnosticCategory::new("map_update_status", hardware_id),
-            trigger_node: DiagnosticCategory::new("trigger_node_service_status", hardware_id),
+            scan_matching,
+            initial_pose,
+            regularization_pose,
+            map_update,
+            trigger_node,
         })
+    }
+
+    /// The five categories this node publishes, in publish order, named for
+    /// `node_name`. Separate from `new` so it is testable without a ROS node.
+    pub(crate) fn categories_for(node_name: &str) -> [DiagnosticCategory; 5] {
+        [
+            "scan_matching_status",
+            "initial_pose_subscriber_status",
+            "regularization_pose_subscriber_status",
+            "map_update_status",
+            "trigger_node_service_status",
+        ]
+        .map(|name| DiagnosticCategory::for_node(node_name, name))
     }
 
     /// Get mutable reference to scan matching diagnostics.
@@ -329,6 +354,38 @@ mod tests {
         assert_eq!(status.level, DiagnosticLevel::Warn as u8);
         assert_eq!(status.message, "warning message");
         assert_eq!(status.values.len(), 2);
+    }
+
+    /// Autoware's diagnostic graph matches a `diag` unit on `"<node>: <name>"`
+    /// (autoware_diagnostic_graph_aggregator, config/loader.cpp), and
+    /// autoware_universe_utils::DiagnosticsInterface builds exactly that, with the
+    /// node name as hardware_id. A bare `scan_matching_status` never matches
+    /// `/autoware/localization/scan_matching_status`, the unit goes stale, and
+    /// `/autoware/modes/autonomous` is unavailable under pose_source:=cuda_ndt.
+    #[test]
+    fn test_status_name_matches_autoware_graph_key() {
+        let cat = DiagnosticCategory::for_node("ndt_scan_matcher", "scan_matching_status");
+        let status = cat.to_status();
+        assert_eq!(status.name, "ndt_scan_matcher: scan_matching_status");
+        assert_eq!(status.hardware_id, "ndt_scan_matcher");
+    }
+
+    /// Every category the interface publishes carries the node prefix, so a
+    /// renamed node (the launch's `node_name` arg) stays consistent across them.
+    #[test]
+    fn test_all_categories_prefixed_with_node_name() {
+        let cats = DiagnosticsInterface::categories_for("renamed_ndt");
+        let names: Vec<String> = cats.iter().map(|c| c.to_status().name).collect();
+        assert_eq!(
+            names,
+            vec![
+                "renamed_ndt: scan_matching_status",
+                "renamed_ndt: initial_pose_subscriber_status",
+                "renamed_ndt: regularization_pose_subscriber_status",
+                "renamed_ndt: map_update_status",
+                "renamed_ndt: trigger_node_service_status",
+            ]
+        );
     }
 
     #[test]
