@@ -1,3 +1,4 @@
+use crate::map::DynamicMapLoader;
 use arc_swap::ArcSwap;
 use geometry_msgs::msg::{PoseWithCovariance, PoseWithCovarianceStamped};
 use rclrs::{Publisher, log_debug, log_error, log_info, log_warn};
@@ -28,6 +29,7 @@ pub(crate) fn on_ndt_align(
     ndt_manager: &Arc<DualNdtManager>,
     map_module: &Arc<MapUpdateModule>,
     map_points: &Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
+    map_loader: &DynamicMapLoader,
     latest_sensor_points: &Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
     params: &NdtParams,
     monte_carlo_pub: &Publisher<MarkerArray>,
@@ -73,7 +75,33 @@ pub(crate) fn on_ndt_align(
     let map = match map.as_ref() {
         Some(m) => m,
         None => {
-            log_error!(NODE_NAME, "NDT align failed: No map loaded");
+            // Nothing has loaded tiles yet. Before initialization the matcher
+            // is deactivated, and on_points() -- the only other caller of
+            // request_map_update() -- returns before it asks for tiles. So an
+            // align that arrives early, e.g. from a cart parked at the board
+            // while the stack boots, used to find no map and fail, and so did
+            // every retry: nothing ever asked for the tiles around that pose.
+            //
+            // Ask for them here. Not blocking on the reply, unlike upstream's
+            // synchronous update_map(): this node spins a single-threaded
+            // executor, so waiting here would stop the reply from ever being
+            // processed. The caller's next attempt finds the tiles.
+            let position = pose_utils::position_from_pose_cov(&initial_pose);
+            let requested = map_loader
+                .request_map_update(&position, params.dynamic_map.map_radius as f32)
+                .unwrap_or(false);
+            log_error!(
+                NODE_NAME,
+                "NDT align failed: No map loaded ({}); retry once the tiles arrive",
+                if requested {
+                    format!(
+                        "tiles requested around ({:.1}, {:.1})",
+                        position.x, position.y
+                    )
+                } else {
+                    "map loader unavailable or a request is already pending".to_string()
+                }
+            );
             return PoseWithCovSrvResponse {
                 success: false,
                 reliable: false,

@@ -109,6 +109,7 @@ impl NdtScanMatcherNode {
             &ndt_manager,
             &map_module,
             &map_points,
+            &map_loader,
             &latest_sensor_points,
             &pose_buffer,
             &enabled,
@@ -448,6 +449,7 @@ fn create_services(
     ndt_manager: &Arc<DualNdtManager>,
     map_module: &Arc<MapUpdateModule>,
     map_points: &Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
+    map_loader: &Arc<DynamicMapLoader>,
     latest_sensor_points: &Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
     pose_buffer: &Arc<SmartPoseBuffer>,
     enabled: &Arc<AtomicBool>,
@@ -506,6 +508,7 @@ fn create_services(
         let ndt_manager = Arc::clone(ndt_manager);
         let map_module = Arc::clone(map_module);
         let map_points = Arc::clone(map_points);
+        let map_loader = Arc::clone(map_loader);
         let latest_sensor_points = Arc::clone(latest_sensor_points);
         let params = Arc::clone(params);
         let monte_carlo_pub = debug_pubs.monte_carlo_marker_pub.clone();
@@ -526,6 +529,7 @@ fn create_services(
                     &ndt_manager,
                     &map_module,
                     &map_points,
+                    &map_loader,
                     &latest_sensor_points,
                     &params,
                     &monte_carlo_pub,
