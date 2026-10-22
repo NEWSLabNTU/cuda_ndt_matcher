@@ -20,7 +20,7 @@ rayon = "1.10"
 approx = "0.5"
 
 # ROS 2 dependencies - resolved via ament_index by cargo-ros2
-rclrs = "*"
+rclrs = "0.7"
 std_msgs = "*"
 sensor_msgs = "*"
 geometry_msgs = "*"
