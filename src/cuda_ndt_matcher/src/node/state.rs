@@ -15,7 +15,7 @@ use visualization_msgs::msg::MarkerArray;
 
 use crate::{
     alignment::{DualNdtManager, batch::ScanQueue},
-    io::{diagnostics::DiagnosticsInterface, params::NdtParams},
+    io::{diagnostics::DiagnosticsInterface, divergence::DivergenceMonitor, params::NdtParams},
     map::{DynamicMapLoader, MapUpdateModule},
     transform::{SmartPoseBuffer, tf_handler},
 };
@@ -104,6 +104,9 @@ pub(crate) struct OnPointsContext {
     pub(crate) pose_cov_pub: Publisher<PoseWithCovarianceStamped>,
     pub(crate) debug_pubs: DebugPublishers,
     pub(crate) diagnostics: Arc<Mutex<DiagnosticsInterface>>,
+    /// Divergence detectors and latch for `scan_matching_status`; reset by a
+    /// successful `ndt_align`.
+    pub(crate) divergence: Arc<Mutex<DivergenceMonitor>>,
     pub(crate) params: Arc<NdtParams>,
     pub(crate) tf_handler: Arc<tf_handler::TfHandler>,
     pub(crate) scan_queue: Option<Arc<ScanQueue>>,

@@ -164,6 +164,18 @@
       map_radius: 150.0
       lidar_radius: 100.0
 
+    # Divergence detection in scan_matching_status, latched ERROR until a
+    # successful ndt_align (re-initialization). Detector 1 is
+    # validation.skipping_publish_num consecutive unpublished scans, as
+    # upstream. Detector 2 is the median NVTL of the last nvtl_window_size
+    # scans below divergence.nvtl_median_gate. That gate is per map and per
+    # input, so it is NOT set here: it is the launch argument
+    # divergence_nvtl_median_gate (default 0.0, disabled), which overrides
+    # this file. 2.5 for the Ming-Da basement with the 2026-10 input; re-derive
+    # it from a healthy run's NVTL distribution, as for the publish gate above.
+    divergence:
+      nvtl_window_size: 10
+
     # Batch processing for GPU-parallel alignment
     # When enabled, scans are queued and processed in batches to increase GPU utilization
     batch:

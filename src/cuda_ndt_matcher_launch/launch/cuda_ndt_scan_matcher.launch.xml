@@ -22,6 +22,13 @@
 
   <arg name="node_name" default="ndt_scan_matcher" description="Use a different name for this node"/>
 
+  <!-- Divergence detector 2: scan_matching_status latches ERROR when the median
+       NVTL of the last divergence.nvtl_window_size scans falls below this.
+       Per map and per input, so it is an argument rather than a value in
+       param_file, and it overrides any value there. 0.0 disables. Write it as
+       a float (2.5, not 2): the parameter is declared double. -->
+  <arg name="divergence_nvtl_median_gate" default="0.0" description="Median-NVTL divergence gate; 0.0 disables"/>
+
   <node pkg="cuda_ndt_matcher" exec="cuda_ndt_matcher" name="$(var node_name)" output="both">
     <remap from="points_raw" to="$(var input_pointcloud)"/>
     <remap from="ekf_pose_with_covariance" to="$(var input_initial_pose_topic)"/>
@@ -38,5 +45,6 @@
     <remap from="pcd_loader_service" to="$(var client_map_loader)"/>
 
     <param from="$(var param_file)"/>
+    <param name="divergence.nvtl_median_gate" value="$(var divergence_nvtl_median_gate)"/>
   </node>
 </launch>

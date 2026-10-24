@@ -856,6 +856,20 @@ fn publish_diagnostics(
         let mut diag = ctx.diagnostics.lock();
         scan_diag.apply_to(diag.scan_matching_mut());
 
+        // Divergence detectors (L6), latched until a successful ndt_align.
+        // Every aligned scan counts, published or not.
+        {
+            let mut monitor = ctx.divergence.lock();
+            let was_latched = monitor.latched().is_some();
+            if let Some(divergence) =
+                monitor.observe(output.skipping_publish_num, output.nvtl_score)
+                && !was_latched
+            {
+                log_error!(NODE_NAME, "{divergence}");
+            }
+            monitor.apply_to(diag.scan_matching_mut());
+        }
+
         let map_status = ctx.map_loader.get_status();
         let map_diag = diag.map_update_mut();
         map_diag.clear();

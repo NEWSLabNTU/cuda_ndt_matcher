@@ -476,6 +476,10 @@ mod tests {
                 batch_trigger: 4,
                 timeout_ms: 20,
             },
+            divergence: crate::io::params::DivergenceParams {
+                nvtl_window_size: 10,
+                nvtl_median_gate: 0.0,
+            },
         }
     }
 

@@ -53,7 +53,8 @@ pub(crate) struct ValidationParams {
     pub(crate) initial_to_result_distance_tolerance_m: f64,
     #[allow(dead_code)] // Loaded from ROS config; reserved for execution time monitoring
     pub(crate) critical_upper_bound_exe_time_ms: f64,
-    #[allow(dead_code)] // Loaded from ROS config; reserved for skip-based publish gating
+    /// Consecutive unpublished scans at which `scan_matching_status` goes
+    /// ERROR (divergence detector 1, as upstream). 0 or less disables.
     pub(crate) skipping_publish_num: i32,
 }
 
@@ -64,6 +65,17 @@ pub(crate) struct NoGroundPointsParams {
     pub(crate) enable: bool,
     /// Z threshold for ground removal: points with z - base_link_z <= threshold are ground
     pub(crate) z_margin_for_ground_removal: f32,
+}
+
+/// Divergence detector 2 (median NVTL window). Detector 1 uses
+/// `validation.skipping_publish_num`. See `io::divergence`.
+#[derive(Clone)]
+pub(crate) struct DivergenceParams {
+    /// Scans in the NVTL window.
+    pub(crate) nvtl_window_size: usize,
+    /// ERROR when the window's median NVTL is below this. Per map and per
+    /// input; 0.0 (the default) disables.
+    pub(crate) nvtl_median_gate: f64,
 }
 
 /// Score estimation configuration
@@ -186,6 +198,7 @@ pub(crate) struct NdtParams {
     pub(crate) dynamic_map: DynamicMapParams,
     pub(crate) regularization: RegularizationParams,
     pub(crate) batch: BatchParams,
+    pub(crate) divergence: DivergenceParams,
 }
 
 impl NdtParams {
@@ -455,7 +468,32 @@ impl NdtParams {
                     .try_into()
                     .context("batch.timeout_ms out of i32 range")?,
             },
+            divergence: DivergenceParams {
+                nvtl_window_size: node
+                    .declare_parameter("divergence.nvtl_window_size")
+                    .default(10)
+                    .mandatory()?
+                    .get()
+                    .try_into()
+                    .context("divergence.nvtl_window_size must be non-negative")?,
+                nvtl_median_gate: node
+                    .declare_parameter("divergence.nvtl_median_gate")
+                    .default(0.0)
+                    .mandatory()?
+                    .get(),
+            },
         })
+    }
+}
+
+impl NdtParams {
+    /// Thresholds for `io::divergence::DivergenceMonitor`.
+    pub(crate) fn divergence_config(&self) -> crate::io::divergence::DivergenceConfig {
+        crate::io::divergence::DivergenceConfig {
+            max_consecutive_skips: self.validation.skipping_publish_num,
+            nvtl_window_size: self.divergence.nvtl_window_size,
+            nvtl_median_gate: self.divergence.nvtl_median_gate,
+        }
     }
 }
 

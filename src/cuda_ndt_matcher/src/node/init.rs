@@ -25,7 +25,7 @@ use crate::{
         DualNdtManager,
         batch::{ScanQueue, ScanQueueConfig, ScanResult},
     },
-    io::{diagnostics::DiagnosticsInterface, params::NdtParams},
+    io::{diagnostics::DiagnosticsInterface, divergence::DivergenceMonitor, params::NdtParams},
     map::{DynamicMapLoader, MapUpdateModule},
     transform::{SmartPoseBuffer, pose_utils, tf_handler},
 };
@@ -77,6 +77,16 @@ impl NdtScanMatcherNode {
         // Create publishers, diagnostics, batch queue
         let (pose_pub, pose_cov_pub, debug_pubs) = create_publishers(node)?;
         let diagnostics = Arc::new(Mutex::new(DiagnosticsInterface::new(node)?));
+        let divergence = Arc::new(Mutex::new(DivergenceMonitor::new(
+            params.divergence_config(),
+        )));
+        log_info!(
+            NODE_NAME,
+            "Divergence detectors: skipping_publish_num >= {}, median NVTL of {} scans < {} (0 disables)",
+            params.validation.skipping_publish_num,
+            params.divergence.nvtl_window_size,
+            params.divergence.nvtl_median_gate
+        );
         let scan_queue =
             create_batch_queue(&params, &ndt_manager, &pose_pub, &pose_cov_pub, &debug_pubs);
 
@@ -98,6 +108,7 @@ impl NdtScanMatcherNode {
                 &pose_cov_pub,
                 &debug_pubs,
                 &diagnostics,
+                &divergence,
                 &params,
                 &tf_handler,
                 &scan_queue,
@@ -113,6 +124,8 @@ impl NdtScanMatcherNode {
             &latest_sensor_points,
             &pose_buffer,
             &enabled,
+            &skip_counter,
+            &divergence,
             &params,
             &debug_pubs,
         )?;
@@ -311,6 +324,7 @@ fn create_subscriptions(
     pose_cov_pub: &Publisher<PoseWithCovarianceStamped>,
     debug_pubs: &DebugPublishers,
     diagnostics: &Arc<Mutex<DiagnosticsInterface>>,
+    divergence: &Arc<Mutex<DivergenceMonitor>>,
     params: &Arc<NdtParams>,
     tf_handler: &Arc<tf_handler::TfHandler>,
     scan_queue: &Option<Arc<ScanQueue>>,
@@ -342,6 +356,7 @@ fn create_subscriptions(
             pose_cov_pub: pose_cov_pub.clone(),
             debug_pubs: debug_pubs.clone(),
             diagnostics: Arc::clone(diagnostics),
+            divergence: Arc::clone(divergence),
             params: Arc::clone(params),
             tf_handler: Arc::clone(tf_handler),
             scan_queue: scan_queue.clone(),
@@ -453,6 +468,8 @@ fn create_services(
     latest_sensor_points: &Arc<ArcSwap<Option<Vec<[f32; 3]>>>>,
     pose_buffer: &Arc<SmartPoseBuffer>,
     enabled: &Arc<AtomicBool>,
+    skip_counter: &Arc<AtomicI32>,
+    divergence: &Arc<Mutex<DivergenceMonitor>>,
     params: &Arc<NdtParams>,
     debug_pubs: &DebugPublishers,
 ) -> Result<(
@@ -512,6 +529,8 @@ fn create_services(
         let latest_sensor_points = Arc::clone(latest_sensor_points);
         let params = Arc::clone(params);
         let monte_carlo_pub = debug_pubs.monte_carlo_marker_pub.clone();
+        let skip_counter = Arc::clone(skip_counter);
+        let divergence = Arc::clone(divergence);
 
         node.create_service::<autoware_internal_localization_msgs::srv::PoseWithCovarianceStamped, _>(
             "ndt_align_srv",
@@ -524,7 +543,7 @@ fn create_services(
                     }
                 }
 
-                services::on_ndt_align(
+                let response = services::on_ndt_align(
                     req,
                     &ndt_manager,
                     &map_module,
@@ -533,7 +552,19 @@ fn create_services(
                     &latest_sensor_points,
                     &params,
                     &monte_carlo_pub,
-                )
+                );
+                // A successful align is the re-initialization that releases the
+                // divergence latch (L6). The skip count and NVTL window belong to
+                // the old pose, so they go with it.
+                if response.success {
+                    let mut monitor = divergence.lock();
+                    if let Some(was) = monitor.latched() {
+                        log_info!(NODE_NAME, "Re-initialized; divergence latch cleared ({was})");
+                    }
+                    monitor.reset();
+                    skip_counter.store(0, Ordering::SeqCst);
+                }
+                response
             },
         )?
     };

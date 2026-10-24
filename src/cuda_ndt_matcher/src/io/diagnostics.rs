@@ -87,6 +87,16 @@ impl DiagnosticCategory {
         self.message = message.to_string();
     }
 
+    /// Current level.
+    pub(crate) fn level(&self) -> DiagnosticLevel {
+        self.level
+    }
+
+    /// Current message.
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+
     /// Build the DiagnosticStatus message.
     fn to_status(&self) -> DiagnosticStatus {
         DiagnosticStatus {
