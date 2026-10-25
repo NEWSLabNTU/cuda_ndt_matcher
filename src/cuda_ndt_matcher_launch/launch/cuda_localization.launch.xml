@@ -22,6 +22,9 @@
 
   <!-- NDT parameters -->
   <arg name="ndt_param_file" default="$(find-pkg-share cuda_ndt_matcher_launch)/config/cuda_scan_matcher.param.yaml"/>
+  <!-- The EKF's parameters. Default: the one in localization_config_path, as before; a caller
+       with another twist estimator may need another tuning (golf-cart: twist_source:=rigloc). -->
+  <arg name="ekf_localizer_param_path" default="$(var localization_config_path)/ekf_localizer.param.yaml"/>
 
   <!-- Pose initializer options -->
   <arg name="user_defined_initial_pose_enable" default="false"/>
@@ -115,7 +118,7 @@
     <group>
       <push-ros-namespace namespace="pose_twist_fusion_filter"/>
       <include file="$(find-pkg-share tier4_localization_launch)/launch/pose_twist_fusion_filter/pose_twist_fusion_filter.launch.xml">
-        <arg name="ekf_localizer_param_path" value="$(var localization_config_path)/ekf_localizer.param.yaml"/>
+        <arg name="ekf_localizer_param_path" value="$(var ekf_localizer_param_path)"/>
         <arg name="stop_filter_param_path" value="$(var localization_config_path)/stop_filter.param.yaml"/>
         <arg name="twist2accel_param_path" value="$(var localization_config_path)/twist2accel.param.yaml"/>
         <arg name="pose_instability_detector_param_path" value="$(var localization_config_path)/pose_instability_detector.param.yaml"/>

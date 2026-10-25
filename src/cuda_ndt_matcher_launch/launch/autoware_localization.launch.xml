@@ -41,6 +41,8 @@
        value starts none, and the caller launches its own estimator on that
        topic (golfcart_launch: twist_source:=rigloc). -->
   <arg name="twist_source" default="gyro_odom" description="gyro_odom, or another value to start no twist estimator here"/>
+  <!-- The EKF's parameters. Default: the one in localization_config_path, as before. -->
+  <arg name="ekf_localizer_param_path" default="$(var localization_config_path)/ekf_localizer.param.yaml"/>
   <arg name="ndt_enabled" default="true"/>
   <arg name="ekf_enabled" default="true"/>
   <arg name="stop_check_enabled" default="false"/>
@@ -108,7 +110,7 @@
     <group>
       <push-ros-namespace namespace="pose_twist_fusion_filter"/>
       <include file="$(find-pkg-share tier4_localization_launch)/launch/pose_twist_fusion_filter/pose_twist_fusion_filter.launch.xml">
-        <arg name="ekf_localizer_param_path" value="$(var localization_config_path)/ekf_localizer.param.yaml"/>
+        <arg name="ekf_localizer_param_path" value="$(var ekf_localizer_param_path)"/>
         <arg name="stop_filter_param_path" value="$(var localization_config_path)/stop_filter.param.yaml"/>
         <arg name="twist2accel_param_path" value="$(var localization_config_path)/twist2accel.param.yaml"/>
         <arg name="pose_instability_detector_param_path" value="$(var localization_config_path)/pose_instability_detector.param.yaml"/>
