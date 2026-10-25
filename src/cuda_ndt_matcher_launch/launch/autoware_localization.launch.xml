@@ -36,6 +36,11 @@
   -->
   <arg name="regularization_pose_topic" default="/sensing/gnss/pose_with_covariance"
        description="Pose source for NDT regularization; must be tag-only indoors"/>
+  <!-- Which node publishes /localization/twist_estimator/twist_with_covariance,
+       the EKF's twist input. gyro_odom starts gyro_odometer here; any other
+       value starts none, and the caller launches its own estimator on that
+       topic (golfcart_launch: twist_source:=rigloc). -->
+  <arg name="twist_source" default="gyro_odom" description="gyro_odom, or another value to start no twist estimator here"/>
   <arg name="ndt_enabled" default="true"/>
   <arg name="ekf_enabled" default="true"/>
   <arg name="stop_check_enabled" default="false"/>
@@ -44,8 +49,8 @@
   <group>
     <push-ros-namespace namespace="localization"/>
 
-    <!-- Twist estimator: Gyro odometer -->
-    <group>
+    <!-- Twist estimator: Gyro odometer, unless twist_source names another -->
+    <group if="$(eval '\'$(var twist_source)\' == \'gyro_odom\'')">
       <push-ros-namespace namespace="twist_estimator"/>
       <include file="$(find-pkg-share tier4_localization_launch)/launch/pose_twist_estimator/gyro_odometer.launch.xml"/>
     </group>
