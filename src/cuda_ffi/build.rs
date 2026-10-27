@@ -66,14 +66,21 @@ fn main() {
     let cuda_include = toolkit.root.join("include");
     let cuda_lib = toolkit.root.join("lib64");
 
-    // Find CUB headers (included with CUDA 11+)
-    // CUB is header-only and included in CUDA toolkit
-    if !cuda_include.join("cub").exists() {
-        panic!(
-            "CUB headers not found in {:?}. CUB is included with CUDA 11+.",
-            cuda_include
-        );
-    }
+    // Find CUB headers (header-only, in every toolkit since CUDA 11): under
+    // include/cub up to CUDA 12, under include/cccl/cub since CUDA 13, which moved
+    // the CCCL libraries (CUB, Thrust, libcu++) into include/cccl. nvcc 13 puts
+    // that directory on its own search path; passing it too keeps the kernels'
+    // `#include <cub/...>` working whatever the nvcc.
+    let cub_include = [cuda_include.clone(), cuda_include.join("cccl")]
+        .into_iter()
+        .find(|dir| dir.join("cub").exists())
+        .unwrap_or_else(|| {
+            panic!(
+                "CUB headers not found in {:?} or {:?}. CUB is included with CUDA 11+.",
+                cuda_include,
+                cuda_include.join("cccl")
+            )
+        });
 
     // Output directory
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -100,7 +107,13 @@ fn main() {
 
     // Compile in parallel using rayon (work-stealing thread pool)
     cuda_sources.par_iter().for_each(|source| {
-        compile_cuda_source(source, &out_dir, &cuda_include, &toolkit.nvcc, &gencodes);
+        compile_cuda_source(
+            source,
+            &out_dir,
+            &[&cuda_include, &cub_include],
+            &toolkit.nvcc,
+            &gencodes,
+        );
     });
 
     // Link against CUDA runtime and cuSOLVER
@@ -394,7 +407,7 @@ fn gencode_flags(arches: &[u32]) -> Vec<String> {
 fn compile_cuda_source(
     source: &str,
     out_dir: &Path,
-    cuda_include: &Path,
+    include_dirs: &[&Path],
     nvcc: &Path,
     gencodes: &[String],
 ) {
@@ -408,14 +421,16 @@ fn compile_cuda_source(
         "-o".into(),
         obj_path.to_str().unwrap().into(),
         source.into(),
-        "-I".into(),
-        cuda_include.to_str().unwrap().into(),
         // Generate position-independent code for shared library
         "-Xcompiler".into(),
         "-fPIC".into(),
         // Optimize
         "-O3".into(),
     ];
+    for dir in include_dirs {
+        args.push("-I".into());
+        args.push(dir.to_str().unwrap().into());
+    }
     // No -arch alongside these: it names a single target and would contradict
     // the list.
     args.extend(gencodes.iter().cloned());
