@@ -136,6 +136,7 @@ __global__ void ndt_graph_init_kernel(
     state_buffer[StateOffset::MAX_OSC_COUNT] = 0.0f;
     state_buffer[StateOffset::ALPHA_SUM] = 0.0f;
     state_buffer[StateOffset::ACTUAL_STEP_LEN] = 0.0f;
+    state_buffer[StateOffset::STEP_BOUND] = 0.0f;  // step_size at the first solve
 
     // Clear delta
     for (int i = 0; i < 6; i++) {
@@ -317,6 +318,12 @@ __global__ void ndt_graph_solve_kernel(
 ) {
     if (threadIdx.x != 0) return;
 
+    // The step bound: step_size, halved by the update kernel each time the step reverses
+    if (state_buffer[StateOffset::STEP_BOUND] <= 0.0f) {
+        state_buffer[StateOffset::STEP_BOUND] = config.fixed_step_size;
+    }
+    const float step_bound = state_buffer[StateOffset::STEP_BOUND];
+
     // Load reduced values
     float score = reduce_buffer[ReduceOffset::SCORE];
     float correspondence_count = reduce_buffer[ReduceOffset::CORRESPONDENCES];
@@ -453,7 +460,7 @@ __global__ void ndt_graph_solve_kernel(
         // Candidates are step lengths now, not fractions. Start at the Newton
         // length clamped to step_size -- the reference's trial point -- and
         // decay by the golden ratio. step_min mirrors its trans_epsilon/2.
-        float step_max = config.fixed_step_size;
+        float step_max = step_bound;
         float step_min = 0.5f * sqrtf(config.epsilon_sq);
         float step = (delta_norm < step_max) ? delta_norm : step_max;
         if (step < step_min) step = step_min;
@@ -499,7 +506,7 @@ __global__ void ndt_graph_solve_kernel(
         float delta_norm = sqrtf(delta_norm_sq);
 
         float step_length = delta_norm;
-        if (step_length > config.fixed_step_size) step_length = config.fixed_step_size;
+        if (step_length > step_bound) step_length = step_bound;
 
         // Scale delta
         float scale = (delta_norm > 1e-10f) ? (step_length / delta_norm) : 0.0f;
@@ -786,6 +793,13 @@ __global__ void ndt_graph_update_kernel(
             constexpr float INVERSION_THRESHOLD = -0.9f;
             if (cosine < INVERSION_THRESHOLD) {
                 state_buffer[StateOffset::OSC_COUNT] += 1.0f;
+                // The step went back the way it came: a step bound longer than the distance
+                // between two poses makes Newton cycle between them to max_iterations, whose
+                // skip Autoware treats as a failed scan. Halving the bound settles a
+                // two-point cycle in a few iterations; a search that never reverses keeps
+                // step_size (Autoware's fix in NEWSLabNTU/autoware_core
+                // csb/ndt-step-reversal-1.5.0, scenario-world-bridge issues 002 and 017).
+                state_buffer[StateOffset::STEP_BOUND] *= 0.5f;
             } else {
                 state_buffer[StateOffset::OSC_COUNT] = 0.0f;
             }

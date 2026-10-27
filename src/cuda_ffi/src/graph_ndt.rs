@@ -47,7 +47,7 @@ use std::ffi::c_int;
 // ============================================================================
 
 /// State buffer size in floats
-pub const STATE_BUFFER_SIZE: usize = 102;
+pub const STATE_BUFFER_SIZE: usize = 103;
 
 /// Reduce buffer size in floats
 pub const REDUCE_BUFFER_SIZE: usize = 29;

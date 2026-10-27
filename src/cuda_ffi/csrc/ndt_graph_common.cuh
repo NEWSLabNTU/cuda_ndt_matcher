@@ -20,7 +20,7 @@ constexpr int GRAPH_LS_BATCH_SIZE = 4;
 constexpr int GRAPH_MAX_NEIGHBORS = 8;
 
 // ============================================================================
-// State Buffer Layout (102 floats = 408 bytes)
+// State Buffer Layout (103 floats = 412 bytes)
 // Persistent across iterations - holds optimization state
 // ============================================================================
 
@@ -40,8 +40,10 @@ namespace StateOffset {
     constexpr int CANDIDATE_SCORES = 38;   // [38-45] Scores at each candidate [8]
     constexpr int CANDIDATE_GRADS = 46;    // [46-93] Gradients at each candidate [8×6=48]
     constexpr int CANDIDATE_CORR = 94;     // [94-101] Correspondences at each candidate [8]
+    constexpr int STEP_BOUND = 102;        // [102]   This alignment's step bound: step_size, halved
+                                           //         at each reversal (0 until the first solve)
 
-    constexpr int TOTAL_SIZE = 102;
+    constexpr int TOTAL_SIZE = 103;
 }
 
 // ============================================================================

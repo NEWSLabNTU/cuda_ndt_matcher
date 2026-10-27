@@ -173,7 +173,7 @@ pub struct FullGpuPipelineV2 {
     // Graph-based kernel buffers (Phase 24)
     // ========================================================================
     graph_initial_pose: Handle,  // [6] input pose for graph kernels
-    graph_state_buffer: Handle,  // [102] persistent state across iterations
+    graph_state_buffer: Handle,  // [103] persistent state across iterations
     graph_reduce_buffer: Handle, // [29] per-iteration reduction accumulator
     graph_ls_buffer: Handle,     // [68] line search state
     graph_output_buffer: Handle, // [48] final output
