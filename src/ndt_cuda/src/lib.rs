@@ -65,6 +65,12 @@ pub mod test_utils;
 pub mod timing;
 pub mod voxel_grid;
 
+// The build scripts' NVRTC selection, compiled here only so its tests run.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../nvrtc_select.rs"]
+mod nvrtc_select;
+
 pub use derivatives::{
     AggregatedDerivatives, AngularDerivatives, DerivativeResult, DistanceMetric, GaussianParams,
     PointDerivatives,

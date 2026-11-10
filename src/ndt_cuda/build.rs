@@ -1,6 +1,8 @@
-//! Pins the CUDA version that `cubecl-cuda` compiles against.
+//! Pins the CUDA version that `cubecl-cuda` compiles against, and points this
+//! crate's test binaries at an NVRTC that can compile for the local GPU (see
+//! `nvrtc_select.rs`; the node does the same in its own build.rs).
 //!
-//! This build script does nothing itself. It exists so that the
+//! Beyond that, this build script does nothing itself. It exists so that the
 //! `[build-dependencies]` block in Cargo.toml is actually resolved, which is
 //! what forces `cubecl-cuda`'s own build-dependency copy of `cudarc` onto an
 //! explicit CUDA floor.
@@ -18,6 +20,11 @@
 //! ones, so pinning the normal copy cannot reach the build-dependency copy.
 //! Declaring the same crate as a build-dependency here is what closes that gap.
 
+#[path = "nvrtc_select.rs"]
+mod nvrtc_select;
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=nvrtc_select.rs");
+    nvrtc_select::emit_rpath();
 }

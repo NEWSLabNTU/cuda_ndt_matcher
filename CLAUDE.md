@@ -97,9 +97,28 @@ To pin a toolkit for real, point `CUDA_PATH` at a versioned directory
 
 At runtime the toolkit matters again, and `CUDA_PATH` does not govern it:
 CubeCL compiles its kernels with NVRTC using the compute capability read from
-the device, and cudarc resolves cuSOLVER symbols on load. Both come from
-whatever `LD_LIBRARY_PATH` finds, which is why `scripts/select_cuda.sh` sets
-both variables for the test recipes.
+the device, and cudarc resolves cuSOLVER symbols on load. Both are loaded by
+bare name, so they come from whatever the loader finds first -- on a desktop
+whose `/usr/local/cuda` is 12.6, an NVRTC that rejects the RTX 5090's sm_120:
+
+    nvrtc: error: invalid value for --gpu-architecture (-arch)
+
+A process cannot change its own library search path, and neither cudarc nor
+CubeCL takes a path or architecture override, so the choice is made at link
+time. The build scripts of `cuda_ndt_matcher` (the node) and `ndt_cuda` (its
+tests) run `src/ndt_cuda/nvrtc_select.rs`: when the toolkit the loader would
+find cannot compile for the build host's GPU, the newest toolkit that can, and
+that the driver accepts, is embedded as a DT_RPATH, which wins over
+`LD_LIBRARY_PATH`. The build says so:
+
+    warning: loading NVRTC from /usr/local/cuda-12.8/lib64 at runtime: the
+    default cannot compile for this GPU (sm_120)
+
+When the default suffices (the AGX Orin) or there is no GPU at build time,
+nothing is embedded and the binary is unchanged. A toolkit installed after the
+build is picked up only by rebuilding (`readelf -d` on the
+binary shows the RPATH). `scripts/select_cuda.sh` still sets `LD_LIBRARY_PATH`
+for the test recipes; it is no longer needed for them to pass.
 
 ## Cargo Features
 
