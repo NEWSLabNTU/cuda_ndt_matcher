@@ -33,6 +33,8 @@ pub(crate) struct DiagnosticCategory {
     level: DiagnosticLevel,
     message: String,
     key_values: Vec<(String, String)>,
+    /// Set by the first write: Autoware publishes a category only once its event happened.
+    written: bool,
 }
 
 impl DiagnosticCategory {
@@ -56,6 +58,7 @@ impl DiagnosticCategory {
             level: DiagnosticLevel::Ok,
             message: String::new(),
             key_values: Vec::new(),
+            written: false,
         }
     }
 
@@ -68,6 +71,7 @@ impl DiagnosticCategory {
 
     /// Add a key-value pair.
     pub(crate) fn add_key_value(&mut self, key: &str, value: impl ToString) {
+        self.written = true;
         self.key_values.push((key.to_string(), value.to_string()));
     }
 
@@ -75,6 +79,7 @@ impl DiagnosticCategory {
     /// Only updates if the new level is more severe than current.
     #[allow(dead_code)] // Autoware diagnostic API; used in tests and reserved for future categories
     pub(crate) fn update_level_and_message(&mut self, level: DiagnosticLevel, message: &str) {
+        self.written = true;
         if level as u8 > self.level as u8 {
             self.level = level;
             self.message = message.to_string();
@@ -83,6 +88,7 @@ impl DiagnosticCategory {
 
     /// Set the diagnostic level and message unconditionally.
     pub(crate) fn set_level_and_message(&mut self, level: DiagnosticLevel, message: &str) {
+        self.written = true;
         self.level = level;
         self.message = message.to_string();
     }
@@ -116,6 +122,17 @@ impl DiagnosticCategory {
     }
 }
 
+/// The statuses of the categories something has written, in order: a category whose event
+/// never happened (no initial pose yet, no service call) is absent, as in Autoware, rather
+/// than an empty OK.
+fn written_statuses(categories: &[&DiagnosticCategory]) -> Vec<DiagnosticStatus> {
+    categories
+        .iter()
+        .filter(|c| c.written)
+        .map(|c| c.to_status())
+        .collect()
+}
+
 /// Diagnostics interface for NDT scan matcher.
 ///
 /// Provides methods to publish diagnostic status matching Autoware's format.
@@ -134,8 +151,13 @@ impl DiagnosticsInterface {
         let publisher = node.create_publisher("/diagnostics")?;
         // The node's actual name, not a constant: the launch file's `node_name`
         // argument renames it, and Autoware's interface uses get_name() too.
-        let [scan_matching, initial_pose, regularization_pose, map_update, trigger_node] =
-            Self::categories_for(&node.name());
+        let [
+            scan_matching,
+            initial_pose,
+            regularization_pose,
+            map_update,
+            trigger_node,
+        ] = Self::categories_for(&node.name());
 
         Ok(Self {
             publisher,
@@ -195,13 +217,13 @@ impl DiagnosticsInterface {
                 stamp,
                 frame_id: String::new(),
             },
-            status: vec![
-                self.scan_matching.to_status(),
-                self.initial_pose.to_status(),
-                self.regularization_pose.to_status(),
-                self.map_update.to_status(),
-                self.trigger_node.to_status(),
-            ],
+            status: written_statuses(&[
+                &self.scan_matching,
+                &self.initial_pose,
+                &self.regularization_pose,
+                &self.map_update,
+                &self.trigger_node,
+            ]),
         };
         let _ = self.publisher.publish(msg);
     }
@@ -479,5 +501,27 @@ mod tests {
         let keys: Vec<_> = cat.key_values.iter().map(|(k, _)| k.as_str()).collect();
         assert!(keys.contains(&"transform_probability_array"));
         assert!(keys.contains(&"nearest_voxel_transformation_likelihood_array"));
+    }
+
+    #[test]
+    fn test_a_category_nothing_wrote_is_not_published() {
+        // Autoware publishes a category when its event happens (a scan, an initial pose, a
+        // service call); one that never happened is absent, not an empty OK
+        let mut scan = DiagnosticCategory::for_node("ndt_scan_matcher", "scan_matching_status");
+        let initial =
+            DiagnosticCategory::for_node("ndt_scan_matcher", "initial_pose_subscriber_status");
+        scan.add_key_value("sensor_points_size", 100);
+        let statuses = written_statuses(&[&scan, &initial]);
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].name, "ndt_scan_matcher: scan_matching_status");
+    }
+
+    #[test]
+    fn test_clear_keeps_a_category_published() {
+        // the scan category is cleared before every scan; it stays on /diagnostics
+        let mut scan = DiagnosticCategory::for_node("ndt_scan_matcher", "scan_matching_status");
+        scan.set_level_and_message(DiagnosticLevel::Ok, "");
+        scan.clear();
+        assert_eq!(written_statuses(&[&scan]).len(), 1);
     }
 }
