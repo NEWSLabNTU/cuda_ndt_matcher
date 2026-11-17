@@ -523,6 +523,29 @@ This adds `1/(n-1)` to each diagonal element. For n=6, this is +0.2 per diagonal
 
 **Verification**: All 421 tests pass (355 ndt_cuda + 66 cuda_ffi)
 
+### Pitch² Hessian Sign Fix (2026-11-17)
+
+**Bug**: `derivatives/angular.rs` had `h_ang[(6, 2)] = sy` (the z coefficient of
+d1, ∂²(R·x)/∂pitch² for x). The x row of R = Rx·Ry·Rz is `[cy·cz, -cy·sz, sy]`,
+so the second pitch derivative ends in `-sy`. Magnusson's Eq. 6.21 and Autoware
+before autoware_core #1217 (fixed in core 1.10.0, i.e. Autoware 2.1.0) carried
+the same `+sy`.
+
+**Reach**: CPU derivatives only (`compute_derivatives_cpu*`: `NdtOptimizer::align`,
+`NDT_USE_GPU=0`, GNSS regularization on, and the CPU fallback of batch align).
+The CUDA kernels (`persistent_ndt_device.cuh`, `compute_point_hessians_inline`)
+already had `-sp`, so the default GPU path is unchanged.
+
+**Guards**: `angular.rs::test_hessian_matches_finite_difference_at_nonzero_rpy`
+(every `h_ang` row against a finite-difference Hessian of R·x) and
+`solver.rs::test_cpu_and_gpu_hessians_agree_at_nonzero_rpy` (CPU vs GPU Hessian
+at `(0.05, -0.04, 3.06)`: 1.35e-4 relative before the fix, 3e-7 after).
+
+**Comparison fork**: `tests/comparison/autoware_core` is on branch
+`cuda_ndt-1.10.0` (core 1.10.0 + the debug patch), which only configures
+against Autoware 2.1.0; `tests/comparison/justfile` defaults
+`AUTOWARE_VERSION=2.1.0`. The 1.5.0 fork stays on branch `cuda_ndt`.
+
 ## Performance Summary (2026-01-30)
 
 See `docs/performance/autoware-comparison.md` for detailed analysis.

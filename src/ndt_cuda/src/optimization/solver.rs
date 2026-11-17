@@ -1502,6 +1502,64 @@ mod tests {
         );
     }
 
+    /// The CPU and GPU arms must report the same Hessian at a pose with roll,
+    /// pitch and yaw all non-zero.
+    ///
+    /// The two arms carry separate copies of the angular second derivatives:
+    /// `derivatives/angular.rs` for the CPU and `persistent_ndt_device.cuh` for
+    /// the kernels. They disagreed on the pitch² x-term (`h_ang[(6, 2)]`, the
+    /// sign upstream fixed in autoware_core #1217) until 2026-11-17, and only a
+    /// pose with non-zero pitch and a scene with height can show it.
+    #[test]
+    fn test_cpu_and_gpu_hessians_agree_at_nonzero_rpy() {
+        use crate::optimization::types::pose_vector_to_isometry;
+
+        let grid = create_corner_grid();
+        let truth = pose_vector_to_isometry(&[0.30, -0.20, 0.05, 0.05, -0.04, 3.06]);
+        let source: Vec<[f32; 3]> = corner_cloud()
+            .iter()
+            .map(|p| {
+                let q =
+                    truth.inverse() * nalgebra::Point3::new(p[0] as f64, p[1] as f64, p[2] as f64);
+                [q.x as f32, q.y as f32, q.z as f32]
+            })
+            .collect();
+
+        let optimizer = NdtOptimizer::with_defaults();
+        let cpu = optimizer.align(&source, &grid, truth);
+        let gpu = optimizer
+            .align_full_gpu(&source, &grid, truth)
+            .expect("GPU align failed");
+
+        assert!(
+            cpu.num_correspondences > 0,
+            "fixture does not score on the CPU"
+        );
+        assert!(
+            gpu.num_correspondences > 0,
+            "fixture does not score on the GPU"
+        );
+        let between = (cpu.pose.translation.vector - gpu.pose.translation.vector).norm();
+        assert!(
+            between < 0.01,
+            "arms ended {between:.4} m apart; Hessians not comparable"
+        );
+
+        let scale = cpu.hessian.abs().max();
+        let worst = (cpu.hessian - gpu.hessian).abs().max() / scale;
+        println!(
+            "pitch-pitch: cpu {:.3} gpu {:.3}; worst relative difference {worst:.2e}",
+            cpu.hessian[(4, 4)],
+            gpu.hessian[(4, 4)]
+        );
+        assert!(
+            worst < 1e-5,
+            "CPU and GPU Hessians differ by {worst:.2e} of the largest entry\ncpu {}\ngpu {}",
+            cpu.hessian,
+            gpu.hessian
+        );
+    }
+
     // GPU path tests
     // Note: These tests pass individually but may fail in the full test suite due to CubeCL
     // internal state management. Run with `cargo test test_align_full_gpu --nocapture`

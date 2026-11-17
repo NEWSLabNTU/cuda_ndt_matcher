@@ -4,6 +4,7 @@
 [submodule "tests/comparison/autoware_core"]
 	path = tests/comparison/autoware_core
 	url = https://github.com/jerry73204/autoware_core.git
+	branch = cuda_ndt-1.10.0
 [submodule "src/autoware_rosbag_replay"]
 	path = tests/rosbag_replay
 	url = https://github.com/jerry73204/autoware_rosbag_replay.git

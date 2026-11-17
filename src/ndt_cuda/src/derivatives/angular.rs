@@ -134,10 +134,13 @@ impl AngularDerivatives {
             h_ang[(5, 1)] = -sx * sy * cz - cx * sz;
             // h_ang[(5, 2)] = 0.0;
 
-            // d1: ∂²R/∂pitch² for x-coordinate
+            // d1: ∂²R/∂pitch² for x-coordinate. The x row of R is
+            // [cy·cz, -cy·sz, sy], so its second pitch derivative ends in -sy.
+            // Magnusson's Eq. 6.21 and Autoware before autoware_core #1217 had
+            // +sy; the CUDA kernels (persistent_ndt_device.cuh) already had -sp.
             h_ang[(6, 0)] = -cy * cz;
             h_ang[(6, 1)] = cy * sz;
-            h_ang[(6, 2)] = sy;
+            h_ang[(6, 2)] = -sy;
 
             // d2: ∂²R/∂pitch² for y-coordinate
             h_ang[(7, 0)] = -sx * sy * cz;
@@ -333,6 +336,110 @@ mod tests {
             for j in 0..4 {
                 assert_eq!(deriv.h_ang[(i, j)], 0.0);
             }
+        }
+    }
+
+    /// `R · x` for Autoware's pose convention, R = Rx(roll) · Ry(pitch) · Rz(yaw),
+    /// written out by hand so the check does not lean on any helper under test.
+    fn rotate_xyz(roll: f64, pitch: f64, yaw: f64, p: &[f64; 3]) -> [f64; 3] {
+        let (sx, cx) = roll.sin_cos();
+        let (sy, cy) = pitch.sin_cos();
+        let (sz, cz) = yaw.sin_cos();
+        let rx = [[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]];
+        let ry = [[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]];
+        let rz = [[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]];
+        let mul = |m: &[[f64; 3]; 3], v: [f64; 3]| -> [f64; 3] {
+            [
+                m[0][0] * v[0] + m[0][1] * v[1] + m[0][2] * v[2],
+                m[1][0] * v[0] + m[1][1] * v[1] + m[1][2] * v[2],
+                m[2][0] * v[0] + m[2][1] * v[1] + m[2][2] * v[2],
+            ]
+        };
+        mul(&rx, mul(&ry, mul(&rz, *p)))
+    }
+
+    /// Central-difference second derivative of `R · x` along angles `i` and `j`
+    /// (0 = roll, 1 = pitch, 2 = yaw).
+    fn fd_second(angles: [f64; 3], p: &[f64; 3], i: usize, j: usize, h: f64) -> [f64; 3] {
+        let at = |di: f64, dj: f64| {
+            let mut a = angles;
+            a[i] += di;
+            a[j] += dj;
+            rotate_xyz(a[0], a[1], a[2], p)
+        };
+        let (pp, pm, mp, mm) = (at(h, h), at(h, -h), at(-h, h), at(-h, -h));
+        std::array::from_fn(|k| (pp[k] - pm[k] - mp[k] + mm[k]) / (4.0 * h * h))
+    }
+
+    /// Every row of `h_ang` against a finite-difference Hessian of the rotation.
+    ///
+    /// Roll, pitch and yaw are all non-zero (the COSS heading as driven), and the
+    /// point has a non-zero z, which is the only coordinate the pitch² x-term
+    /// (`h_ang[(6, 2)]`, upstream autoware_core #1217) multiplies.
+    #[test]
+    fn test_hessian_matches_finite_difference_at_nonzero_rpy() {
+        let angles = [0.05, -0.04, 3.06];
+        let deriv = AngularDerivatives::new(angles[0], angles[1], angles[2], true);
+        let h = 1e-4;
+
+        for point in [[1.0, 2.0, 3.0], [-4.0, 0.5, 2.5], [0.0, 0.0, 1.0]] {
+            let terms = deriv.compute_point_hessian_terms(&point);
+            // (angle pair, rows of the 15-vector, which xyz component each row is)
+            let blocks: [(usize, usize, &[(usize, usize)]); 6] = [
+                (0, 0, &[(0, 1), (1, 2)]),            // a: roll²       -> a2 (y), a3 (z)
+                (0, 1, &[(2, 1), (3, 2)]),            // b: roll·pitch  -> b2, b3
+                (0, 2, &[(4, 1), (5, 2)]),            // c: roll·yaw    -> c2, c3
+                (1, 1, &[(6, 0), (7, 1), (8, 2)]),    // d: pitch²      -> d1, d2, d3
+                (1, 2, &[(9, 0), (10, 1), (11, 2)]),  // e: pitch·yaw -> e1, e2, e3
+                (2, 2, &[(12, 0), (13, 1), (14, 2)]), // f: yaw²     -> f1, f2, f3
+            ];
+            for (i, j, rows) in blocks {
+                let fd = fd_second(angles, &point, i, j, h);
+                for &(row, comp) in rows {
+                    assert!(
+                        (terms[row] - fd[comp]).abs() < 1e-5,
+                        "h_ang row {row} (angles {i},{j}, xyz[{comp}]) at {point:?}: \
+                         analytic {} vs finite difference {}",
+                        terms[row],
+                        fd[comp]
+                    );
+                }
+            }
+        }
+    }
+
+    /// Every row of `j_ang` against a finite-difference Jacobian of the rotation.
+    #[test]
+    fn test_jacobian_matches_finite_difference_at_nonzero_rpy() {
+        let angles = [0.05, -0.04, 3.06];
+        let deriv = AngularDerivatives::new(angles[0], angles[1], angles[2], false);
+        let h = 1e-6;
+        let point = [1.0, 2.0, 3.0];
+        let terms = deriv.compute_point_gradient_terms(&point);
+        // (angle, row, xyz component)
+        let rows = [
+            (0, 0, 1),
+            (0, 1, 2),
+            (1, 2, 0),
+            (1, 3, 1),
+            (1, 4, 2),
+            (2, 5, 0),
+            (2, 6, 1),
+            (2, 7, 2),
+        ];
+        for (i, row, comp) in rows {
+            let mut plus = angles;
+            let mut minus = angles;
+            plus[i] += h;
+            minus[i] -= h;
+            let fp = rotate_xyz(plus[0], plus[1], plus[2], &point);
+            let fm = rotate_xyz(minus[0], minus[1], minus[2], &point);
+            let fd = (fp[comp] - fm[comp]) / (2.0 * h);
+            assert!(
+                (terms[row] - fd).abs() < 1e-6,
+                "j_ang row {row}: analytic {} vs finite difference {fd}",
+                terms[row]
+            );
         }
     }
 

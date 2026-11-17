@@ -9,6 +9,11 @@ project_root := "../../"
 # Autoware activation script
 autoware_activate := project_root + "scripts/activate_autoware.sh"
 
+# The fork is autoware_core 1.10.0, the core Autoware 2.1.0 ships; it does not
+# configure against 1.5.0 (autoware_agnocast_wrapper is missing there), so the
+# reference NDT builds and runs against 2.1.0 unless told otherwise.
+export AUTOWARE_VERSION := env("AUTOWARE_VERSION", "2.1.0")
+
 # Package source directory (submodule)
 ndt_package := "autoware_core/localization/autoware_ndt_scan_matcher"
 
