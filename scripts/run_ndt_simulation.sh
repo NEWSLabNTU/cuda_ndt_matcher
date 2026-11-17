@@ -68,9 +68,11 @@ else
 fi
 
 # Ensure rosbag replay sensor kit packages are installed
-if [[ ! -d "$PROJECT_DIR/install/rosbag_sensor_kit_launch" ]]; then
+# shellcheck source=autoware_version.sh
+source "$SCRIPT_DIR/autoware_version.sh"
+if [[ ! -d "$CUDA_NDT_INSTALL_DIR/rosbag_sensor_kit_launch" ]]; then
     echo "Building rosbag replay sensor kit packages..."
-    (cd "$PROJECT_DIR" && colcon build \
+    ("$SCRIPT_DIR/colcon_build.sh" \
         --base-paths tests/rosbag_replay/individual_params \
                      tests/rosbag_replay/rosbag_sensor_kit_description \
                      tests/rosbag_replay/rosbag_sensor_kit_launch \
@@ -80,7 +82,7 @@ fi
 
 # Source Autoware environment first, then local workspace as overlay
 source "$AUTOWARE_ACTIVATE"
-source "$PROJECT_DIR/install/setup.bash"
+source "$SCRIPT_DIR/activate_workspace.sh"
 
 # For builtin mode, overlay patched Autoware if available
 if [[ "$USE_CUDA" == "false" && -f "$COMPARISON_SETUP" ]]; then

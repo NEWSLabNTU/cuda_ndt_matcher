@@ -19,7 +19,9 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 AUTOWARE_ACTIVATE="$SCRIPT_DIR/activate_autoware.sh"
-LOCAL_SETUP="$PROJECT_DIR/install/setup.bash"
+# shellcheck source=autoware_version.sh
+source "$SCRIPT_DIR/autoware_version.sh"
+LOCAL_SETUP="$CUDA_NDT_INSTALL_DIR/setup.bash"
 
 # Default options
 MODES="builtin,cuda-gpu"

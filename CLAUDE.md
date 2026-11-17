@@ -6,7 +6,7 @@ Guidance for Claude Code when working with this repository.
 
 CUDA/Rust re-implementation of Autoware's `ndt_scan_matcher` using CubeCL for GPU compute.
 
-**Target**: Autoware 1.5.0
+**Target**: Autoware 1.5.0 by default; the version is selectable (`AUTOWARE_VERSION`, or the golf-cart superproject's selection) and each one builds into its own `build-<ver>/`/`install-<ver>/`. See README, "Autoware version".
 
 **Reference implementation**: `tests/comparison/autoware_core/localization/autoware_ndt_scan_matcher/`
 

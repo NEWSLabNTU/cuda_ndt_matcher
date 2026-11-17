@@ -2,12 +2,19 @@
 
 manifest := "Cargo.toml"
 
-# Source ROS + Autoware environment for colcon build
-# colcon-cargo-ros2 needs AMENT_PREFIX_PATH to discover message packages
-source_env := "source /opt/ros/humble/setup.bash && source /opt/autoware/1.5.0/setup.bash"
+# Autoware version: AUTOWARE_VERSION, then the golf-cart superproject's
+# selection, then 1.5.0 (scripts/autoware_version.sh). Each version builds into
+# its own build-<ver>/ and install-<ver>/; install is a symlink to the last one.
+#
+# colcon build into the selected version's workspace, with ROS and that
+# Autoware sourced (scripts/colcon_build.sh); colcon-cargo-ros2 needs
+# AMENT_PREFIX_PATH to discover message packages
+colcon_build := "scripts/colcon_build.sh"
+
+# The selected version's workspace, on top of its Autoware underlay
+local_setup := "scripts/activate_workspace.sh"
 
 # Paths for testing
-local_setup := "install/setup.bash"
 sample_map_dir := "data/sample-map"
 sample_rosbag := "data/sample-rosbag-fixed"
 rosbag_output_dir := "rosbag"
@@ -58,12 +65,13 @@ setup:
         echo "  ROS Humble: /opt/ros/humble"
     fi
 
-    # Check Autoware 1.5.0
-    if [[ ! -f /opt/autoware/1.5.0/setup.bash ]]; then
-        echo "  ERROR: Autoware 1.5.0 not found at /opt/autoware/1.5.0"
+    # Check the selected Autoware
+    source scripts/autoware_version.sh
+    if [[ ! -f "$AUTOWARE_PREFIX/setup.bash" ]]; then
+        echo "  ERROR: Autoware $AUTOWARE_VERSION not found at $AUTOWARE_PREFIX"
         MISSING="$MISSING autoware"
     else
-        echo "  Autoware 1.5.0: /opt/autoware/1.5.0"
+        echo "  Autoware $AUTOWARE_VERSION: $AUTOWARE_PREFIX"
     fi
 
     # Check GNU Parallel (used by run_demo.sh)
@@ -112,8 +120,7 @@ rosbag_replay_pkgs := "tests/rosbag_replay/individual_params tests/rosbag_replay
 # Build cuda_ndt_matcher and cuda_ndt_matcher_launch
 build:
     #!/usr/bin/env bash
-    {{source_env}}
-    colcon build \
+    {{colcon_build}} \
         --base-paths src \
         --symlink-install \
         --cmake-args -DCMAKE_BUILD_TYPE=Release \
@@ -122,15 +129,26 @@ build:
 # Build rosbag replay sensor kit packages (needed for run/demo recipes)
 build-rosbag-replay:
     #!/usr/bin/env bash
-    {{source_env}}
-    colcon build \
+    {{colcon_build}} \
         --base-paths {{rosbag_replay_pkgs}} \
         --symlink-install \
         --cmake-args -DCMAKE_BUILD_TYPE=Release
 
-# Clean all build artifacts
+# Clean the selected Autoware version's workspace, plus the version-independent
+# artifacts and a pre-per-version build/ and install/
 clean:
-    rm -rf build install log target .cargo
+    #!/usr/bin/env bash
+    source scripts/autoware_version.sh
+    rm -rf "$CUDA_NDT_BUILD_DIR" "$CUDA_NDT_INSTALL_DIR" build log target .cargo
+    if [[ -L install ]]; then
+        [[ "$(readlink install)" == "$(basename "$CUDA_NDT_INSTALL_DIR")" ]] && rm -f install
+    else
+        rm -rf install
+    fi
+
+# Clean the workspaces of every Autoware version
+clean-all:
+    rm -rf build build-* install install-* log target .cargo
 
 # Format code with rustfmt
 format:
@@ -339,8 +357,7 @@ logs_dir := "logs"
 # Build CUDA with all debug features enabled
 build-cuda-debug:
     #!/usr/bin/env bash
-    {{source_env}}
-    colcon build \
+    {{colcon_build}} \
         --base-paths src \
         --symlink-install \
         --cmake-args -DCMAKE_BUILD_TYPE=Release \
@@ -349,8 +366,7 @@ build-cuda-debug:
 # Build CUDA with per-iteration debug only (JSONL output)
 build-cuda-debug-iterations:
     #!/usr/bin/env bash
-    {{source_env}}
-    colcon build \
+    {{colcon_build}} \
         --base-paths src \
         --symlink-install \
         --cmake-args -DCMAKE_BUILD_TYPE=Release \
@@ -359,8 +375,7 @@ build-cuda-debug-iterations:
 # Build CUDA with voxel dump only
 build-cuda-debug-voxels:
     #!/usr/bin/env bash
-    {{source_env}}
-    colcon build \
+    {{colcon_build}} \
         --base-paths src \
         --symlink-install \
         --cmake-args -DCMAKE_BUILD_TYPE=Release \
@@ -369,8 +384,7 @@ build-cuda-debug-voxels:
 # Build CUDA with voxel-per-point tracking only (ndt_cuda feature)
 build-cuda-debug-vpp:
     #!/usr/bin/env bash
-    {{source_env}}
-    colcon build \
+    {{colcon_build}} \
         --base-paths src \
         --symlink-install \
         --cmake-args -DCMAKE_BUILD_TYPE=Release \
@@ -379,8 +393,7 @@ build-cuda-debug-vpp:
 # Build CUDA with GPU vs CPU covariance comparison only (ndt_cuda feature)
 build-cuda-debug-cov:
     #!/usr/bin/env bash
-    {{source_env}}
-    colcon build \
+    {{colcon_build}} \
         --base-paths src \
         --symlink-install \
         --cmake-args -DCMAKE_BUILD_TYPE=Release \
@@ -390,8 +403,7 @@ build-cuda-debug-cov:
 # Uses debug-output for JSONL but without full debug-iteration data collection
 build-cuda-profiling:
     #!/usr/bin/env bash
-    {{source_env}}
-    colcon build \
+    {{colcon_build}} \
         --base-paths src \
         --symlink-install \
         --cmake-args -DCMAKE_BUILD_TYPE=Release \
@@ -660,7 +672,7 @@ profile-init: build-cuda-profiling
     echo ""
     echo "=== Step 4/4: Comparing init poses from rosbags ==="
     if [[ -n "$CUDA_ROSBAG" && -n "$AUTOWARE_ROSBAG" ]]; then
-        source /opt/autoware/1.5.0/setup.bash
+        source scripts/activate_autoware.sh
         python3 scripts/compare_init_poses.py "$CUDA_ROSBAG" "$AUTOWARE_ROSBAG" \
             --output "$LOG_DIR/init_pose_comparison.txt"
         cat "$LOG_DIR/init_pose_comparison.txt"
@@ -678,7 +690,7 @@ profile-init: build-cuda-profiling
 # Compare init poses from rosbag recordings
 compare-init-poses cuda_rosbag autoware_rosbag:
     #!/usr/bin/env bash
-    source /opt/autoware/1.5.0/setup.bash
+    source scripts/activate_autoware.sh
     python3 scripts/compare_init_poses.py "{{cuda_rosbag}}" "{{autoware_rosbag}}"
 
 # Compare init poses from latest rosbags
@@ -695,7 +707,7 @@ compare-init-poses-latest:
     fi
     echo "CUDA rosbag: $CUDA_ROSBAG"
     echo "Autoware rosbag: $AUTOWARE_ROSBAG"
-    source /opt/autoware/1.5.0/setup.bash
+    source scripts/activate_autoware.sh
     python3 scripts/compare_init_poses.py "$CUDA_ROSBAG" "$AUTOWARE_ROSBAG"
 
 # === Voxel Grid Comparison ===

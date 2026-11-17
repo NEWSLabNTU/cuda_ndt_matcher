@@ -14,7 +14,7 @@ Drop-in replacement for Autoware's NDT with identical ROS 2 interface.
 ## Prerequisites
 
 - ROS 2 Humble (`/opt/ros/humble`)
-- Autoware 1.5.0 (`/opt/autoware/1.5.0`)
+- Autoware under `/opt/autoware/<version>`: 1.5.0 by default, see [Autoware version](#autoware-version)
 - NVIDIA GPU with CUDA support
 - Rust toolchain (`rustup`)
 - [direnv](https://direnv.net/) (recommended)
@@ -32,7 +32,26 @@ just setup
 This will verify:
 - Rust toolchain is installed
 - ROS Humble is available at `/opt/ros/humble`
-- Autoware 1.5.0 is installed at `/opt/autoware/1.5.0`
+- the selected Autoware is installed under `/opt/autoware/<version>`
+
+## Autoware version
+
+Several Autoware releases can be installed side by side under
+`/opt/autoware/<version>`. `scripts/autoware_version.sh` picks one, first hit
+wins:
+
+1. `AUTOWARE_VERSION` (`AUTOWARE_VERSION=2.1.0 just build`)
+2. `GOLFCART_AUTOWARE_VERSION`, or, as a submodule of the golf-cart
+   superproject, that checkout's own selection (its `config/autoware-version`)
+3. 1.5.0
+
+A colcon workspace cannot be shared between underlays, so each version builds
+into its own `build-<version>/` and `install-<version>/`. `install` is a
+symlink to the last one built, for callers that source `install/setup.bash`;
+`scripts/activate_autoware.sh` warns when it names another version than the one
+selected. `just clean` removes the selected version's workspace (and a
+`build/`/`install/` from before per-version directories), `just clean-all`
+every version's.
 
 ## Build
 
