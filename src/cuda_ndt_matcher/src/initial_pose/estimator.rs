@@ -91,6 +91,24 @@ pub(crate) struct InitialPoseResult {
     pub(crate) particles: Vec<Particle>,
 }
 
+/// Whether the initial pose is reliable, as Autoware: the best particle's NVTL is
+/// above the configured gate (converged_param_nearest_voxel_transformation_likelihood).
+/// This was a fixed 2.3, which no particle reaches on a classroom map at resolution 1.0.
+pub(crate) fn is_reliable(best_nvtl: f64, gate: f64) -> bool {
+    gate < best_nvtl
+}
+
+/// (selection score, TPE trial score) of one aligned particle, as Autoware's
+/// `align_pose`: the particle is ranked by its NVTL and the TPE is guided by the
+/// solver's transform probability (score / source points). Both are 0 for a
+/// particle that aligned to nothing, e.g. one sampled outside a small map, so it
+/// ranks last. The node once used exp(-score / 10) for both when NVTL was 0, which
+/// is 1.0 exactly there: on a classroom map the off-map particle won (5.0 against
+/// NVTL ~1.35) and EKF started from outside the room.
+pub(crate) fn particle_scores(nvtl: f64, transform_probability: f64) -> (f64, f64) {
+    (nvtl, transform_probability)
+}
+
 /// Estimate initial pose using Monte Carlo sampling with TPE
 ///
 /// # Arguments
@@ -111,7 +129,7 @@ pub(crate) fn estimate_initial_pose(
     target_points: &[[f32; 3]],
     params: &InitialPoseParams,
     _resolution: f64,
-    _score_threshold: f64,
+    score_threshold: f64,
 ) -> Result<InitialPoseResult, String> {
     // Extract covariance to determine sampling distributions
     let covariance = &initial_pose_with_cov.pose.covariance;
@@ -159,8 +177,8 @@ pub(crate) fn estimate_initial_pose(
     ];
 
     // Initialize TPE
-    // Note: We convert fitness_score to likelihood-like score using exp(-fitness_score)
-    // This makes it "higher = better" like Autoware's transform_probability
+    // Trials are scored with the solver's transform probability (higher = better),
+    // as Autoware's align_pose does
     let mut tpe = TreeStructuredParzenEstimator::new(
         Direction::Maximize,
         params.n_startup_trials as i64,
@@ -227,22 +245,11 @@ pub(crate) fn estimate_initial_pose(
         for (i, align_result) in batch_results.into_iter().enumerate() {
             let candidate_pose = &startup_poses[i];
 
-            // Compute fitness score for TPE guidance (higher = better)
-            let fitness_score = align_result.score;
-            let transform_probability = (-fitness_score / 10.0).exp();
-
-            // NVTL for final particle selection. Take it from the align result
-            // rather than scoring the same pose again: align_batch already
-            // evaluates NVTL at exactly this pose, on the GPU, and re-running it
-            // here cost another pass per particle.
-            let nvtl_score = align_result.nvtl;
-
-            // For final particle selection, prefer NVTL when available
-            let selection_score = if nvtl_score > 0.0 {
-                nvtl_score
-            } else {
-                transform_probability * 5.0
-            };
+            // NVTL ranks the particle, the solver's transform probability guides the
+            // TPE, as Autoware (particle_scores). Both come from the align result,
+            // which align_batch already scored at exactly this pose on the GPU.
+            let (selection_score, transform_probability) =
+                particle_scores(align_result.nvtl, align_result.transform_probability);
 
             // Create particle with results
             let particle = Particle::new(
@@ -328,41 +335,17 @@ pub(crate) fn estimate_initial_pose(
             }
         };
 
-        // Compute fitness score for TPE guidance (higher = better)
-        // Autoware uses transform_probability which is exp(-fitness_score)
-        // This provides gradient signal even when NVTL returns 0 (scan in empty area)
-        let fitness_score = align_result.score;
-        // Convert to "higher = better" like Autoware's transform_probability
-        // Use exp(-score/scale) to map to (0, 1] range - higher is better
-        let transform_probability = (-fitness_score / 10.0).exp();
-
-        // NVTL for final particle selection (not TPE guidance). Same as the
-        // startup phase: align already scored it at this pose.
-        let nvtl_score = align_result.nvtl;
+        // As the startup phase: NVTL ranks, the transform probability guides.
+        let (selection_score, transform_probability) =
+            particle_scores(align_result.nvtl, align_result.transform_probability);
         let bookkeeping_start = Instant::now();
 
         // Get yaw values for debugging
         let candidate_yaw = quaternion_to_rpy(&candidate_pose.orientation).2;
         let result_yaw = quaternion_to_rpy(&align_result.pose.orientation).2;
 
-        // For final particle selection, prefer NVTL when available (non-zero)
-        // Fall back to transform_probability when NVTL is 0 (scan in empty area)
-        let selection_score = if nvtl_score > 0.0 {
-            nvtl_score
-        } else {
-            // Scale transform_probability to be comparable with NVTL range
-            // NVTL is typically 0-5, transform_probability is 0-1
-            transform_probability * 5.0
-        };
-
         // Suppress unused variable warnings
-        let _ = (
-            candidate_yaw,
-            result_yaw,
-            fitness_score,
-            transform_probability,
-            nvtl_score,
-        );
+        let _ = (candidate_yaw, result_yaw);
 
         // Create particle with results (using selection_score for final selection)
         let particle = Particle::new(
@@ -373,9 +356,8 @@ pub(crate) fn estimate_initial_pose(
         );
         particles.push(particle.clone());
 
-        // Update TPE with result for next iteration's guidance
-        // TPE uses transform_probability (like Autoware) to explore the space (higher = better)
-        // This provides gradient signal even when scan lands in empty areas
+        // Update TPE with result for next iteration's guidance (Autoware: the
+        // solver's transform probability, higher = better)
         let result_input = pose_to_input(&align_result.pose);
         tpe.add_trial(Trial {
             input: result_input,
@@ -425,10 +407,8 @@ pub(crate) fn estimate_initial_pose(
         best_particle.score
     );
 
-    // Build result
-    // NVTL score is "higher = better" (Autoware threshold is around 2.3)
-    let nvtl_threshold = 2.3;
-    let reliable = best_particle.score >= nvtl_threshold;
+    // Build result: reliable against the configured NVTL gate, as Autoware
+    let reliable = is_reliable(best_particle.score, score_threshold);
 
     // Write debug output (only with debug-output feature)
     #[cfg(feature = "debug-output")]
@@ -524,6 +504,40 @@ fn rpy_to_quaternion(roll: f64, pitch: f64, yaw: f64) -> Quaternion {
 
 #[cfg(test)]
 mod tests {
+
+    /// Autoware marks the initial pose reliable when the best particle's NVTL is above
+    /// the configured gate (converged_param_nearest_voxel_transformation_likelihood),
+    /// not above a fixed 2.3: Lab 3's indoor gate is 1.3 at resolution 1.0.
+    #[test]
+    fn test_reliable_follows_the_configured_gate() {
+        assert!(is_reliable(1.655, 1.3));
+        assert!(!is_reliable(1.2, 1.3));
+        assert!(!is_reliable(1.3, 1.3)); // strictly above, as Autoware
+        assert!(is_reliable(2.4, 2.3));
+    }
+
+    /// A small indoor map: some particles land outside the room and align to nothing
+    /// (score 0, NVTL 0, transform probability 0). Autoware ranks particles by NVTL and
+    /// guides the TPE with the solver's transform probability, so such a particle ranks
+    /// last on both. The node used exp(-score / 10) here, which is 1.0 at score 0: the
+    /// off-map particle won the selection (5.0 against NVTL 1.35) and the TPE was steered
+    /// off the map.
+    #[test]
+    fn test_off_map_particle_ranks_below_an_aligned_one() {
+        let (off_sel, off_tpe) = particle_scores(0.0, 0.0);
+        let (on_sel, on_tpe) = particle_scores(1.35, 2.9);
+        assert!(
+            on_sel > off_sel,
+            "selection: aligned {on_sel} vs off-map {off_sel}"
+        );
+        assert!(
+            on_tpe > off_tpe,
+            "tpe: aligned {on_tpe} vs off-map {off_tpe}"
+        );
+        assert_eq!(on_sel, 1.35); // NVTL itself, as Autoware
+        assert_eq!(on_tpe, 2.9); // the solver's transform probability, as Autoware
+    }
+
     use super::*;
     use crate::initial_pose::tpe::INPUT_DIM;
 

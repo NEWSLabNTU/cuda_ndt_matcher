@@ -74,8 +74,7 @@ fn load(path: &str) -> std::io::Result<(Vec<[f32; 3]>, Vec<Frame>)> {
         }
         let n = read_u32(&mut r)? as usize;
         let points = read_points(&mut r, n)?;
-        let rotation =
-            UnitQuaternion::from_quaternion(Quaternion::new(p[6], p[3], p[4], p[5]));
+        let rotation = UnitQuaternion::from_quaternion(Quaternion::new(p[6], p[3], p[4], p[5]));
         frames.push(Frame {
             pose: Isometry3::from_parts(Translation3::new(p[0], p[1], p[2]), rotation),
             points,
@@ -100,9 +99,10 @@ fn run_arm(
     map: &[[f32; 3]],
     frames: &[Frame],
     warmup: usize,
+    resolution: f32,
 ) -> anyhow::Result<Vec<Sample>> {
     let mut matcher = NdtScanMatcher::builder()
-        .resolution(2.0)
+        .resolution(resolution)
         .max_iterations(30)
         .transformation_epsilon(0.01)
         .step_size(0.1)
@@ -131,7 +131,9 @@ fn run_arm(
         let ms = start.elapsed().as_secs_f64() * 1000.0;
         match result {
             Ok(r) => {
-                let nvtl = matcher.evaluate_nvtl(&f.points, &r.pose).unwrap_or(f64::NAN);
+                let nvtl = matcher
+                    .evaluate_nvtl(&f.points, &r.pose)
+                    .unwrap_or(f64::NAN);
                 let t = r.pose.translation.vector;
                 out.push(Sample {
                     ms,
@@ -168,7 +170,7 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         eprintln!(
-            "usage: offline_bench <frames.bin> [--arms gpu,cpu] [--repeats N] [--warmup N] [--csv PATH]"
+            "usage: offline_bench <frames.bin> [--arms gpu,cpu] [--repeats N] [--warmup N] [--resolution M] [--csv PATH]"
         );
         std::process::exit(2);
     }
@@ -177,6 +179,7 @@ fn main() -> anyhow::Result<()> {
     let mut repeats = 1usize;
     let mut warmup = 5usize;
     let mut csv: Option<String> = None;
+    let mut resolution = 2.0f32;
     let mut i = 2;
     while i < args.len() {
         match args[i].as_str() {
@@ -190,6 +193,10 @@ fn main() -> anyhow::Result<()> {
             }
             "--warmup" => {
                 warmup = args[i + 1].parse()?;
+                i += 2;
+            }
+            "--resolution" => {
+                resolution = args[i + 1].parse()?;
                 i += 2;
             }
             "--csv" => {
@@ -276,7 +283,7 @@ fn main() -> anyhow::Result<()> {
         };
         let mut best: Option<Vec<Sample>> = None;
         for rep in 0..repeats {
-            let s = run_arm(arm, use_gpu, &map, &frames, warmup)?;
+            let s = run_arm(arm, use_gpu, &map, &frames, warmup, resolution)?;
             let m = mean(&s.iter().map(|x| x.ms).collect::<Vec<_>>());
             eprintln!("[{arm}] repeat {} of {repeats}: mean {m:.3} ms", rep + 1);
             // Keep the fastest repeat: a slower one is contention or thermal
@@ -319,7 +326,10 @@ fn main() -> anyhow::Result<()> {
     ) {
         let gm = mean(&g.iter().map(|x| x.ms).collect::<Vec<_>>());
         let cm = mean(&c.iter().map(|x| x.ms).collect::<Vec<_>>());
-        println!("\nGPU vs CPU on identical input: {:.2}x ({cm:.3} -> {gm:.3} ms)", cm / gm);
+        println!(
+            "\nGPU vs CPU on identical input: {:.2}x ({cm:.3} -> {gm:.3} ms)",
+            cm / gm
+        );
 
         // Same inputs should mean the same answers; say so or say how far off.
         let n = g.len().min(c.len());
@@ -327,10 +337,9 @@ fn main() -> anyhow::Result<()> {
         let mut d_iter = 0.0f64;
         let mut d_nvtl = 0.0f64;
         for k in 0..n {
-            let d = ((g[k].x - c[k].x).powi(2)
-                + (g[k].y - c[k].y).powi(2)
-                + (g[k].z - c[k].z).powi(2))
-            .sqrt();
+            let d =
+                ((g[k].x - c[k].x).powi(2) + (g[k].y - c[k].y).powi(2) + (g[k].z - c[k].z).powi(2))
+                    .sqrt();
             worst = worst.max(d);
             d_iter += (g[k].iterations as i64 - c[k].iterations as i64).abs() as f64;
             d_nvtl += (g[k].nvtl - c[k].nvtl).abs();
