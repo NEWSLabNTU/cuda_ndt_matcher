@@ -10,6 +10,11 @@
 
   <exec_depend>cuda_ndt_matcher</exec_depend>
 
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>ament_index_python</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <test_depend>python3-yaml</test_depend>
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>

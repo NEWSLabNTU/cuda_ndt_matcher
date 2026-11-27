@@ -117,7 +117,22 @@ ros2 launch cuda_ndt_matcher_launch ndt_scan_matcher_switcher.launch.xml use_cud
 
 ## Configuration
 
-Edit `config/cuda_scan_matcher.param.yaml`:
+The shipped files carry **Autoware's defaults**: every key cuda_ndt shares with
+Autoware's `ndt_scan_matcher` (and the NDT input chain's crop box, voxel grid
+and random downsample) has Autoware's value, and so do the matcher's compiled-in
+defaults. `test/test_stock_defaults.py` checks this against the installed
+Autoware. Only cuda_ndt's own keys (`batch`, `divergence`, line search, ...)
+are this package's choice.
+
+Do not tune here. A deployment passes its own files instead:
+`ndt_param_file` (or `param_file`) for the matcher, and
+`crop_box_filter_measurement_range_param_path`,
+`voxel_grid_downsample_filter_param_path`,
+`random_downsample_filter_param_path` for the input chain. A file in the
+layout of Autoware's `ndt_scan_matcher.param.yaml` works unchanged, since
+cuda_ndt reads the same keys.
+
+The main keys:
 
 ```yaml
 ndt:

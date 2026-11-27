@@ -162,7 +162,7 @@ Enable features with: `cargo test --features test-verbose` or `cargo build --fea
 **Package config structure** (`cuda_ndt_matcher_launch/config/`):
 ```
 config/
-├── cuda_scan_matcher.param.yaml          # CUDA-specific NDT parameters
+├── cuda_scan_matcher.param.yaml          # NDT parameters, Autoware's defaults (test_stock_defaults.py)
 └── pointcloud_preprocessor/             # Preprocessor configs (self-contained)
     ├── crop_box_filter_measurement_range.param.yaml
     ├── voxel_grid_filter.param.yaml

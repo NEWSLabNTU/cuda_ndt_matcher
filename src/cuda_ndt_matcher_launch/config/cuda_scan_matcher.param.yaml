@@ -103,9 +103,15 @@
       # Set true when tuning, to see how far NDT moved the pose.
       compute_before_scores: false
       converged_param_transform_probability: 3.0
-      # Set from the score distribution of a healthy run, not inherited: on the
-      # COSS bag a good run sits at mean 2.80, p50 2.81, min 2.29 over 1422
-      # frames, so 2.0 leaves about 0.3 of margin under the worst honest frame.
+      # Autoware's default, 2.3: every value in this file that Autoware's
+      # ndt_scan_matcher also has is Autoware's, so this matcher drops in for it
+      # unchanged. A deployment sets its own gate in its own parameter file,
+      # from the score distribution of a healthy run there, never inherited.
+      #
+      # For reference, on the COSS bag with this package's former 5000-point,
+      # 0.5 m-voxel input a good run sat at mean 2.80, p50 2.81, min 2.29 over
+      # 1422 frames, and 2.0 was used. NVTL is a mean per-point likelihood, so
+      # it moves with the input sampling as well as with the fit.
       #
       # Two defects moved this number during 2026-08-03/04 and the history is
       # worth keeping, because both made NVTL mean something different:
@@ -120,7 +126,7 @@
       # Re-derive from the distribution if the map, resolution or downsample
       # count changes. And note the gate rejects non-converged alignments, not
       # bad priors -- see docs/guides/ndt-tuning.md.
-      converged_param_nearest_voxel_transformation_likelihood: 2.0
+      converged_param_nearest_voxel_transformation_likelihood: 2.3
 
       no_ground_points:
         enable: false

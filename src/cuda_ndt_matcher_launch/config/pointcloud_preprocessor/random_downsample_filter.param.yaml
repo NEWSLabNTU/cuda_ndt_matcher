@@ -1,3 +1,5 @@
+# Autoware's default (autoware_localization_config). A deployment passes its own
+# file through random_downsample_filter_param_path; this package was 5000.
 /**:
   ros__parameters:
-    sample_num: 5000
+    sample_num: 1500

@@ -1,3 +1,4 @@
+# Autoware's default (autoware_localization_config).
 /**:
   ros__parameters:
     input_frame: "base_link"
