@@ -83,3 +83,10 @@ def test_compiled_defaults_are_stock():
         if value != stock[name]:
             differ[name] = (stock[name], value)
     assert not differ, f'compiled defaults differ (stock, ours): {differ}'
+
+
+def test_no_line_search():
+    # Not a key Autoware's file has, so test_file_values_are_stock cannot see
+    # it, but it is Autoware's behaviour: its NDT takes the full Newton step.
+    mine = _params(PKG / 'config' / 'cuda_scan_matcher.param.yaml')
+    assert mine.get('ndt.use_line_search', False) is False

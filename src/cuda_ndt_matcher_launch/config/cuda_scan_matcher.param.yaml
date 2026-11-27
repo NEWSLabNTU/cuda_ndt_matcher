@@ -27,7 +27,11 @@
       resolution: 2.0
       max_iterations: 30
       num_threads: 4
-      use_line_search: true  # Batched parallel line search (can reduce iterations by 25%)
+      # Not in Autoware's file: Autoware's NDT takes the full Newton step, with
+      # no line search (docs/performance/autoware-comparison.md), and so does
+      # this matcher at false, which is also the compiled-in default. true is a
+      # batched parallel More-Thuente search; it changes the iteration path.
+      use_line_search: false
 
       # GNSS regularization penalizes deviation from GNSS pose in longitudinal direction.
       # This helps prevent drift in open areas where scan matching may be unreliable.
@@ -68,12 +72,6 @@
       # outright is a different trade and a worse one -- 100/100 is fastest and
       # is the only setting whose score dropped materially.
       n_startup_trials: 100
-
-      # Yaw weight sigma for biasing toward initial yaw (degrees)
-      # Smaller values = stronger bias toward initial GNSS heading
-      # Larger values = more exploration of different orientations
-      # Set to a large value (e.g., 360.0) to disable yaw bias
-      yaw_weight_sigma: 30.0
 
     validation:
       initial_pose_timeout_sec: 1.0
